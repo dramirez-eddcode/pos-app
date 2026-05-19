@@ -1,0 +1,16 @@
+node_modules
+dist
+out
+release
+.DS_Store
+*.log
+.env
+.env.local
+.vite
+*.tsbuildinfo
+
+# SQLite local data (cada sucursal genera su propia DB en tiempo de uso)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm

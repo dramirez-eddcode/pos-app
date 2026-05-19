@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1776924085429,
+      "tag": "0000_overrated_kang",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776968639236,
+      "tag": "0001_sour_liz_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776975763436,
+      "tag": "0002_silly_shatterstar",
+      "breakpoints": true
+    }
+  ]
+}
