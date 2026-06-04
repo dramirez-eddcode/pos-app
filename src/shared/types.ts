@@ -47,4 +47,5 @@ export interface AppSettings {
   printerName: string | null
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
+  receiptFooter: string | null
 }

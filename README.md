@@ -1,7 +1,7 @@
 # Farmacias MS POS
 
-Punto de venta local-first para Farmacias MS, Electron + React + TypeScript + Tailwind/shadcn.
-SQLite local por sucursal vía Drizzle. Sincronización opcional a Supabase (Fase 3).
+Punto de venta 100% local para Farmacias MS, Electron + React + TypeScript + Tailwind/shadcn.
+SQLite local por sucursal vía Drizzle. Sin dependencias en la nube.
 
 ## Comandos
 

@@ -17,7 +17,10 @@ import PreciosModal from '../components/PreciosModal'
 import SalidasModal from '../components/SalidasModal'
 import SustanciaInfoModal from '../components/SustanciaInfoModal'
 import UsuariosModal from '../components/UsuariosModal'
-import { calcTotals, makeCartItem, type CartItem } from '../lib/cart'
+import SucursalModal from '../components/SucursalModal'
+import CatalogoProductosModal from '../components/CatalogoProductosModal'
+import ImportarFarmaModal from '../components/ImportarFarmaModal'
+import { calcTotals, makeCartItem, precioConIva, type CartItem } from '../lib/cart'
 import { fechaTicket, folio as fmtFolio, horaTicket, money } from '../lib/format'
 import { formatRol, isAdminLike } from '../lib/roles'
 import type { ProductoDto } from '@shared/dto'
@@ -50,6 +53,9 @@ export default function POSPage() {
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [sustanciaOpen, setSustanciaOpen] = useState(false)
   const [usuariosOpen, setUsuariosOpen] = useState(false)
+  const [sucursalOpen, setSucursalOpen] = useState(false)
+  const [catalogoOpen, setCatalogoOpen] = useState(false)
+  const [importarOpen, setImportarOpen] = useState(false)
   const [totalesRec, setTotalesRec] = useState<{
     antier: number
     ayer: number
@@ -74,7 +80,10 @@ export default function POSPage() {
     ajustesOpen ||
     preciosOpen ||
     sustanciaOpen ||
-    usuariosOpen
+    usuariosOpen ||
+    sucursalOpen ||
+    catalogoOpen ||
+    importarOpen
   const isAdmin = isAdminLike(user)
 
   // ── Folio + reloj ────────────────────────────────────────────────────────
@@ -284,7 +293,7 @@ export default function POSPage() {
           items: cart.map((i) => ({
             nombre: i.nombre,
             cantidad: i.cantidad,
-            precio: i.precioUnitario,
+            precio: precioConIva(i),
             total: i.total
           })),
           subtotal: totals.subtotal,
@@ -295,7 +304,8 @@ export default function POSPage() {
           openDrawer:
             (settings.openDrawerOnCash ?? true) &&
             args.pagos.some((p) => p.metodo === 'EFECTIVO'),
-          showTime: settings.showTimeOnReceipt ?? false
+          showTime: settings.showTimeOnReceipt ?? false,
+          footer: settings.receiptFooter ?? null
         }
 
         const pr = await window.api.printer.printReceipt(settings.printerName, receipt)
@@ -452,7 +462,7 @@ export default function POSPage() {
                       <div>{it.nombre}</div>
                       <div className="text-[10px] text-muted-foreground font-mono">{it.codigo}</div>
                     </td>
-                    <td className="px-2 py-1 text-right font-mono">{money(it.precioUnitario)}</td>
+                    <td className="px-2 py-1 text-right font-mono">{money(precioConIva(it))}</td>
                     <td className="px-2 py-1 text-right font-mono">{money(it.total)}</td>
                   </tr>
                 ))}
@@ -588,6 +598,9 @@ export default function POSPage() {
         onAjustes={() => setAjustesOpen(true)}
         onPrecios={() => setPreciosOpen(true)}
         onUsuarios={() => setUsuariosOpen(true)}
+        onSucursal={() => setSucursalOpen(true)}
+        onCatalogo={() => setCatalogoOpen(true)}
+        onImportar={() => setImportarOpen(true)}
       />
       <EntradaModal
         open={entradaOpen}
@@ -615,6 +628,13 @@ export default function POSPage() {
         onClose={() => setSustanciaOpen(false)}
       />
       <UsuariosModal open={usuariosOpen} onClose={() => setUsuariosOpen(false)} />
+      <SucursalModal open={sucursalOpen} onClose={() => setSucursalOpen(false)} />
+      <CatalogoProductosModal open={catalogoOpen} onClose={() => setCatalogoOpen(false)} />
+      <ImportarFarmaModal
+        open={importarOpen}
+        onClose={() => setImportarOpen(false)}
+        onApplied={reloadFolio}
+      />
     </div>
   )
 }

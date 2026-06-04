@@ -13,12 +13,14 @@ export interface AppSettings {
   printerName: string | null
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
+  receiptFooter: string | null
 }
 
 const DEFAULTS: AppSettings = {
   printerName: null,
   openDrawerOnCash: true,
-  showTimeOnReceipt: false
+  showTimeOnReceipt: false,
+  receiptFooter: null
 }
 
 function settingsPath(): string {

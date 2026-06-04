@@ -40,6 +40,7 @@ export interface ReceiptData {
   cajero?: string
   openDrawer?: boolean
   showTime?: boolean
+  footer?: string | null
 }
 
 export interface CancelReceiptData {

@@ -3,6 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { AppSettings, IvaModo, PrintResultLike } from '@shared/types'
 import type {
   CancelVentaResult,
+  CatalogoSucursalItem,
+  CompleteWizardInput,
   CorteHoyDto,
   CorteTipo,
   CreateAjustesInput,
@@ -10,38 +12,72 @@ import type {
   CreateCorteResult,
   CreateEntradaInput,
   CreateEntradaResult,
+  CreateProductoInput,
   CreateSalidaInput,
   CreateSalidaResult,
+  CreateSucursalInput,
   CreateUsuarioInput,
   CreateVentaInput,
   CreateVentaResult,
+  ApplyFarmaResult,
+  BootstrapStateDto,
+  EmpresaDto,
+  ExportSucursalResult,
+  InstalacionDto,
+  PickFarmaResult,
   LoginResult,
   LoteInfo,
+  ProductoCatalogoItem,
   ProductoDto,
   ProductoSearchQuery,
+  SetSucursalProductoInput,
+  UpdateEmpresaInput,
   UpdateIvaInput,
   UpdateIvaResult,
   UpdatePreciosInput,
   UpdatePreciosResult,
+  UpdateProductoInput,
+  UpdateSucursalInput,
+  UpdateUsuarioInput,
   UsuarioListItem,
   VentaDetailDto
 } from '@shared/dto'
+import type { SucursalDto } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
 
-interface SupabaseTestResult {
+interface BackupResultStub {
   ok: boolean
-  latencyMs: number
+  path?: string
+  bytes?: number
   error?: string
-  sucursalCount?: number
-  schemaReady?: boolean
+  cancelled?: boolean
+}
+interface RestoreResultStub {
+  ok: boolean
+  fromPath?: string
+  error?: string
+  cancelled?: boolean
 }
 
 const api = {
   ping: (): Promise<string> => ipcRenderer.invoke('app:ping'),
+  reload: (): Promise<void> => ipcRenderer.invoke('app:reload'),
 
-  supabase: {
-    isConfigured: (): Promise<boolean> => ipcRenderer.invoke('supabase:is-configured'),
-    test: (): Promise<SupabaseTestResult> => ipcRenderer.invoke('supabase:test')
+  instalacion: {
+    get: (): Promise<InstalacionDto> => ipcRenderer.invoke('instalacion:get'),
+    bootstrapState: (): Promise<BootstrapStateDto> =>
+      ipcRenderer.invoke('instalacion:bootstrap-state'),
+    completeWizard: (
+      input: CompleteWizardInput
+    ): Promise<{ ok: true; user: import('@shared/dto').SessionUser }> =>
+      ipcRenderer.invoke('instalacion:complete-wizard', input),
+    reset: (viewerUserId: string, currentPassword: string): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('instalacion:reset', viewerUserId, currentPassword)
+  },
+
+  backup: {
+    export: (): Promise<BackupResultStub> => ipcRenderer.invoke('backup:export'),
+    import: (): Promise<RestoreResultStub> => ipcRenderer.invoke('backup:import')
   },
 
   settings: {
@@ -53,6 +89,58 @@ const api = {
   auth: {
     login: (loginName: string, password: string): Promise<LoginResult> =>
       ipcRenderer.invoke('auth:login', loginName, password)
+  },
+
+  empresa: {
+    get: (): Promise<EmpresaDto | null> => ipcRenderer.invoke('empresa:get'),
+    update: (viewerUserId: string, input: UpdateEmpresaInput): Promise<EmpresaDto> =>
+      ipcRenderer.invoke('empresa:update', viewerUserId, input)
+  },
+
+  sucursales: {
+    list: (viewerUserId: string): Promise<SucursalDto[]> =>
+      ipcRenderer.invoke('sucursales:list', viewerUserId),
+    create: (viewerUserId: string, input: CreateSucursalInput): Promise<{ id: string }> =>
+      ipcRenderer.invoke('sucursales:create', viewerUserId, input),
+    update: (viewerUserId: string, input: UpdateSucursalInput): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('sucursales:update', viewerUserId, input),
+    toggleActiva: (
+      viewerUserId: string,
+      sucursalId: string,
+      activa: boolean
+    ): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('sucursales:toggle-activa', viewerUserId, sucursalId, activa)
+  },
+
+  sucursalProducto: {
+    getCatalogo: (
+      viewerUserId: string,
+      sucursalId: string
+    ): Promise<CatalogoSucursalItem[]> =>
+      ipcRenderer.invoke('sucursal-producto:get-catalogo', viewerUserId, sucursalId),
+    set: (viewerUserId: string, input: SetSucursalProductoInput): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('sucursal-producto:set', viewerUserId, input),
+    clear: (
+      viewerUserId: string,
+      sucursalId: string,
+      productoId: string
+    ): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('sucursal-producto:clear', viewerUserId, sucursalId, productoId)
+  },
+
+  exportSucursal: {
+    farma: (viewerUserId: string, sucursalId: string): Promise<ExportSucursalResult> =>
+      ipcRenderer.invoke('export:sucursal-farma', viewerUserId, sucursalId)
+  },
+
+  importFarma: {
+    pick: (): Promise<PickFarmaResult> => ipcRenderer.invoke('import:pick-farma'),
+    apply: (
+      viewerUserId: string,
+      filePath: string,
+      force?: boolean
+    ): Promise<ApplyFarmaResult> =>
+      ipcRenderer.invoke('import:apply-farma', viewerUserId, filePath, Boolean(force))
   },
 
   productos: {
@@ -85,7 +173,19 @@ const api = {
       }>
     > => ipcRenderer.invoke('productos:get-all-lotes-activos'),
     updateIva: (input: UpdateIvaInput): Promise<UpdateIvaResult> =>
-      ipcRenderer.invoke('productos:update-iva', input)
+      ipcRenderer.invoke('productos:update-iva', input),
+    listCatalogo: (viewerUserId: string): Promise<ProductoCatalogoItem[]> =>
+      ipcRenderer.invoke('productos:list-catalogo', viewerUserId),
+    create: (viewerUserId: string, input: CreateProductoInput): Promise<{ id: string }> =>
+      ipcRenderer.invoke('productos:create', viewerUserId, input),
+    update: (viewerUserId: string, input: UpdateProductoInput): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('productos:update', viewerUserId, input),
+    toggleActivo: (
+      viewerUserId: string,
+      productoId: string,
+      activo: boolean
+    ): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('productos:toggle-activo', viewerUserId, productoId, activo)
   },
 
   ventas: {
@@ -131,6 +231,8 @@ const api = {
       ipcRenderer.invoke('usuarios:list', viewerUserId),
     create: (creatorUserId: string, input: CreateUsuarioInput): Promise<{ id: string }> =>
       ipcRenderer.invoke('usuarios:create', creatorUserId, input),
+    update: (viewerUserId: string, input: UpdateUsuarioInput): Promise<void> =>
+      ipcRenderer.invoke('usuarios:update', viewerUserId, input),
     resetPassword: (
       resetterUserId: string,
       targetUserId: string,

@@ -78,6 +78,22 @@ export interface CartTotals {
   unitCount: number
 }
 
+/**
+ * Precio unitario "bruto" para mostrar en UI y ticket. Garantiza que la
+ * cuenta `precio × cantidad ≈ total` coincida visualmente sin importar el
+ * modo de IVA del producto:
+ *   - exento   → precioUnitario (sin IVA)
+ *   - incluido → precioUnitario (ya trae IVA)
+ *   - sumar    → precioUnitario + IVA (lo que el cliente realmente paga por unidad)
+ *
+ * Se deriva de `total / cantidad` para evitar discrepancias de 1 centavo
+ * entre el precio mostrado y el total de la línea.
+ */
+export function precioConIva(item: CartItem): number {
+  if (item.cantidad <= 0) return item.precioUnitario
+  return round2(item.total / item.cantidad)
+}
+
 export function calcTotals(items: CartItem[]): CartTotals {
   let subtotal = 0
   let iva = 0

@@ -1,11 +1,49 @@
+import { randomUUID } from 'node:crypto'
 import { getSqlite } from '../db/connection'
 import type {
+  CreateProductoInput,
+  ProductoCatalogoItem,
   ProductoDto,
   ProductoSearchQuery,
   UpdateIvaInput,
-  UpdateIvaResult
+  UpdateIvaResult,
+  UpdateProductoInput
 } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
+
+function rolOf(userId: string): string | null {
+  const sqlite = getSqlite()
+  const row = sqlite
+    .prepare(
+      `SELECT t.nombre
+         FROM usuario u
+         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
+        WHERE u.id = ?`
+    )
+    .get(userId) as { nombre: string } | undefined
+  return row?.nombre ?? null
+}
+
+function requireAdmin(viewerUserId: string): void {
+  const rol = rolOf(viewerUserId)
+  if (!rol) throw new Error('Usuario no identificado')
+  if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO') {
+    throw new Error('Requiere permisos de administrador')
+  }
+}
+
+function nullableTrim(value: string | null | undefined): string | null {
+  if (value == null) return null
+  const t = String(value).trim()
+  return t.length === 0 ? null : t
+}
+
+function nullableInt(value: number | null | undefined): number | null {
+  if (value == null) return null
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n) || n < 0) return null
+  return n
+}
 
 const VALID_IVA_MODOS: readonly IvaModo[] = ['exento', 'sumar', 'incluido'] as const
 
@@ -295,4 +333,195 @@ export function updateIvaProductos(input: UpdateIvaInput): UpdateIvaResult {
   })
 
   return run()
+}
+
+/**
+ * Lista completa del catálogo (activos + inactivos) para el módulo de admin.
+ * Incluye stock min/max y existencias totales para visibilidad de gestión.
+ */
+export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
+  requireAdmin(viewerUserId)
+  const db = getSqlite()
+  const rows = db
+    .prepare(
+      `SELECT p.id, p.codigo, p.nombre,
+              p.sustancia_activa AS sustanciaActiva,
+              p.descripcion, p.laboratorio,
+              p.precio, p.costo,
+              p.iva_porcentaje   AS ivaPorcentaje,
+              p.iva_modo         AS ivaModo,
+              p.stock_maximo     AS stockMaximo,
+              p.stock_minimo     AS stockMinimo,
+              p.activo,
+              COALESCE(
+                (SELECT SUM(cl.saldo) FROM caducidad_lote cl WHERE cl.producto_id = p.id),
+                0
+              ) AS existenciasTotal
+         FROM producto p
+        ORDER BY p.activo DESC, p.nombre`
+    )
+    .all() as Array<{
+    id: string
+    codigo: string
+    nombre: string
+    sustanciaActiva: string | null
+    descripcion: string | null
+    laboratorio: string | null
+    precio: number
+    costo: number
+    ivaPorcentaje: number
+    ivaModo: string | null
+    stockMaximo: number | null
+    stockMinimo: number | null
+    activo: number
+    existenciasTotal: number
+  }>
+
+  return rows.map((r) => ({
+    id: r.id,
+    codigo: r.codigo,
+    nombre: r.nombre,
+    sustanciaActiva: r.sustanciaActiva ?? null,
+    descripcion: r.descripcion ?? null,
+    laboratorio: r.laboratorio ?? null,
+    precio: Number(r.precio) || 0,
+    costo: Number(r.costo) || 0,
+    ivaPorcentaje: Number(r.ivaPorcentaje) || 0,
+    ivaModo: normalizeIvaModo(r.ivaModo),
+    stockMaximo: r.stockMaximo == null ? null : Number(r.stockMaximo),
+    stockMinimo: r.stockMinimo == null ? null : Number(r.stockMinimo),
+    activo: Boolean(r.activo),
+    existenciasTotal: Number(r.existenciasTotal) || 0
+  }))
+}
+
+export function createProducto(viewerUserId: string, input: CreateProductoInput): { id: string } {
+  requireAdmin(viewerUserId)
+
+  const codigo = (input.codigo ?? '').trim()
+  const nombre = (input.nombre ?? '').trim()
+  if (!codigo) throw new Error('Código requerido')
+  if (!nombre) throw new Error('Nombre requerido')
+  if (!Number.isFinite(input.precio) || input.precio < 0) {
+    throw new Error('Precio inválido')
+  }
+  const costo = Number.isFinite(input.costo as number) && (input.costo as number) >= 0
+    ? Number(input.costo)
+    : 0
+  if (!VALID_IVA_MODOS.includes(input.ivaModo)) {
+    throw new Error(`Modo de IVA inválido: ${input.ivaModo}`)
+  }
+  const ivaPorcentaje =
+    input.ivaModo === 'exento'
+      ? 0
+      : Math.max(0, Math.min(100, Math.round(Number(input.ivaPorcentaje) || 0)))
+
+  const sqlite = getSqlite()
+  const exists = sqlite.prepare('SELECT 1 FROM producto WHERE codigo = ?').get(codigo)
+  if (exists) throw new Error(`Ya existe un producto con código "${codigo}"`)
+
+  const id = randomUUID()
+  const now = Date.now()
+  sqlite
+    .prepare(
+      `INSERT INTO producto
+         (id, codigo, nombre, sustancia_activa, descripcion, laboratorio,
+          precio, costo, iva_porcentaje, iva_modo, stock_maximo, stock_minimo,
+          activo, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+    )
+    .run(
+      id,
+      codigo,
+      nombre,
+      nullableTrim(input.sustanciaActiva),
+      nullableTrim(input.descripcion),
+      nullableTrim(input.laboratorio),
+      Number(input.precio),
+      costo,
+      ivaPorcentaje,
+      input.ivaModo,
+      nullableInt(input.stockMaximo) ?? 0,
+      nullableInt(input.stockMinimo) ?? 0,
+      now
+    )
+
+  return { id }
+}
+
+/**
+ * Actualiza datos catálogo del producto: codigo, nombre, sustancia, descripción,
+ * laboratorio, costo, stock min/max. NO modifica precio ni IVA (esos viven en
+ * sus propios módulos con audit). NO modifica `activo` (toggleActivoProducto).
+ */
+export function updateProductoBasico(
+  viewerUserId: string,
+  input: UpdateProductoInput
+): { ok: true } {
+  requireAdmin(viewerUserId)
+  if (!input.id) throw new Error('ID requerido')
+
+  const codigo = (input.codigo ?? '').trim()
+  const nombre = (input.nombre ?? '').trim()
+  if (!codigo) throw new Error('Código requerido')
+  if (!nombre) throw new Error('Nombre requerido')
+
+  const sqlite = getSqlite()
+  const current = sqlite
+    .prepare('SELECT id FROM producto WHERE id = ?')
+    .get(input.id) as { id: string } | undefined
+  if (!current) throw new Error('Producto no encontrado')
+
+  const dupe = sqlite
+    .prepare('SELECT id FROM producto WHERE codigo = ? AND id <> ?')
+    .get(codigo, input.id) as { id: string } | undefined
+  if (dupe) throw new Error(`Ya existe otro producto con código "${codigo}"`)
+
+  const costo =
+    input.costo != null && Number.isFinite(input.costo) && input.costo >= 0
+      ? Number(input.costo)
+      : null
+
+  const now = Date.now()
+  sqlite
+    .prepare(
+      `UPDATE producto
+          SET codigo = ?, nombre = ?, sustancia_activa = ?, descripcion = ?,
+              laboratorio = ?,
+              costo = COALESCE(?, costo),
+              stock_maximo = ?, stock_minimo = ?,
+              updated_at = ?
+        WHERE id = ?`
+    )
+    .run(
+      codigo,
+      nombre,
+      nullableTrim(input.sustanciaActiva),
+      nullableTrim(input.descripcion),
+      nullableTrim(input.laboratorio),
+      costo,
+      nullableInt(input.stockMaximo) ?? 0,
+      nullableInt(input.stockMinimo) ?? 0,
+      now,
+      input.id
+    )
+
+  return { ok: true }
+}
+
+export function toggleActivoProducto(
+  viewerUserId: string,
+  productoId: string,
+  activo: boolean
+): { ok: true } {
+  requireAdmin(viewerUserId)
+  const sqlite = getSqlite()
+  const target = sqlite.prepare('SELECT id FROM producto WHERE id = ?').get(productoId) as
+    | { id: string }
+    | undefined
+  if (!target) throw new Error('Producto no encontrado')
+  sqlite
+    .prepare('UPDATE producto SET activo = ?, updated_at = ? WHERE id = ?')
+    .run(activo ? 1 : 0, Date.now(), productoId)
+  return { ok: true }
 }

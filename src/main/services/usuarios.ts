@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { getSqlite } from '../db/connection'
-import type { CreateUsuarioInput, UsuarioListItem } from '@shared/dto'
+import type { CreateUsuarioInput, UpdateUsuarioInput, UsuarioListItem } from '@shared/dto'
 
 /**
  * Gestión mínima de usuarios local (Opción A del plan previo). Alcance:
@@ -159,6 +159,57 @@ export function resetPassword(
 
   const hash = bcrypt.hashSync(newPassword, 10)
   sqlite.prepare('UPDATE usuario SET password_hash = ? WHERE id = ?').run(hash, targetUserId)
+}
+
+/**
+ * Edita campos básicos del usuario: nombre visible, rol y flag puedeCancelar.
+ * NO toca login (es identificador estable) ni password (usar resetPassword).
+ *
+ * Reglas:
+ *   - viewer requiere admin
+ *   - viewer debe poder gestionar el rol ACTUAL del target Y el nuevo rol
+ *   - admin no puede asignar rol ≠ CAJERO; superusuario sí
+ *   - no puedes cambiar tu propio rol (anti-lockout)
+ */
+export function updateUsuario(viewerUserId: string, input: UpdateUsuarioInput): void {
+  const viewerRol = requireAdmin(viewerUserId)
+  const nombre = (input.nombre ?? '').trim()
+  if (!nombre) throw new Error('Nombre requerido')
+
+  const sqlite = getSqlite()
+  const target = sqlite
+    .prepare(
+      `SELECT u.id, t.nombre AS rol
+         FROM usuario u
+         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
+        WHERE u.id = ?`
+    )
+    .get(input.id) as { id: string; rol: string } | undefined
+  if (!target) throw new Error('Usuario no encontrado')
+
+  if (!canManageRole(viewerRol, target.rol)) {
+    throw new Error(`Un ${viewerRol} no puede modificar usuarios con rol ${target.rol}`)
+  }
+  if (!canManageRole(viewerRol, input.rol)) {
+    throw new Error(`Un ${viewerRol} no puede asignar el rol ${input.rol}`)
+  }
+
+  if (viewerUserId === input.id && target.rol !== input.rol) {
+    throw new Error('No puedes cambiar tu propio rol')
+  }
+
+  const tipo = sqlite
+    .prepare('SELECT id FROM tipo_usuario WHERE nombre = ?')
+    .get(input.rol) as { id: number } | undefined
+  if (!tipo) throw new Error(`Rol inválido: ${input.rol}`)
+
+  sqlite
+    .prepare(
+      `UPDATE usuario
+          SET nombre = ?, tipo_usuario_id = ?, puede_cancelar = ?
+        WHERE id = ?`
+    )
+    .run(nombre, tipo.id, input.puedeCancelar ? 1 : 0, input.id)
 }
 
 export function toggleActivoUsuario(

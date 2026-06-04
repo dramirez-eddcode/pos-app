@@ -146,11 +146,18 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
     if (data.cambio > 0) p.line(labelValue('CAMBIO', formatMoney(data.cambio)))
   }
 
-  // ── Monto en letras + agradecimiento ──────────────────────────────────────
+  // ── Monto en letras + footer (mensaje custom o default) ──────────────────
   p.feed(1)
   p.line(montoEnLetras(data.total))
   p.feed(2)
-  p.align('center').bold(true).line('¡ GRACIAS POR SU COMPRA !').bold(false)
+  p.align('center').bold(true)
+  const footerLines = (data.footer ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  if (footerLines.length > 0) {
+    for (const ln of footerLines) p.line(ln)
+  } else {
+    p.line('¡ GRACIAS POR SU COMPRA !')
+  }
+  p.bold(false)
   p.feed(3)
 
   // ── Corte y (opcional) cajón ──────────────────────────────────────────────

@@ -4,15 +4,39 @@
  * con un prefijo consistente: `<dominio>:<accion>`.
  */
 
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { login } from './services/auth'
 import {
+  completeWizard,
+  getBootstrapState,
+  getInstalacion,
+  resetInstalacion
+} from './services/instalacion'
+import { exportBackup, importBackup } from './services/backup'
+import {
+  createSucursal,
+  listSucursales,
+  toggleActivaSucursal,
+  updateSucursal
+} from './services/sucursales'
+import {
+  clearSucursalProductoOverride,
+  getCatalogoSucursal,
+  setSucursalProductoOverride
+} from './services/sucursalProducto'
+import { exportarSucursalAFarma } from './services/exportSucursal'
+import { applyFarma, pickFarma } from './services/importSucursal'
+import {
+  createProducto,
   getAllActivos,
   getAllLotesActivos,
   getByCodigo,
   getLotesByProducto,
+  listCatalogo,
   searchProductos,
-  updateIvaProductos
+  toggleActivoProducto,
+  updateIvaProductos,
+  updateProductoBasico
 } from './services/productos'
 import { peekNextFolio } from './services/folio'
 import { cancelVenta, createVenta, getTotalesRecientes, getVentaByFolio } from './services/ventas'
@@ -25,10 +49,10 @@ import {
   createUsuario,
   listUsuarios,
   resetPassword,
-  toggleActivoUsuario
+  toggleActivoUsuario,
+  updateUsuario
 } from './services/usuarios'
-import { testConnection as testSupabase } from './sync/supabase-client'
-import { isSupabaseConfigured } from './config'
+import { getEmpresa, updateEmpresa } from './services/empresa'
 import {
   getPrinters,
   openCashDrawer,
@@ -39,15 +63,23 @@ import {
 } from './printer'
 import { getSettings, updateSettings, type AppSettings } from './services/settings'
 import type {
+  CompleteWizardInput,
   CorteTipo,
   CreateAjustesInput,
   CreateEntradaInput,
+  CreateProductoInput,
   CreateSalidaInput,
+  CreateSucursalInput,
   CreateUsuarioInput,
   CreateVentaInput,
   ProductoSearchQuery,
+  SetSucursalProductoInput,
+  UpdateEmpresaInput,
   UpdateIvaInput,
-  UpdatePreciosInput
+  UpdatePreciosInput,
+  UpdateProductoInput,
+  UpdateSucursalInput,
+  UpdateUsuarioInput
 } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
 
@@ -55,9 +87,29 @@ export function registerIpcHandlers(): void {
   // ── app ──────────────────────────────────────────────────────────────────
   ipcMain.handle('app:ping', () => 'pong')
 
-  // ── supabase (Fase 3) ────────────────────────────────────────────────────
-  ipcMain.handle('supabase:is-configured', () => isSupabaseConfigured())
-  ipcMain.handle('supabase:test', async () => testSupabase())
+  // ── instalación (wizard primer arranque + reset) ────────────────────────
+  ipcMain.handle('instalacion:get', () => getInstalacion())
+  ipcMain.handle('instalacion:bootstrap-state', () => getBootstrapState())
+  ipcMain.handle('instalacion:complete-wizard', async (_e, input: CompleteWizardInput) =>
+    completeWizard(input)
+  )
+  ipcMain.handle('instalacion:reset', async (_e, viewerUserId: string, currentPassword: string) =>
+    resetInstalacion(viewerUserId, currentPassword)
+  )
+
+  // ── backup / restore ────────────────────────────────────────────────────
+  ipcMain.handle('backup:export', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return exportBackup(win)
+  })
+  ipcMain.handle('backup:import', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return importBackup(win)
+  })
+  ipcMain.handle('app:reload', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    win?.reload()
+  })
 
   // ── settings ─────────────────────────────────────────────────────────────
   ipcMain.handle('settings:get', async () => getSettings())
@@ -74,6 +126,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('productos:get-all-lotes-activos', async () => getAllLotesActivos())
   ipcMain.handle('productos:update-iva', async (_e, input: UpdateIvaInput) =>
     updateIvaProductos(input)
+  )
+  ipcMain.handle('productos:list-catalogo', async (_e, viewerUserId: string) =>
+    listCatalogo(viewerUserId)
+  )
+  ipcMain.handle('productos:create', async (_e, viewerUserId: string, input: CreateProductoInput) =>
+    createProducto(viewerUserId, input)
+  )
+  ipcMain.handle('productos:update', async (_e, viewerUserId: string, input: UpdateProductoInput) =>
+    updateProductoBasico(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'productos:toggle-activo',
+    async (_e, viewerUserId: string, productoId: string, activo: boolean) =>
+      toggleActivoProducto(viewerUserId, productoId, activo)
   )
 
   // ── ventas ───────────────────────────────────────────────────────────────
@@ -103,10 +169,72 @@ export function registerIpcHandlers(): void {
   // ── precios de venta ────────────────────────────────────────────────────
   ipcMain.handle('precios:update', async (_e, input: UpdatePreciosInput) => updatePrecios(input))
 
+  // ── sucursales (modo MATRIZ) ────────────────────────────────────────────
+  ipcMain.handle('sucursales:list', async (_e, viewerUserId: string) =>
+    listSucursales(viewerUserId)
+  )
+  ipcMain.handle('sucursales:create', async (_e, viewerUserId: string, input: CreateSucursalInput) =>
+    createSucursal(viewerUserId, input)
+  )
+  ipcMain.handle('sucursales:update', async (_e, viewerUserId: string, input: UpdateSucursalInput) =>
+    updateSucursal(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'sucursales:toggle-activa',
+    async (_e, viewerUserId: string, sucursalId: string, activa: boolean) =>
+      toggleActivaSucursal(viewerUserId, sucursalId, activa)
+  )
+
+  // ── overrides por sucursal (catálogo diferenciado) ─────────────────────
+  ipcMain.handle(
+    'sucursal-producto:get-catalogo',
+    async (_e, viewerUserId: string, sucursalId: string) =>
+      getCatalogoSucursal(viewerUserId, sucursalId)
+  )
+  ipcMain.handle(
+    'sucursal-producto:set',
+    async (_e, viewerUserId: string, input: SetSucursalProductoInput) =>
+      setSucursalProductoOverride(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'sucursal-producto:clear',
+    async (_e, viewerUserId: string, sucursalId: string, productoId: string) =>
+      clearSucursalProductoOverride(viewerUserId, sucursalId, productoId)
+  )
+
+  // ── export .farma matriz → sucursal ─────────────────────────────────────
+  ipcMain.handle(
+    'export:sucursal-farma',
+    async (e, viewerUserId: string, sucursalId: string) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      return exportarSucursalAFarma(viewerUserId, sucursalId, win)
+    }
+  )
+
+  // ── import .farma en modo SUCURSAL ──────────────────────────────────────
+  ipcMain.handle('import:pick-farma', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pickFarma(win)
+  })
+  ipcMain.handle(
+    'import:apply-farma',
+    async (_e, viewerUserId: string, filePath: string, force?: boolean) =>
+      applyFarma(viewerUserId, filePath, { force: Boolean(force) })
+  )
+
+  // ── empresa / sucursal ──────────────────────────────────────────────────
+  ipcMain.handle('empresa:get', async () => getEmpresa())
+  ipcMain.handle('empresa:update', async (_e, viewerUserId: string, input: UpdateEmpresaInput) =>
+    updateEmpresa(viewerUserId, input)
+  )
+
   // ── gestión de usuarios ─────────────────────────────────────────────────
   ipcMain.handle('usuarios:list', async (_e, viewerUserId: string) => listUsuarios(viewerUserId))
   ipcMain.handle('usuarios:create', async (_e, creatorUserId: string, input: CreateUsuarioInput) =>
     createUsuario(creatorUserId, input)
+  )
+  ipcMain.handle('usuarios:update', async (_e, viewerUserId: string, input: UpdateUsuarioInput) =>
+    updateUsuario(viewerUserId, input)
   )
   ipcMain.handle(
     'usuarios:reset-password',

@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { PackageMinus, PackagePlus, RefreshCcw, Repeat, Tags, Users } from 'lucide-react'
+import {
+  Boxes,
+  Building2,
+  Download,
+  PackageMinus,
+  PackagePlus,
+  RefreshCcw,
+  Tags,
+  Users
+} from 'lucide-react'
 import Modal from './Modal'
 
 interface Option {
@@ -20,6 +29,9 @@ interface Props {
   onAjustes: () => void
   onPrecios: () => void
   onUsuarios: () => void
+  onSucursal: () => void
+  onCatalogo: () => void
+  onImportar: () => void
 }
 
 /**
@@ -33,7 +45,10 @@ export default function ProcesosEspecialesModal({
   onSalidas,
   onAjustes,
   onPrecios,
-  onUsuarios
+  onUsuarios,
+  onSucursal,
+  onCatalogo,
+  onImportar
 }: Props) {
   const options: Option[] = [
     {
@@ -77,9 +92,19 @@ export default function ProcesosEspecialesModal({
       }
     },
     {
+      id: 'catalogo',
+      label: 'Catálogo de productos',
+      hint: 'Alta, edición y activación de productos',
+      icon: <Boxes className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onCatalogo()
+      }
+    },
+    {
       id: 'usuarios',
       label: 'Gestión de usuarios',
-      hint: 'Crear cajeros, resetear passwords, activar/desactivar',
+      hint: 'Crear, editar, resetear passwords, activar/desactivar',
       icon: <Users className="size-5 text-muted-foreground" />,
       handler: () => {
         onClose()
@@ -87,13 +112,24 @@ export default function ProcesosEspecialesModal({
       }
     },
     {
-      id: 'traspasos',
-      label: 'Traspasos entre sucursales',
-      hint: 'Mover mercancía a / desde otra sucursal',
-      icon: <Repeat className="size-5 text-muted-foreground" />,
-      disabled: true,
-      disabledReason: 'Requiere sincronización con Supabase (Fase 3)',
-      handler: () => {}
+      id: 'sucursal',
+      label: 'Datos de sucursal',
+      hint: 'Razón social, RFC, dirección — aparece en el ticket',
+      icon: <Building2 className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onSucursal()
+      }
+    },
+    {
+      id: 'importar',
+      label: 'Importar actualización (matriz)',
+      hint: 'Aplica archivo .farma con catálogo y precios de la matriz',
+      icon: <Download className="size-5 text-blue-600" />,
+      handler: () => {
+        onClose()
+        onImportar()
+      }
     }
   ]
 

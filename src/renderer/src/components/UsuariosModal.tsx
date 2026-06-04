@@ -7,7 +7,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { toast } from 'sonner'
-import { KeyRound, Power, Plus, UserCheck, UserX } from 'lucide-react'
+import { KeyRound, Pencil, Power, Plus, UserCheck, UserX } from 'lucide-react'
 import Modal from './Modal'
 import { useSession } from '../stores/session'
 import { formatRol } from '../lib/roles'
@@ -23,6 +23,7 @@ const ROLE_OPTIONS_ADMIN = ['CAJERO']
 
 type SubForm =
   | { kind: 'create' }
+  | { kind: 'edit'; target: UsuarioListItem }
   | { kind: 'reset'; target: UsuarioListItem }
   | null
 
@@ -115,7 +116,7 @@ export default function UsuariosModal({ open, onClose }: Props) {
                   <th className="px-2 py-1.5 w-32">Rol</th>
                   <th className="px-2 py-1.5 w-20 text-center">Estado</th>
                   <th className="px-2 py-1.5 w-24 text-center">Cancelar</th>
-                  <th className="px-2 py-1.5 w-44 text-right">Acciones</th>
+                  <th className="px-2 py-1.5 w-64 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,6 +163,15 @@ export default function UsuariosModal({ open, onClose }: Props) {
                       </td>
                       <td className="px-2 py-1 text-right">
                         <div className="inline-flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setSub({ kind: 'edit', target: u })}
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-border rounded hover:bg-muted text-[11px]"
+                            title="Editar datos"
+                          >
+                            <Pencil className="size-3" />
+                            Editar
+                          </button>
                           <button
                             type="button"
                             onClick={() => setSub({ kind: 'reset', target: u })}
@@ -218,6 +228,19 @@ export default function UsuariosModal({ open, onClose }: Props) {
         />
       )}
 
+      {sub?.kind === 'edit' && (
+        <EditUsuarioSubModal
+          open
+          target={sub.target}
+          roles={availableRoles}
+          onClose={() => setSub(null)}
+          onSaved={async () => {
+            setSub(null)
+            await load()
+          }}
+        />
+      )}
+
       {sub?.kind === 'reset' && (
         <ResetPasswordSubModal
           open
@@ -227,6 +250,145 @@ export default function UsuariosModal({ open, onClose }: Props) {
         />
       )}
     </>
+  )
+}
+
+// ── Sub-modal: Editar usuario ──────────────────────────────────────────────
+function EditUsuarioSubModal({
+  open,
+  target,
+  roles,
+  onClose,
+  onSaved
+}: {
+  open: boolean
+  target: UsuarioListItem
+  roles: string[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { user } = useSession()
+  const isSelf = user?.id === target.id
+  // Garantiza que el rol actual esté en la lista visible aunque el admin no lo
+  // pueda asignar (no podrá cambiarlo a otro, pero sí editar otros campos).
+  const rolesVisible = roles.includes(target.rol) ? roles : [target.rol, ...roles]
+  const [nombre, setNombre] = useState(target.nombre)
+  const [rol, setRol] = useState(target.rol)
+  const [puedeCancelar, setPuedeCancelar] = useState(target.puedeCancelar)
+  const [saving, setSaving] = useState(false)
+  const nombreRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (open) {
+      setNombre(target.nombre)
+      setRol(target.rol)
+      setPuedeCancelar(target.puedeCancelar)
+      setTimeout(() => nombreRef.current?.focus(), 80)
+    }
+  }, [open, target])
+
+  const submit = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault()
+      if (!user) return
+      setSaving(true)
+      try {
+        await window.api.usuarios.update(user.id, {
+          id: target.id,
+          nombre: nombre.trim(),
+          rol,
+          puedeCancelar
+        })
+        toast.success(`Usuario "${target.login}" actualizado`)
+        onSaved()
+      } catch (err) {
+        toast.error('No se pudo actualizar', {
+          description: err instanceof Error ? err.message : String(err)
+        })
+      } finally {
+        setSaving(false)
+      }
+    },
+    [user, target, nombre, rol, puedeCancelar, onSaved]
+  )
+
+  const canChangeRole = !isSelf
+
+  return (
+    <Modal
+      open={open}
+      title={`Editar — ${target.login}`}
+      onClose={onClose}
+      maxWidth="max-w-md"
+    >
+      <form onSubmit={submit} className="p-4 space-y-3 text-sm">
+        <div className="text-[11px] text-muted-foreground">
+          Login (no editable): <span className="font-mono">{target.login}</span>
+        </div>
+
+        <Field label="Nombre completo">
+          <input
+            ref={nombreRef}
+            type="text"
+            required
+            className="w-full border border-border rounded px-2 py-1.5"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            autoComplete="off"
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Rol">
+            <select
+              value={rol}
+              onChange={(e) => setRol(e.target.value)}
+              disabled={!canChangeRole || rolesVisible.length === 1}
+              className="w-full border border-border rounded px-2 py-1.5 bg-background disabled:bg-muted/30"
+              title={!canChangeRole ? 'No puedes cambiar tu propio rol' : undefined}
+            >
+              {rolesVisible.map((r) => (
+                <option key={r} value={r}>
+                  {formatRol(r)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Puede cancelar ventas">
+            <label className="flex items-center gap-2 py-1.5">
+              <input
+                type="checkbox"
+                checked={puedeCancelar}
+                onChange={(e) => setPuedeCancelar(e.target.checked)}
+              />
+              <span className="text-xs text-muted-foreground">Sí permitir cancelaciones</span>
+            </label>
+          </Field>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground border-t border-border pt-2">
+          Para cambiar password usa el botón "Password" en la lista.
+        </p>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+          >
+            {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 

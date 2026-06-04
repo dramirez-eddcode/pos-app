@@ -1,7 +1,52 @@
 import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
 
-// ── Sucursal local ──────────────────────────────────────────────────────────
-// Una sola fila. `id` es el sucursal_id global que viaja a Supabase en la Fase 3.
+// ── Instalación (1 fila, id fijo = 1) ───────────────────────────────────────
+// Define el modo de esta PC: MATRIZ gestiona N sucursales sin vender; SUCURSAL
+// es un POS conectado a una sucursal específica. Configurada por el wizard.
+export const instalacion = sqliteTable('instalacion', {
+  id: integer('id').primaryKey(), // siempre 1
+  tipo: text('tipo').notNull(), // 'MATRIZ' | 'SUCURSAL'
+  sucursalActivaId: text('sucursal_activa_id'),
+  matrizId: text('matriz_id'),
+  propietarioNombre: text('propietario_nombre'),
+  configuredAt: integer('configured_at', { mode: 'timestamp_ms' }),
+  schemaVersion: integer('schema_version').notNull().default(1)
+})
+
+// ── Sucursales (matriz: N filas · sucursal: 1 fila auto-creada en wizard) ──
+export const sucursal = sqliteTable('sucursal', {
+  id: text('id').primaryKey(),
+  codigo: text('codigo').notNull().unique(),
+  nombre: text('nombre').notNull(),
+  razonSocial: text('razon_social'),
+  rfc: text('rfc'),
+  calle: text('calle'),
+  colonia: text('colonia'),
+  ciudad: text('ciudad'),
+  estado: text('estado'),
+  activa: integer('activa', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+})
+
+// ── Overrides de producto por sucursal (matriz) ─────────────────────────────
+// Una fila por (sucursal, producto) sólo cuando esa sucursal tiene un valor
+// distinto al global o está excluida. Si no hay fila, la sucursal usa los
+// valores globales del producto.
+export const sucursalProducto = sqliteTable('sucursal_producto', {
+  sucursalId: text('sucursal_id')
+    .notNull()
+    .references(() => sucursal.id, { onDelete: 'cascade' }),
+  productoId: text('producto_id').notNull(), // FK definida en SQL crudo
+  precioOverride: real('precio_override'),
+  ivaModoOverride: text('iva_modo_override'),
+  ivaPorcentajeOverride: integer('iva_porcentaje_override'),
+  excluida: integer('excluida', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+})
+
+// ── Empresa (legado, sigue siendo el header del ticket en SUCURSAL) ────────
+// Una sola fila con la metadata de la sucursal donde corre este POS.
 export const empresa = sqliteTable('empresa', {
   id: text('id').primaryKey(),
   nombreComercial: text('nombre_comercial').notNull(),

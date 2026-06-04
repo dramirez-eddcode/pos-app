@@ -5,6 +5,52 @@
 
 import type { IvaModo, MetodoPago } from './types'
 
+export type InstalacionTipo = 'MATRIZ' | 'SUCURSAL'
+
+export type InstalacionDto =
+  | { configured: false }
+  | {
+      configured: true
+      tipo: InstalacionTipo
+      sucursalActivaId: string | null
+      matrizId: string | null
+      propietarioNombre: string | null
+      configuredAt: string // ISO
+      schemaVersion: number
+    }
+
+export interface ExistingAdminOption {
+  id: string
+  login: string
+  nombre: string
+  rol: string
+}
+
+export interface BootstrapStateDto {
+  instalacion: InstalacionDto
+  existingAdmins: ExistingAdminOption[]
+  totalUsuarios: number
+}
+
+export interface CompleteWizardInput {
+  tipo: InstalacionTipo
+  propietarioNombre: string
+  // Sólo en SUCURSAL
+  sucursalCodigo?: string
+  sucursalNombre?: string
+  razonSocial?: string | null
+  rfc?: string | null
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+  // Admin: o crea nuevo (adminLogin/Nombre/Password) o usa existente (useExistingUserId)
+  useExistingUserId?: string | null
+  adminLogin?: string
+  adminNombre?: string
+  adminPassword?: string
+}
+
 export interface SessionUser {
   id: string
   login: string
@@ -12,15 +58,205 @@ export interface SessionUser {
   tipoUsuarioId: number
   rol: string // nombre del rol: ADMINISTRADOR | CAJERO | SUPERVISOR | SUPERUSUARIO
   puedeCancelar: boolean
+  sucursal: EmpresaDto | null
+}
+
+export interface EmpresaDto {
+  id: string
+  nombreComercial: string
+  razonSocial: string
+  rfc: string | null
+  calle: string | null
+  colonia: string | null
+  ciudad: string | null
+  estado: string | null
+  sucursalNombre: string
+}
+
+export interface SucursalDto {
+  id: string
+  codigo: string
+  nombre: string
+  razonSocial: string | null
+  rfc: string | null
+  calle: string | null
+  colonia: string | null
+  ciudad: string | null
+  estado: string | null
+  activa: boolean
+  createdAt: string // ISO
+  updatedAt: string // ISO
+}
+
+export interface CreateSucursalInput {
+  codigo: string
+  nombre: string
+  razonSocial?: string | null
+  rfc?: string | null
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+}
+
+export interface SucursalProductoOverride {
+  precio: number | null
+  ivaModo: IvaModo | null
+  ivaPorcentaje: number | null
+  excluida: boolean
+}
+
+export interface CatalogoSucursalItem {
+  productoId: string
+  codigo: string
+  nombre: string
+  laboratorio: string | null
+  // Valores del catálogo global
+  precioGlobal: number
+  ivaModoGlobal: IvaModo
+  ivaPorcentajeGlobal: number
+  // Override (si la sucursal tiene fila propia)
+  override: SucursalProductoOverride | null
+  // Valores efectivos (override aplicado o global heredado)
+  precioEfectivo: number
+  ivaModoEfectivo: IvaModo
+  ivaPorcentajeEfectivo: number
+  // false si excluida en esta sucursal
+  aplica: boolean
+}
+
+// ── Export `.farma` (matriz → sucursal) ──────────────────────────────────
+export interface ExportFarmaProducto {
+  id: string
+  codigo: string
+  nombre: string
+  sustanciaActiva: string | null
+  descripcion: string | null
+  laboratorio: string | null
+  precio: number
+  costo: number
+  ivaModo: IvaModo
+  ivaPorcentaje: number
+  stockMaximo: number
+  stockMinimo: number
+}
+
+export interface ExportFarmaPayload {
+  matriz: {
+    id: string | null
+    propietario: string | null
+  }
   sucursal: {
     id: string
-    nombreComercial: string
-    sucursalNombre: string
+    codigo: string
+    nombre: string
+    razonSocial: string | null
     rfc: string | null
     calle: string | null
     colonia: string | null
     ciudad: string | null
-  } | null
+    estado: string | null
+  }
+  productos: ExportFarmaProducto[]
+}
+
+// Archivo completo `.farma` en disco
+export interface FarmaFile {
+  tipo: 'MATRIZ_A_SUCURSAL'
+  version: number
+  generadoEn: string
+  checksum: string
+  payload: ExportFarmaPayload
+}
+
+export interface ImportFarmaPreview {
+  filePath: string
+  tipo: string
+  version: number
+  generadoEn: string
+  checksum: string
+  matriz: { id: string | null; propietario: string | null }
+  sucursal: {
+    id: string
+    codigo: string
+    nombre: string
+    razonSocial: string | null
+    rfc: string | null
+  }
+  productosCount: number
+  // ¿Cómo aplica respecto a la sucursal local?
+  aplicaA: 'NUEVA' | 'COINCIDE' | 'DISTINTA'
+  sucursalLocalActual: { codigo: string; nombre: string } | null
+  modoLocal: string
+  ultimoImportLocalEn: string | null
+}
+
+export type PickFarmaResult =
+  | { ok: true; preview: ImportFarmaPreview }
+  | { ok: false; cancelled?: boolean; error?: string }
+
+export type ApplyFarmaResult =
+  | {
+      ok: true
+      sucursal: { id: string; codigo: string; nombre: string }
+      productosCreados: number
+      productosActualizados: number
+      generadoEn: string
+      primeraImport: boolean
+      sucursalCambiada: boolean
+    }
+  | {
+      ok: false
+      requiresForce?: boolean
+      error?: string
+    }
+
+export type ExportSucursalResult =
+  | {
+      ok: true
+      path: string
+      productosCount: number
+      bytes: number
+      generadoEn: string
+      checksum: string
+    }
+  | {
+      ok: false
+      cancelled?: boolean
+      error?: string
+    }
+
+export interface SetSucursalProductoInput {
+  sucursalId: string
+  productoId: string
+  // undefined = no tocar este campo; null = quitar override (usar global)
+  precio?: number | null
+  ivaModo?: IvaModo | null
+  ivaPorcentaje?: number | null
+  excluida?: boolean
+}
+
+export interface UpdateSucursalInput {
+  id: string
+  codigo: string
+  nombre: string
+  razonSocial?: string | null
+  rfc?: string | null
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+}
+
+export interface UpdateEmpresaInput {
+  nombreComercial: string
+  razonSocial: string
+  rfc?: string | null
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+  sucursalNombre: string
 }
 
 export type LoginResult = { ok: true; user: SessionUser } | { ok: false; error: string }
@@ -267,6 +503,49 @@ export interface UpdateIvaResult {
   actualizados: number
 }
 
+export interface ProductoCatalogoItem {
+  id: string
+  codigo: string
+  nombre: string
+  sustanciaActiva: string | null
+  descripcion: string | null
+  laboratorio: string | null
+  precio: number
+  costo: number
+  ivaPorcentaje: number
+  ivaModo: IvaModo
+  stockMaximo: number | null
+  stockMinimo: number | null
+  activo: boolean
+  existenciasTotal: number
+}
+
+export interface CreateProductoInput {
+  codigo: string
+  nombre: string
+  sustanciaActiva?: string | null
+  descripcion?: string | null
+  laboratorio?: string | null
+  precio: number
+  costo?: number
+  ivaModo: IvaModo
+  ivaPorcentaje: number
+  stockMaximo?: number | null
+  stockMinimo?: number | null
+}
+
+export interface UpdateProductoInput {
+  id: string
+  codigo: string
+  nombre: string
+  sustanciaActiva?: string | null
+  descripcion?: string | null
+  laboratorio?: string | null
+  costo?: number
+  stockMaximo?: number | null
+  stockMinimo?: number | null
+}
+
 export interface UsuarioListItem {
   id: string
   login: string
@@ -282,6 +561,13 @@ export interface CreateUsuarioInput {
   nombre: string
   password: string
   rol: string // ADMINISTRADOR | CAJERO | SUPERVISOR | SUPERUSUARIO
+  puedeCancelar: boolean
+}
+
+export interface UpdateUsuarioInput {
+  id: string
+  nombre: string
+  rol: string
   puedeCancelar: boolean
 }
 

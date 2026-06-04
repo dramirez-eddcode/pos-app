@@ -44,11 +44,13 @@ export async function login(loginName: string, password: string): Promise<LoginR
       ? {
           id: emp.id,
           nombreComercial: emp.nombreComercial,
+          razonSocial: emp.razonSocial,
           sucursalNombre: emp.sucursalNombre,
           rfc: emp.rfc ?? null,
           calle: emp.calle ?? null,
           colonia: emp.colonia ?? null,
-          ciudad: emp.ciudad ?? null
+          ciudad: emp.ciudad ?? null,
+          estado: emp.estado ?? null
         }
       : null
   }

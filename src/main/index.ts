@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { closeDb } from './db/connection'
-import { loadConfig } from './config'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -42,7 +41,6 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  loadConfig() // carga .env antes de todo
   electronApp.setAppUserModelId('mx.eddcode.farmaciasms.pos')
 
   // Mata el menú por defecto de Electron (File, Edit, View…). Con él nos
