@@ -20,7 +20,13 @@ import type {
   CreateVentaInput,
   CreateVentaResult,
   ApplyFarmaResult,
+  BodegaDto,
   BootstrapStateDto,
+  BulkUpsertProductosInput,
+  BulkUpsertProductosResult,
+  ConfigDto,
+  CreateBodegaInput,
+  UpdateBodegaInput,
   EmpresaDto,
   ExportSucursalResult,
   InstalacionDto,
@@ -39,6 +45,7 @@ import type {
   UpdateProductoInput,
   UpdateSucursalInput,
   UpdateUsuarioInput,
+  UpdateConfigInput,
   UsuarioListItem,
   VentaDetailDto
 } from '@shared/dto'
@@ -86,6 +93,12 @@ const api = {
       ipcRenderer.invoke('settings:update', patch)
   },
 
+  config: {
+    get: (): Promise<ConfigDto> => ipcRenderer.invoke('config:get'),
+    update: (viewerUserId: string, patch: UpdateConfigInput): Promise<ConfigDto> =>
+      ipcRenderer.invoke('config:update', viewerUserId, patch)
+  },
+
   auth: {
     login: (loginName: string, password: string): Promise<LoginResult> =>
       ipcRenderer.invoke('auth:login', loginName, password)
@@ -95,6 +108,20 @@ const api = {
     get: (): Promise<EmpresaDto | null> => ipcRenderer.invoke('empresa:get'),
     update: (viewerUserId: string, input: UpdateEmpresaInput): Promise<EmpresaDto> =>
       ipcRenderer.invoke('empresa:update', viewerUserId, input)
+  },
+
+  bodegas: {
+    list: (): Promise<BodegaDto[]> => ipcRenderer.invoke('bodegas:list'),
+    create: (viewerUserId: string, input: CreateBodegaInput): Promise<{ id: string }> =>
+      ipcRenderer.invoke('bodegas:create', viewerUserId, input),
+    update: (viewerUserId: string, input: UpdateBodegaInput): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('bodegas:update', viewerUserId, input),
+    toggleActiva: (
+      viewerUserId: string,
+      bodegaId: string,
+      activa: boolean
+    ): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('bodegas:toggle-activa', viewerUserId, bodegaId, activa)
   },
 
   sucursales: {
@@ -185,7 +212,12 @@ const api = {
       productoId: string,
       activo: boolean
     ): Promise<{ ok: true }> =>
-      ipcRenderer.invoke('productos:toggle-activo', viewerUserId, productoId, activo)
+      ipcRenderer.invoke('productos:toggle-activo', viewerUserId, productoId, activo),
+    bulkUpsert: (
+      viewerUserId: string,
+      input: BulkUpsertProductosInput
+    ): Promise<BulkUpsertProductosResult> =>
+      ipcRenderer.invoke('productos:bulk-upsert', viewerUserId, input)
   },
 
   ventas: {

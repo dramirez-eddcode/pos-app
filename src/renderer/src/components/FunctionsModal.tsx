@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { RotateCcw, FileText, Power } from 'lucide-react'
+import { RotateCcw, FileText, Power, DatabaseBackup } from 'lucide-react'
 import Modal from './Modal'
 
 interface Option {
@@ -16,6 +16,7 @@ interface Props {
   onClose: () => void
   onCancelaciones: () => void
   onCorte: () => void
+  onRespaldo: () => void
   onSalir: () => void
 }
 
@@ -28,6 +29,7 @@ export default function FunctionsModal({
   onClose,
   onCancelaciones,
   onCorte,
+  onRespaldo,
   onSalir
 }: Props) {
   const options: Option[] = [
@@ -49,6 +51,16 @@ export default function FunctionsModal({
       handler: () => {
         onClose()
         onCancelaciones()
+      }
+    },
+    {
+      id: 'respaldo',
+      label: 'Respaldo de datos',
+      hint: 'Crear respaldo en USB o restaurar desde uno',
+      icon: <DatabaseBackup className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onRespaldo()
       }
     },
     {

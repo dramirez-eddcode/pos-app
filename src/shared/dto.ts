@@ -7,6 +7,15 @@ import type { IvaModo, MetodoPago } from './types'
 
 export type InstalacionTipo = 'MATRIZ' | 'SUCURSAL'
 
+// ── Config de negocio (IVA default, etc.) ──────────────────────────────────
+export interface ConfigDto {
+  ivaPorcentajeDefault: number
+}
+
+export interface UpdateConfigInput {
+  ivaPorcentajeDefault?: number
+}
+
 export type InstalacionDto =
   | { configured: false }
   | {
@@ -93,6 +102,41 @@ export interface CreateSucursalInput {
   nombre: string
   razonSocial?: string | null
   rfc?: string | null
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+}
+
+// ── Bodegas (almacenes lógicos gestionados desde la matriz) ────────────────
+export interface BodegaDto {
+  id: string
+  codigo: string
+  nombre: string
+  calle: string | null
+  colonia: string | null
+  ciudad: string | null
+  estado: string | null
+  esPrincipal: boolean
+  activa: boolean
+  existenciasTotal: number // suma de saldos de lotes en esta bodega
+  createdAt: string // ISO
+  updatedAt: string // ISO
+}
+
+export interface CreateBodegaInput {
+  codigo: string
+  nombre: string
+  calle?: string | null
+  colonia?: string | null
+  ciudad?: string | null
+  estado?: string | null
+}
+
+export interface UpdateBodegaInput {
+  id: string
+  codigo: string
+  nombre: string
   calle?: string | null
   colonia?: string | null
   ciudad?: string | null
@@ -406,6 +450,7 @@ export interface EntradaItemInput {
 
 export interface CreateEntradaInput {
   usuarioId: string
+  bodegaId: string // bodega destino del inventario
   items: EntradaItemInput[]
   motivo?: string | null
 }
@@ -544,6 +589,33 @@ export interface UpdateProductoInput {
   costo?: number
   stockMaximo?: number | null
   stockMinimo?: number | null
+}
+
+// ── Carga masiva de catálogo por CSV ───────────────────────────────────────
+// Upsert por código: crea si no existe, actualiza datos + precio + IVA si existe.
+// Pensado para la carga inicial / mantenimiento masivo del catálogo.
+export interface BulkProductoRow {
+  codigo: string
+  nombre: string
+  sustanciaActiva?: string | null
+  descripcion?: string | null
+  laboratorio?: string | null
+  precio: number
+  costo?: number | null
+  ivaModo: IvaModo
+  ivaPorcentaje: number
+  stockMinimo?: number | null
+  stockMaximo?: number | null
+}
+
+export interface BulkUpsertProductosInput {
+  items: BulkProductoRow[]
+}
+
+export interface BulkUpsertProductosResult {
+  creados: number
+  actualizados: number
+  errores: { fila: number; codigo: string; error: string }[]
 }
 
 export interface UsuarioListItem {

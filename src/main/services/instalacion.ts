@@ -345,9 +345,18 @@ export function completeWizard(input: CompleteWizardInput): {
 }
 
 /**
- * Reset completo del modo: borra instalacion + sucursal + empresa + usuarios.
- * NO toca productos, ventas, cortes — sólo la capa de identidad/configuración.
- * Requiere confirmación de password del usuario actual (lo valida el caller).
+ * Reset del modo: limpieza completa de los datos de operación e identidad para
+ * volver al wizard desde cero (cambiar MATRIZ↔SUCURSAL o reinstalar limpio).
+ *
+ * Borra: instalación, usuarios, sucursales, empresa, productos, lotes, ventas,
+ * cortes, movimientos de caja/stock e histórico de precios.
+ * Conserva los catálogos semilla que la app necesita para arrancar: roles
+ * (tipo_usuario), config de IVA y bodegas (incl. la principal).
+ *
+ * No se puede borrar sólo los usuarios conservando ventas: las ventas/cortes
+ * referencian al cajero por FOREIGN KEY. Por eso el reset es una limpieza total.
+ *
+ * Requiere confirmación de password del usuario actual.
  */
 export function resetInstalacion(viewerUserId: string, currentPassword: string): { ok: true } {
   const sqlite = getSqlite()
@@ -368,14 +377,33 @@ export function resetInstalacion(viewerUserId: string, currentPassword: string):
     throw new Error('Password actual incorrecta')
   }
 
-  const run = sqlite.transaction(() => {
-    sqlite.exec(`
-      DELETE FROM instalacion;
-      DELETE FROM sucursal;
-      DELETE FROM empresa;
-      DELETE FROM usuario;
-    `)
-  })
-  run()
+  // Orden hijo→padre; además apagamos FKs durante el borrado para no depender
+  // del orden ni de columnas agregadas vía ALTER. PRAGMA fuera de la transacción
+  // (SQLite ignora foreign_keys dentro de una transacción abierta).
+  const tablas = [
+    'pago',
+    'venta_item',
+    'mov_stock',
+    'precio_historico',
+    'mov_caja',
+    'corte',
+    'venta',
+    'caducidad_lote',
+    'sucursal_producto',
+    'producto',
+    'empresa',
+    'sucursal',
+    'usuario',
+    'instalacion'
+  ]
+  sqlite.pragma('foreign_keys = OFF')
+  try {
+    const run = sqlite.transaction(() => {
+      for (const t of tablas) sqlite.exec(`DELETE FROM ${t};`)
+    })
+    run()
+  } finally {
+    sqlite.pragma('foreign_keys = ON')
+  }
   return { ok: true }
 }

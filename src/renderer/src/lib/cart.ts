@@ -1,5 +1,6 @@
 import type { ProductoDto } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
+import { calcFromBase, round2 } from '@shared/iva'
 
 export interface CartItem {
   productoId: string
@@ -12,38 +13,6 @@ export interface CartItem {
   importe: number
   iva: number
   total: number
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100
-}
-
-/**
- * Descompone un monto bruto en {importe, iva, total} según el modo de IVA.
- *   exento   → sin IVA
- *   sumar    → el monto dado es neto; se agrega IVA encima
- *   incluido → el monto dado ya trae IVA; se desglosa del total
- */
-function calcFromBase(
-  base: number,
-  ivaPorcentaje: number,
-  ivaModo: IvaModo
-): { importe: number; iva: number; total: number } {
-  if (ivaModo === 'exento' || ivaPorcentaje <= 0) {
-    const importe = round2(base)
-    return { importe, iva: 0, total: importe }
-  }
-  const tasa = ivaPorcentaje / 100
-  if (ivaModo === 'incluido') {
-    const total = round2(base)
-    const importe = round2(total / (1 + tasa))
-    const iva = round2(total - importe)
-    return { importe, iva, total }
-  }
-  // 'sumar'
-  const importe = round2(base)
-  const iva = round2(importe * tasa)
-  return { importe, iva, total: round2(importe + iva) }
 }
 
 export function makeCartItem(p: ProductoDto, cantidad = 1): CartItem {

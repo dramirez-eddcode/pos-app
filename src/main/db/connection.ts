@@ -257,6 +257,12 @@ function ensureSchema(sqlite: Database.Database): void {
 
   // Tablas agregadas en fases posteriores — idempotentes vía IF NOT EXISTS.
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      iva_porcentaje_default INTEGER NOT NULL DEFAULT 16,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS instalacion (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       tipo TEXT NOT NULL,
@@ -296,6 +302,43 @@ function ensureSchema(sqlite: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS sucursal_producto_producto_idx ON sucursal_producto (producto_id);
   `)
+
+  // Bodegas (gestión multi-bodega desde matriz). El inventario se separa por
+  // bodega vía caducidad_lote.bodega_id. Siempre existe la "Bodega Principal".
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS bodega (
+      id TEXT PRIMARY KEY NOT NULL,
+      codigo TEXT NOT NULL,
+      nombre TEXT NOT NULL,
+      calle TEXT,
+      colonia TEXT,
+      ciudad TEXT,
+      estado TEXT,
+      es_principal INTEGER NOT NULL DEFAULT 0,
+      activa INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS bodega_codigo_unique ON bodega (codigo);
+  `)
+  // Bodega principal por default (idempotente). Id fijo para poder backfillear.
+  sqlite
+    .prepare(
+      `INSERT OR IGNORE INTO bodega
+         (id, codigo, nombre, es_principal, activa, created_at, updated_at)
+       VALUES ('bodega-principal', 'PRINCIPAL', 'Bodega Principal', 1, 1, ?, ?)`
+    )
+    .run(Date.now(), Date.now())
+
+  // caducidad_lote.bodega_id — cada lote pertenece a una bodega. ALTER + backfill
+  // de lotes existentes a la bodega principal.
+  const hasBodegaId = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('caducidad_lote') WHERE name = 'bodega_id'`)
+    .get() as { v: number } | undefined
+  if (!hasBodegaId) {
+    sqlite.exec(`ALTER TABLE caducidad_lote ADD COLUMN bodega_id TEXT`)
+    sqlite.exec(`UPDATE caducidad_lote SET bodega_id = 'bodega-principal' WHERE bodega_id IS NULL`)
+  }
 
   // instalacion.ultimo_import_en — agregado en Fase 4 (rastreo del último .farma aplicado).
   const hasUltImport = sqlite
@@ -373,6 +416,13 @@ function seedDefaults(sqlite: Database.Database): void {
   for (const rol of ['CAJERO', 'ADMINISTRADOR', 'SUPERVISOR', 'SUPERUSUARIO']) {
     insertRol.run(rol)
   }
+
+  // Config de negocio: fila única id=1 con IVA default 16% (idempotente).
+  sqlite
+    .prepare(
+      'INSERT OR IGNORE INTO config (id, iva_porcentaje_default, updated_at) VALUES (1, 16, ?)'
+    )
+    .run(Date.now())
 }
 
 /**

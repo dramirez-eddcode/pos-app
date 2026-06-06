@@ -3,13 +3,16 @@ import { toast } from 'sonner'
 import {
   Boxes,
   Building,
+  DatabaseBackup,
   LogOut,
   PackagePlus,
+  Percent,
   Settings as SettingsIcon,
   Store,
   Tags,
   Upload,
-  Users
+  Users,
+  Warehouse
 } from 'lucide-react'
 import { useSession } from '../stores/session'
 import { fechaTicket, horaTicket } from '../lib/format'
@@ -20,6 +23,9 @@ import PreciosModal from '../components/PreciosModal'
 import SettingsModal from '../components/SettingsModal'
 import SucursalesModal from '../components/SucursalesModal'
 import UsuariosModal from '../components/UsuariosModal'
+import RespaldoModal from '../components/RespaldoModal'
+import IvaConfigModal from '../components/IvaConfigModal'
+import BodegasModal from '../components/BodegasModal'
 
 interface Props {
   propietarioNombre: string | null
@@ -41,25 +47,34 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
   const [entradaOpen, setEntradaOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [respaldoOpen, setRespaldoOpen] = useState(false)
+  const [ivaOpen, setIvaOpen] = useState(false)
+  const [bodegasOpen, setBodegasOpen] = useState(false)
   const [now, setNow] = useState<Date>(() => new Date())
 
   const [sucursalesCount, setSucursalesCount] = useState<{ total: number; activas: number } | null>(
     null
   )
+  const [bodegasCount, setBodegasCount] = useState<{ total: number; activas: number } | null>(null)
   const [catalogoStats, setCatalogoStats] = useState<CatalogoStats | null>(null)
   const [usuariosCount, setUsuariosCount] = useState<number | null>(null)
 
   const refresh = useCallback(async () => {
     if (!user) return
     try {
-      const [sucs, prods, users] = await Promise.all([
+      const [sucs, bods, prods, users] = await Promise.all([
         window.api.sucursales.list(user.id).catch(() => []),
+        window.api.bodegas.list().catch(() => []),
         window.api.productos.listCatalogo(user.id).catch(() => []),
         window.api.usuarios.list(user.id).catch(() => [])
       ])
       setSucursalesCount({
         total: sucs.length,
         activas: sucs.filter((s) => s.activa).length
+      })
+      setBodegasCount({
+        total: bods.length,
+        activas: bods.filter((b) => b.activa).length
       })
       setCatalogoStats({
         productos: prods.length,
@@ -77,10 +92,10 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
 
   // Re-refresh cuando se cierran modales (datos cambiaron)
   useEffect(() => {
-    if (!sucursalesOpen && !catalogoOpen && !usuariosOpen && !entradaOpen) {
+    if (!sucursalesOpen && !catalogoOpen && !usuariosOpen && !entradaOpen && !bodegasOpen) {
       refresh()
     }
-  }, [sucursalesOpen, catalogoOpen, usuariosOpen, entradaOpen, refresh])
+  }, [sucursalesOpen, catalogoOpen, usuariosOpen, entradaOpen, bodegasOpen, refresh])
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000)
@@ -171,6 +186,21 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             accent="blue"
           />
 
+          {/* Bodegas */}
+          <DashCard
+            icon={<Warehouse className="size-5 text-cyan-600" />}
+            titulo="Bodegas"
+            subtitulo={
+              bodegasCount
+                ? `${bodegasCount.activas} activas · ${bodegasCount.total} en total`
+                : 'Cargando…'
+            }
+            descripcion="Almacenes de la matriz. El inventario y las entradas se separan por bodega."
+            cta="Gestionar"
+            onClick={() => setBodegasOpen(true)}
+            accent="cyan"
+          />
+
           {/* Catálogo */}
           <DashCard
             icon={<Boxes className="size-5 text-purple-600" />}
@@ -195,6 +225,17 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             cta="Actualizar"
             onClick={() => setPreciosOpen(true)}
             accent="amber"
+          />
+
+          {/* Impuestos / IVA */}
+          <DashCard
+            icon={<Percent className="size-5 text-orange-600" />}
+            titulo="Impuestos (IVA)"
+            subtitulo="Tasa default del negocio"
+            descripcion="Configura el IVA sugerido al crear productos. Viaja a las sucursales por USB."
+            cta="Configurar"
+            onClick={() => setIvaOpen(true)}
+            accent="orange"
           />
 
           {/* Entradas */}
@@ -229,6 +270,17 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             onClick={() => setSucursalesOpen(true)}
             accent="rose"
           />
+
+          {/* Respaldo */}
+          <DashCard
+            icon={<DatabaseBackup className="size-5 text-teal-600" />}
+            titulo="Respaldo"
+            subtitulo="Copia completa en USB"
+            descripcion="Respalda toda la base de datos o restáurala. Hazlo al cierre del día o para mover el sistema a otra PC."
+            cta="Respaldar"
+            onClick={() => setRespaldoOpen(true)}
+            accent="teal"
+          />
         </div>
       </main>
 
@@ -253,12 +305,25 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
       <EntradaModal open={entradaOpen} onClose={() => setEntradaOpen(false)} userId={user.id} />
       <PreciosModal open={preciosOpen} onClose={() => setPreciosOpen(false)} userId={user.id} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
+      <IvaConfigModal open={ivaOpen} onClose={() => setIvaOpen(false)} />
+      <BodegasModal open={bodegasOpen} onClose={() => setBodegasOpen(false)} />
     </div>
   )
 }
 
 // ── Tarjeta del dashboard ───────────────────────────────────────────────────
-type Accent = 'blue' | 'purple' | 'amber' | 'green' | 'indigo' | 'rose' | 'muted'
+type Accent =
+  | 'blue'
+  | 'purple'
+  | 'amber'
+  | 'green'
+  | 'indigo'
+  | 'rose'
+  | 'teal'
+  | 'orange'
+  | 'cyan'
+  | 'muted'
 
 const ACCENT_BORDER: Record<Accent, string> = {
   blue: 'hover:border-blue-300',
@@ -267,6 +332,9 @@ const ACCENT_BORDER: Record<Accent, string> = {
   green: 'hover:border-green-300',
   indigo: 'hover:border-indigo-300',
   rose: 'hover:border-rose-300',
+  teal: 'hover:border-teal-300',
+  orange: 'hover:border-orange-300',
+  cyan: 'hover:border-cyan-300',
   muted: ''
 }
 
@@ -277,6 +345,9 @@ const ACCENT_BG: Record<Accent, string> = {
   green: 'bg-green-50',
   indigo: 'bg-indigo-50',
   rose: 'bg-rose-50',
+  teal: 'bg-teal-50',
+  orange: 'bg-orange-50',
+  cyan: 'bg-cyan-50',
   muted: 'bg-muted'
 }
 

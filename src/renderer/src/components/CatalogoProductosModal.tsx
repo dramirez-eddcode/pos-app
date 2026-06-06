@@ -8,11 +8,14 @@ import {
   type ReactNode
 } from 'react'
 import { toast } from 'sonner'
-import { Plus, Power, Pencil, Search } from 'lucide-react'
+import { Plus, Power, Pencil, Search, Download, Upload, FileDown } from 'lucide-react'
+import Papa from 'papaparse'
 import Modal from './Modal'
 import { useSession } from '../stores/session'
 import { money } from '../lib/format'
+import { calcFromBase } from '@shared/iva'
 import type {
+  BulkProductoRow,
   CreateProductoInput,
   ProductoCatalogoItem,
   UpdateProductoInput
@@ -40,6 +43,8 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   const [ivaFilter, setIvaFilter] = useState<IvaFilter>('todos')
   const [sub, setSub] = useState<SubForm>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -97,6 +102,98 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
         })
       } finally {
         setBusyId(null)
+      }
+    },
+    [user, load]
+  )
+
+  // ── CSV: plantilla / exportar / importar masivo ──────────────────────────
+  const downloadPlantilla = useCallback(() => {
+    const ejemplo =
+      '7501234567890,EJEMPLO PARACETAMOL 500MG C/10,Paracetamol,,Genérico,25.50,15.00,incluido,16,5,50'
+    const content = '﻿' + [CSV_HEADER, ejemplo].join('\r\n')
+    downloadCsvFile(content, `catalogo-plantilla-farmacias-ms-${todayStr()}.csv`)
+    toast.success('Plantilla descargada', {
+      description: 'Una fila por producto. iva_modo: exento, sumar o incluido. Borra la fila de ejemplo.'
+    })
+  }, [])
+
+  const exportarCSV = useCallback(() => {
+    if (list.length === 0) {
+      toast.warning('No hay productos para exportar')
+      return
+    }
+    const lines = list.map((p) =>
+      [
+        p.codigo,
+        p.nombre,
+        p.sustanciaActiva ?? '',
+        p.descripcion ?? '',
+        p.laboratorio ?? '',
+        p.precio.toFixed(2),
+        p.costo.toFixed(2),
+        p.ivaModo,
+        String(p.ivaPorcentaje),
+        String(p.stockMinimo ?? 0),
+        String(p.stockMaximo ?? 0)
+      ]
+        .map((v) => escapeCsv(String(v)))
+        .join(',')
+    )
+    const content = '﻿' + [CSV_HEADER, ...lines].join('\r\n')
+    downloadCsvFile(content, `catalogo-farmacias-ms-${todayStr()}.csv`)
+    toast.success(`Exportados ${list.length.toLocaleString('es-MX')} productos`)
+  }, [list])
+
+  const onFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      if (!file || !user) return
+      setImporting(true)
+      try {
+        const text = await file.text()
+        const parsed = Papa.parse<Record<string, string>>(text, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: (h) => h.trim().toLowerCase()
+        })
+        const rows = parsed.data.filter((r) => (r.codigo ?? '').trim())
+        if (rows.length === 0) {
+          toast.error('El CSV no tiene filas válidas', { description: `Encabezado: ${CSV_HEADER}` })
+          return
+        }
+        const items: BulkProductoRow[] = rows.map((r) => ({
+          codigo: (r.codigo ?? '').trim(),
+          nombre: (r.nombre ?? '').trim(),
+          sustanciaActiva: (r.sustancia ?? '').trim() || null,
+          descripcion: (r.descripcion ?? '').trim() || null,
+          laboratorio: (r.laboratorio ?? '').trim() || null,
+          precio: parseNum(r.precio),
+          costo: parseNum(r.costo),
+          ivaModo: csvIvaModo(r.iva_modo),
+          ivaPorcentaje: Math.round(parseNum(r.iva_porcentaje)),
+          stockMinimo: Math.round(parseNum(r.stock_minimo)),
+          stockMaximo: Math.round(parseNum(r.stock_maximo))
+        }))
+        const res = await window.api.productos.bulkUpsert(user.id, { items })
+        const parts = [`${res.creados} creados`, `${res.actualizados} actualizados`]
+        if (res.errores.length) parts.push(`${res.errores.length} con error`)
+        if (res.errores.length > 0) {
+          console.warn('[catalogo csv] filas con error:', res.errores.slice(0, 100))
+          toast.warning('Importación con observaciones', {
+            description: `${parts.join(' · ')}. Revisa la consola para el detalle.`
+          })
+        } else {
+          toast.success('Catálogo importado', { description: parts.join(' · ') })
+        }
+        await load()
+      } catch (err) {
+        toast.error('Error leyendo CSV', {
+          description: err instanceof Error ? err.message : String(err)
+        })
+      } finally {
+        setImporting(false)
       }
     },
     [user, load]
@@ -166,6 +263,46 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
               onClick={() => setIvaFilter('incluido')}
               tone="blue"
             />
+          </div>
+
+          {/* Barra CSV: plantilla / exportar / importar masivo */}
+          <div className="flex items-center gap-2 text-xs border border-dashed border-border rounded px-3 py-2 bg-muted/20">
+            <span className="text-muted-foreground mr-1 font-medium">Carga masiva (CSV):</span>
+            <button
+              type="button"
+              onClick={downloadPlantilla}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded hover:bg-muted"
+            >
+              <Download className="size-3.5" />
+              Plantilla
+            </button>
+            <button
+              type="button"
+              onClick={exportarCSV}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded hover:bg-muted"
+            >
+              <FileDown className="size-3.5" />
+              Exportar ({list.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={importing}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              <Upload className="size-3.5" />
+              {importing ? 'Importando…' : 'Importar'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={onFileSelected}
+            />
+            <span className="text-[10px] text-muted-foreground ml-auto">
+              Importar crea o actualiza por código (incluye precio e IVA).
+            </span>
           </div>
 
           <div className="border border-border rounded overflow-auto max-h-[60vh]">
@@ -355,16 +492,41 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
       : EMPTY_FORM
   )
   const [saving, setSaving] = useState(false)
+  const [ivaDefault, setIvaDefault] = useState(16)
   const codigoRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setTimeout(() => codigoRef.current?.focus(), 80)
+    window.api.config
+      .get()
+      .then((c) => setIvaDefault(c.ivaPorcentajeDefault))
+      .catch(() => {})
   }, [])
 
   const onChange =
     (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       setForm((prev) => ({ ...prev, [field]: e.target.value }))
     }
+
+  // Al elegir un modo con IVA, pre-llena la tasa con el default del negocio si
+  // el campo está vacío o en 0 (para no teclear 16 cada vez).
+  const onIvaModoChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
+    const modo = e.target.value as IvaModo
+    setForm((prev) => ({
+      ...prev,
+      ivaModo: modo,
+      ivaPorcentaje:
+        modo !== 'exento' && (prev.ivaPorcentaje === '' || prev.ivaPorcentaje === '0')
+          ? String(ivaDefault)
+          : prev.ivaPorcentaje
+    }))
+  }
+
+  // Vista previa del precio según el modo de IVA (misma lógica que el POS).
+  const precioNum = Number(form.precio)
+  const previewPct = form.ivaModo === 'exento' ? 0 : Number(form.ivaPorcentaje || '0')
+  const previewOk = form.precio.trim() !== '' && Number.isFinite(precioNum) && precioNum >= 0
+  const desglose = previewOk ? calcFromBase(precioNum, previewPct, form.ivaModo) : null
 
   const submit = useCallback(
     async (e: FormEvent) => {
@@ -524,7 +686,7 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
               disabled={isEdit}
               className="w-full border border-border rounded px-2 py-1.5 bg-background disabled:bg-muted/30"
               value={form.ivaModo}
-              onChange={onChange('ivaModo')}
+              onChange={onIvaModoChange}
             >
               <option value="exento">Exento</option>
               <option value="sumar">Sumar al cobrar</option>
@@ -544,6 +706,30 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
             />
           </Field>
         </div>
+
+        {/* Vista previa del precio de venta según el modo de IVA */}
+        {desglose && (
+          <div className="rounded border border-border bg-muted/30 px-3 py-2 space-y-1.5">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Vista previa del precio
+            </div>
+            <div className="grid grid-cols-3 gap-2 font-mono text-sm">
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">Importe (neto)</div>
+                <div>{money(desglose.importe)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">IVA</div>
+                <div>{money(desglose.iva)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">Precio de venta</div>
+                <div className="font-semibold text-blue-700">{money(desglose.total)}</div>
+              </div>
+            </div>
+            <div className="text-[10px] text-muted-foreground">{ivaModoHint(form.ivaModo)}</div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Stock mínimo (aviso)">
@@ -594,6 +780,48 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
       </form>
     </Modal>
   )
+}
+
+function ivaModoHint(modo: IvaModo): string {
+  if (modo === 'exento') return 'Exento: el precio no lleva IVA.'
+  if (modo === 'sumar') return 'Sumar: el precio capturado es neto; el cliente paga precio + IVA.'
+  return 'Incluido: el precio capturado ya trae IVA; se desglosa del total.'
+}
+
+// ── Helpers CSV ────────────────────────────────────────────────────────────
+const CSV_HEADER =
+  'codigo,nombre,sustancia,descripcion,laboratorio,precio,costo,iva_modo,iva_porcentaje,stock_minimo,stock_maximo'
+
+function escapeCsv(v: string): string {
+  return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v
+}
+
+function parseNum(raw: string | undefined): number {
+  const s = (raw ?? '').trim()
+  if (!s) return 0
+  const n = parseFloat(s.replace(/[^0-9.\-]/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
+function csvIvaModo(raw: string | undefined): IvaModo {
+  const v = (raw ?? '').trim().toLowerCase()
+  return v === 'sumar' || v === 'incluido' ? v : 'exento'
+}
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function downloadCsvFile(content: string, filename: string): void {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

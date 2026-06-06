@@ -20,6 +20,12 @@ import {
   updateSucursal
 } from './services/sucursales'
 import {
+  createBodega,
+  listBodegas,
+  toggleActivaBodega,
+  updateBodega
+} from './services/bodegas'
+import {
   clearSucursalProductoOverride,
   getCatalogoSucursal,
   setSucursalProductoOverride
@@ -27,6 +33,7 @@ import {
 import { exportarSucursalAFarma } from './services/exportSucursal'
 import { applyFarma, pickFarma } from './services/importSucursal'
 import {
+  bulkUpsertProductos,
   createProducto,
   getAllActivos,
   getAllLotesActivos,
@@ -62,10 +69,14 @@ import {
   printTest
 } from './printer'
 import { getSettings, updateSettings, type AppSettings } from './services/settings'
+import { getConfig, updateConfig } from './services/config'
 import type {
+  BulkUpsertProductosInput,
   CompleteWizardInput,
   CorteTipo,
   CreateAjustesInput,
+  CreateBodegaInput,
+  UpdateBodegaInput,
   CreateEntradaInput,
   CreateProductoInput,
   CreateSalidaInput,
@@ -79,7 +90,8 @@ import type {
   UpdatePreciosInput,
   UpdateProductoInput,
   UpdateSucursalInput,
-  UpdateUsuarioInput
+  UpdateUsuarioInput,
+  UpdateConfigInput
 } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
 
@@ -115,6 +127,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('settings:get', async () => getSettings())
   ipcMain.handle('settings:update', async (_e, patch: Partial<AppSettings>) => updateSettings(patch))
 
+  // ── config de negocio (IVA default, etc.) ────────────────────────────────
+  ipcMain.handle('config:get', async () => getConfig())
+  ipcMain.handle('config:update', async (_e, viewerUserId: string, patch: UpdateConfigInput) =>
+    updateConfig(viewerUserId, patch)
+  )
+
   // ── auth ─────────────────────────────────────────────────────────────────
   ipcMain.handle('auth:login', async (_e, loginName: string, password: string) => login(loginName, password))
 
@@ -140,6 +158,11 @@ export function registerIpcHandlers(): void {
     'productos:toggle-activo',
     async (_e, viewerUserId: string, productoId: string, activo: boolean) =>
       toggleActivoProducto(viewerUserId, productoId, activo)
+  )
+  ipcMain.handle(
+    'productos:bulk-upsert',
+    async (_e, viewerUserId: string, input: BulkUpsertProductosInput) =>
+      bulkUpsertProductos(viewerUserId, input)
   )
 
   // ── ventas ───────────────────────────────────────────────────────────────
@@ -183,6 +206,20 @@ export function registerIpcHandlers(): void {
     'sucursales:toggle-activa',
     async (_e, viewerUserId: string, sucursalId: string, activa: boolean) =>
       toggleActivaSucursal(viewerUserId, sucursalId, activa)
+  )
+
+  // ── bodegas (modo MATRIZ) ────────────────────────────────────────────────
+  ipcMain.handle('bodegas:list', async () => listBodegas())
+  ipcMain.handle('bodegas:create', async (_e, viewerUserId: string, input: CreateBodegaInput) =>
+    createBodega(viewerUserId, input)
+  )
+  ipcMain.handle('bodegas:update', async (_e, viewerUserId: string, input: UpdateBodegaInput) =>
+    updateBodega(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'bodegas:toggle-activa',
+    async (_e, viewerUserId: string, bodegaId: string, activa: boolean) =>
+      toggleActivaBodega(viewerUserId, bodegaId, activa)
   )
 
   // ── overrides por sucursal (catálogo diferenciado) ─────────────────────

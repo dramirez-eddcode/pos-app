@@ -13,6 +13,35 @@ export const instalacion = sqliteTable('instalacion', {
   schemaVersion: integer('schema_version').notNull().default(1)
 })
 
+// ── Config de negocio (1 fila, id fijo = 1) ────────────────────────────────
+// Configuración fiscal/comercial que SÍ viaja por USB a las sucursales (a
+// diferencia de settings.json, que es hardware por PC). El IVA default lo fija
+// la matriz; al crear un producto se usa como tasa sugerida.
+export const config = sqliteTable('config', {
+  id: integer('id').primaryKey(), // siempre 1
+  ivaPorcentajeDefault: integer('iva_porcentaje_default').notNull().default(16),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+})
+
+// ── Bodegas (matriz: N almacenes lógicos · stock separado por bodega) ──────
+// Cada bodega es un almacén gestionado desde la matriz (sin PC propia). El
+// inventario (caducidad_lote.bodega_id) se separa por bodega. Siempre existe al
+// menos la "Bodega Principal" (id fijo 'bodega-principal'); en una SUCURSAL es
+// el único almacén y representa su stock local.
+export const bodega = sqliteTable('bodega', {
+  id: text('id').primaryKey(),
+  codigo: text('codigo').notNull().unique(),
+  nombre: text('nombre').notNull(),
+  calle: text('calle'),
+  colonia: text('colonia'),
+  ciudad: text('ciudad'),
+  estado: text('estado'),
+  esPrincipal: integer('es_principal', { mode: 'boolean' }).notNull().default(false),
+  activa: integer('activa', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull()
+})
+
 // ── Sucursales (matriz: N filas · sucursal: 1 fila auto-creada en wizard) ──
 export const sucursal = sqliteTable('sucursal', {
   id: text('id').primaryKey(),
@@ -111,6 +140,10 @@ export const caducidadLote = sqliteTable(
     productoId: text('producto_id')
       .notNull()
       .references(() => producto.id),
+    // Bodega dueña del lote. Columna agregada vía ALTER; default = bodega principal.
+    bodegaId: text('bodega_id')
+      .notNull()
+      .references(() => bodega.id),
     total: integer('total').notNull(),
     saldo: integer('saldo').notNull(),
     fechaCaducidad: integer('fecha_caducidad', { mode: 'timestamp_ms' }).notNull(),

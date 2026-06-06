@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { getSqlite } from '../db/connection'
 import type {
+  BulkUpsertProductosInput,
+  BulkUpsertProductosResult,
   CreateProductoInput,
   ProductoCatalogoItem,
   ProductoDto,
@@ -507,6 +509,117 @@ export function updateProductoBasico(
     )
 
   return { ok: true }
+}
+
+/**
+ * Carga/actualización masiva del catálogo (importador CSV). Upsert por código:
+ * crea el producto si no existe, o actualiza datos + precio + IVA si ya existe.
+ * Pensado para la carga inicial y el mantenimiento masivo, por eso SÍ escribe
+ * precio/IVA directo (a diferencia de la edición individual, que los bloquea).
+ *
+ * Todo en una transacción: si una fila truena por un error inesperado, se
+ * revierte todo. Las filas con datos inválidos se reportan en `errores` y se
+ * omiten sin abortar el resto.
+ */
+export function bulkUpsertProductos(
+  viewerUserId: string,
+  input: BulkUpsertProductosInput
+): BulkUpsertProductosResult {
+  requireAdmin(viewerUserId)
+  if (!input.items || input.items.length === 0) throw new Error('Sin productos a importar')
+
+  const sqlite = getSqlite()
+  const errores: BulkUpsertProductosResult['errores'] = []
+
+  const run = sqlite.transaction(() => {
+    let creados = 0
+    let actualizados = 0
+    const now = Date.now()
+
+    const selByCodigo = sqlite.prepare('SELECT id FROM producto WHERE codigo = ?')
+    const insProd = sqlite.prepare(
+      `INSERT INTO producto
+         (id, codigo, nombre, sustancia_activa, descripcion, laboratorio,
+          precio, costo, iva_porcentaje, iva_modo, stock_maximo, stock_minimo,
+          activo, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+    )
+    const updProd = sqlite.prepare(
+      `UPDATE producto SET
+         nombre = ?, sustancia_activa = ?, descripcion = ?, laboratorio = ?,
+         precio = ?, costo = ?, iva_porcentaje = ?, iva_modo = ?,
+         stock_maximo = ?, stock_minimo = ?, activo = 1, updated_at = ?
+       WHERE id = ?`
+    )
+
+    input.items.forEach((row, i) => {
+      const fila = i + 1
+      const codigo = (row.codigo ?? '').trim()
+      const nombre = (row.nombre ?? '').trim()
+      if (!codigo) {
+        errores.push({ fila, codigo: '', error: 'Código vacío' })
+        return
+      }
+      if (!nombre) {
+        errores.push({ fila, codigo, error: 'Nombre vacío' })
+        return
+      }
+      if (!Number.isFinite(row.precio) || row.precio < 0) {
+        errores.push({ fila, codigo, error: `Precio inválido (${row.precio})` })
+        return
+      }
+      const ivaModo = normalizeIvaModo(row.ivaModo)
+      const ivaPorcentaje =
+        ivaModo === 'exento'
+          ? 0
+          : Math.max(0, Math.min(100, Math.round(Number(row.ivaPorcentaje) || 0)))
+      const precio = Number(row.precio)
+      const costo = Number.isFinite(row.costo as number) && (row.costo as number) >= 0 ? Number(row.costo) : 0
+      const stockMaximo = nullableInt(row.stockMaximo) ?? 0
+      const stockMinimo = nullableInt(row.stockMinimo) ?? 0
+
+      const existente = selByCodigo.get(codigo) as { id: string } | undefined
+      if (existente) {
+        updProd.run(
+          nombre,
+          nullableTrim(row.sustanciaActiva),
+          nullableTrim(row.descripcion),
+          nullableTrim(row.laboratorio),
+          precio,
+          costo,
+          ivaPorcentaje,
+          ivaModo,
+          stockMaximo,
+          stockMinimo,
+          now,
+          existente.id
+        )
+        actualizados++
+      } else {
+        insProd.run(
+          randomUUID(),
+          codigo,
+          nombre,
+          nullableTrim(row.sustanciaActiva),
+          nullableTrim(row.descripcion),
+          nullableTrim(row.laboratorio),
+          precio,
+          costo,
+          ivaPorcentaje,
+          ivaModo,
+          stockMaximo,
+          stockMinimo,
+          now
+        )
+        creados++
+      }
+    })
+
+    return { creados, actualizados }
+  })
+
+  const { creados, actualizados } = run()
+  return { creados, actualizados, errores }
 }
 
 export function toggleActivoProducto(

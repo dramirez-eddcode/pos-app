@@ -19,7 +19,13 @@ import type {
   CreateVentaInput,
   CreateVentaResult,
   ApplyFarmaResult,
+  BodegaDto,
   BootstrapStateDto,
+  BulkUpsertProductosInput,
+  BulkUpsertProductosResult,
+  ConfigDto,
+  CreateBodegaInput,
+  UpdateBodegaInput,
   EmpresaDto,
   ExportSucursalResult,
   InstalacionDto,
@@ -39,6 +45,7 @@ import type {
   UpdateProductoInput,
   UpdateSucursalInput,
   UpdateUsuarioInput,
+  UpdateConfigInput,
   UsuarioListItem,
   VentaDetailDto,
   SucursalDto
@@ -78,12 +85,26 @@ declare global {
         get: () => Promise<AppSettings>
         update: (patch: Partial<AppSettings>) => Promise<AppSettings>
       }
+      config: {
+        get: () => Promise<ConfigDto>
+        update: (viewerUserId: string, patch: UpdateConfigInput) => Promise<ConfigDto>
+      }
       auth: {
         login: (loginName: string, password: string) => Promise<LoginResult>
       }
       empresa: {
         get: () => Promise<EmpresaDto | null>
         update: (viewerUserId: string, input: UpdateEmpresaInput) => Promise<EmpresaDto>
+      }
+      bodegas: {
+        list: () => Promise<BodegaDto[]>
+        create: (viewerUserId: string, input: CreateBodegaInput) => Promise<{ id: string }>
+        update: (viewerUserId: string, input: UpdateBodegaInput) => Promise<{ ok: true }>
+        toggleActiva: (
+          viewerUserId: string,
+          bodegaId: string,
+          activa: boolean
+        ) => Promise<{ ok: true }>
       }
       sucursales: {
         list: (viewerUserId: string) => Promise<SucursalDto[]>
@@ -159,6 +180,10 @@ declare global {
           productoId: string,
           activo: boolean
         ) => Promise<{ ok: true }>
+        bulkUpsert: (
+          viewerUserId: string,
+          input: BulkUpsertProductosInput
+        ) => Promise<BulkUpsertProductosResult>
       }
       ventas: {
         nextFolio: () => Promise<number>

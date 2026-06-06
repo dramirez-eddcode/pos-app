@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, Download, Upload } from 'lucide-react'
+import { AlertTriangle, Database } from 'lucide-react'
 import Modal from './Modal'
+import RespaldoModal from './RespaldoModal'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
 import { isAdminLike } from '../lib/roles'
@@ -21,9 +22,9 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [drawerOnCash, setDrawerOnCash] = useState<boolean>(true)
   const [showTime, setShowTime] = useState<boolean>(false)
   const [receiptFooter, setReceiptFooter] = useState<string>('')
-  const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save' | 'backup' | 'restore'>(null)
+  const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save'>(null)
   const [resetOpen, setResetOpen] = useState(false)
-  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [respaldoOpen, setRespaldoOpen] = useState(false)
   const userIsAdmin = isAdminLike(user)
 
   const loadPrinters = useCallback(async () => {
@@ -68,22 +69,6 @@ export default function SettingsModal({ open, onClose }: Props) {
     else toast.error('No se pudo abrir el cajón', { description: (r.stderr || r.stdout).trim() })
   }
 
-  const doBackup = async () => {
-    setBusy('backup')
-    try {
-      const r = await window.api.backup.export()
-      if (r.cancelled) return
-      if (r.ok) {
-        const mb = ((r.bytes ?? 0) / 1024 / 1024).toFixed(2)
-        toast.success('Respaldo guardado', { description: `${mb} MB → ${r.path}` })
-      } else {
-        toast.error('Falló el respaldo', { description: r.error ?? 'Error desconocido' })
-      }
-    } finally {
-      setBusy(null)
-    }
-  }
-
   const save = async () => {
     setBusy('save')
     try {
@@ -104,7 +89,7 @@ export default function SettingsModal({ open, onClose }: Props) {
 
   return (
     <>
-    <Modal open={open && !resetOpen && !restoreOpen} title="Configuración" onClose={onClose} maxWidth="max-w-lg">
+    <Modal open={open && !resetOpen && !respaldoOpen} title="Configuración" onClose={onClose} maxWidth="max-w-lg">
       <div className="p-4 space-y-4 text-sm">
         <section className="space-y-2">
           <label className="block font-medium">Impresora de tickets</label>
@@ -195,41 +180,20 @@ export default function SettingsModal({ open, onClose }: Props) {
 
         {/* Respaldo / restauración ──────────────────────────────────────── */}
         <section className="pt-3 border-t border-border space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-medium text-xs">Respaldo de la base de datos</div>
-              <div className="text-[11px] text-muted-foreground">
-                Guarda una copia completa del sistema en USB. Hazlo al cierre del día.
-              </div>
-            </div>
+          <div className="font-medium text-xs">Respaldo de la base de datos</div>
+          <div className="text-[11px] text-muted-foreground">
+            Guarda una copia completa del sistema en USB o restaura desde un respaldo. Hazlo al
+            cierre del día.
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={doBackup}
-              disabled={busy !== null}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 text-sm"
-            >
-              <Download className="size-3.5" />
-              {busy === 'backup' ? 'Respaldando…' : 'Crear respaldo'}
-            </button>
-            {userIsAdmin && (
-              <button
-                type="button"
-                onClick={() => setRestoreOpen(true)}
-                disabled={busy !== null}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-amber-50 hover:border-amber-300 disabled:opacity-50 text-sm text-amber-800"
-              >
-                <Upload className="size-3.5" />
-                Restaurar
-              </button>
-            )}
-          </div>
-          {!userIsAdmin && (
-            <p className="text-[11px] text-muted-foreground">
-              Restaurar respaldo requiere permisos de administrador.
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={() => setRespaldoOpen(true)}
+            disabled={busy !== null}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 text-sm"
+          >
+            <Database className="size-3.5" />
+            Respaldo y restauración…
+          </button>
         </section>
 
         {/* Zona peligrosa: reset de modo ──────────────────────────────── */}
@@ -240,8 +204,8 @@ export default function SettingsModal({ open, onClose }: Props) {
               <div className="flex-1">
                 <div className="font-medium text-xs text-red-800">Zona peligrosa</div>
                 <div className="text-[11px] text-muted-foreground">
-                  Borra la configuración de modo (MATRIZ/SUCURSAL), usuarios y datos de sucursal.
-                  Productos y ventas se mantienen. Tendrás que volver a configurar el wizard.
+                  Limpieza total: borra usuarios, sucursales, productos, ventas, cortes y
+                  existencias para volver al wizard desde cero. No se puede deshacer.
                 </div>
               </div>
             </div>
@@ -282,11 +246,7 @@ export default function SettingsModal({ open, onClose }: Props) {
         onClose={() => setResetOpen(false)}
       />
     )}
-    {restoreOpen && (
-      <RestoreSubModal
-        onClose={() => setRestoreOpen(false)}
-      />
-    )}
+    <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
     </>
   )
 }
@@ -321,14 +281,16 @@ function ResetModoSubModal({ userId, onClose }: { userId: string; onClose: () =>
     <Modal open title="⚠ Resetear modo de instalación" onClose={busy ? () => {} : onClose} maxWidth="max-w-md">
       <form onSubmit={submit} className="p-4 space-y-3 text-sm">
         <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900">
-          <div className="font-semibold mb-1">Esta acción borra:</div>
+          <div className="font-semibold mb-1">Limpieza total — esta acción borra:</div>
           <ul className="list-disc list-inside space-y-0.5">
             <li>Configuración de modo (MATRIZ / SUCURSAL)</li>
             <li>Todos los usuarios (incluido tú)</li>
-            <li>Datos de la sucursal local + lista de sucursales (si es matriz)</li>
+            <li>Sucursales y datos de la sucursal local</li>
+            <li>Productos, ventas, cortes, lotes y existencias</li>
           </ul>
           <div className="mt-2">
-            <span className="font-semibold">NO</span> borra: productos, ventas, cortes, lotes.
+            La app vuelve al <span className="font-semibold">wizard desde cero</span>. No se puede
+            deshacer.
           </div>
         </div>
 
@@ -375,87 +337,6 @@ function ResetModoSubModal({ userId, onClose }: { userId: string; onClose: () =>
             className="px-5 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
           >
             {busy ? 'Reseteando…' : 'Sí, resetear modo'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-// ── Sub-modal: confirmar restore desde respaldo ─────────────────────────
-function RestoreSubModal({ onClose }: { onClose: () => void }) {
-  const [phrase, setPhrase] = useState('')
-  const [busy, setBusy] = useState(false)
-  const expected = 'RESTAURAR'
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (phrase.trim().toUpperCase() !== expected) {
-      toast.error(`Escribe exactamente "${expected}" para confirmar`)
-      return
-    }
-    setBusy(true)
-    try {
-      const r = await window.api.backup.import()
-      if (r.cancelled) {
-        setBusy(false)
-        return
-      }
-      if (!r.ok) {
-        toast.error('No se pudo restaurar', { description: r.error ?? 'Error desconocido' })
-        setBusy(false)
-        return
-      }
-      toast.success('Respaldo restaurado. Reiniciando…', {
-        description: `Desde: ${r.fromPath}`
-      })
-      setTimeout(() => window.api.reload(), 1000)
-    } catch (err) {
-      toast.error('Falló restaurar', {
-        description: err instanceof Error ? err.message : String(err)
-      })
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal open title="⚠ Restaurar respaldo" onClose={busy ? () => {} : onClose} maxWidth="max-w-md">
-      <form onSubmit={submit} className="p-4 space-y-3 text-sm">
-        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          Esta operación <span className="font-semibold">reemplaza completamente</span> la base de
-          datos actual con la del archivo de respaldo. Los datos que no estén en el respaldo se
-          perderán. La app se reinicia al terminar.
-        </div>
-
-        <label className="block">
-          <span className="block text-xs text-muted-foreground mb-1">
-            Escribe <span className="font-mono font-bold">{expected}</span> para confirmar
-          </span>
-          <input
-            type="text"
-            required
-            value={phrase}
-            onChange={(e) => setPhrase(e.target.value)}
-            className="w-full border border-border rounded px-2 py-1.5 font-mono"
-            autoComplete="off"
-          />
-        </label>
-
-        <div className="flex justify-end gap-2 pt-2 border-t border-border">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
-          >
-            Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={busy}
-            className="px-5 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 text-sm font-semibold"
-          >
-            {busy ? 'Restaurando…' : 'Elegir respaldo y restaurar'}
           </button>
         </div>
       </form>

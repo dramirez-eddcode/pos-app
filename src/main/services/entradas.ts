@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
-import { getDb } from '../db/connection'
+import { getDb, getSqlite } from '../db/connection'
 import { caducidadLote, movStock, producto } from '../db/schema'
 import type { CreateEntradaInput, CreateEntradaResult } from '@shared/dto'
 
@@ -16,6 +16,15 @@ export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
   const db = getDb()
 
   if (input.items.length === 0) throw new Error('Sin items para registrar')
+
+  // Bodega destino: la indicada o, por robustez, la principal.
+  const sqlite = getSqlite()
+  const bodegaId = input.bodegaId || 'bodega-principal'
+  const bodega = sqlite.prepare('SELECT id, activa FROM bodega WHERE id = ?').get(bodegaId) as
+    | { id: string; activa: number }
+    | undefined
+  if (!bodega) throw new Error('Bodega destino no encontrada')
+  if (!bodega.activa) throw new Error('La bodega destino está desactivada')
 
   return db.transaction((tx) => {
     let lotesCreados = 0
@@ -44,6 +53,7 @@ export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
         .values({
           id: loteId,
           productoId: it.productoId,
+          bodegaId,
           total: qty,
           saldo: qty,
           fechaCaducidad: caducidad,

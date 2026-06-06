@@ -20,6 +20,7 @@ import UsuariosModal from '../components/UsuariosModal'
 import SucursalModal from '../components/SucursalModal'
 import CatalogoProductosModal from '../components/CatalogoProductosModal'
 import ImportarFarmaModal from '../components/ImportarFarmaModal'
+import RespaldoModal from '../components/RespaldoModal'
 import { calcTotals, makeCartItem, precioConIva, type CartItem } from '../lib/cart'
 import { fechaTicket, folio as fmtFolio, horaTicket, money } from '../lib/format'
 import { formatRol, isAdminLike } from '../lib/roles'
@@ -56,6 +57,7 @@ export default function POSPage() {
   const [sucursalOpen, setSucursalOpen] = useState(false)
   const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [importarOpen, setImportarOpen] = useState(false)
+  const [respaldoOpen, setRespaldoOpen] = useState(false)
   const [totalesRec, setTotalesRec] = useState<{
     antier: number
     ayer: number
@@ -83,7 +85,8 @@ export default function POSPage() {
     usuariosOpen ||
     sucursalOpen ||
     catalogoOpen ||
-    importarOpen
+    importarOpen ||
+    respaldoOpen
   const isAdmin = isAdminLike(user)
 
   // ── Folio + reloj ────────────────────────────────────────────────────────
@@ -558,6 +561,7 @@ export default function POSPage() {
         onClose={() => setFunctionsOpen(false)}
         onCancelaciones={() => setCancelOpen(true)}
         onCorte={() => setCorteOpen(true)}
+        onRespaldo={() => setRespaldoOpen(true)}
         onSalir={() => {
           setFunctionsOpen(false)
           toast.warning('¿Cerrar el sistema?', {
@@ -635,6 +639,7 @@ export default function POSPage() {
         onClose={() => setImportarOpen(false)}
         onApplied={reloadFolio}
       />
+      <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
     </div>
   )
 }

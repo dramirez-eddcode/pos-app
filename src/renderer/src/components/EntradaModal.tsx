@@ -6,7 +6,7 @@ import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
 import { money } from '../lib/format'
-import type { ProductoDto } from '@shared/dto'
+import type { BodegaDto, ProductoDto } from '@shared/dto'
 
 interface EntryRow {
   productoId: string
@@ -51,6 +51,8 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const cadRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const [importing, setImporting] = useState(false)
+  const [bodegas, setBodegas] = useState<BodegaDto[]>([])
+  const [bodegaId, setBodegaId] = useState<string>('')
 
   useEffect(() => {
     if (!open) return
@@ -61,6 +63,15 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     setCosto('')
     setCaducidad(defaultCaducidad())
     setTimeout(() => codRef.current?.focus(), 80)
+    window.api.bodegas
+      .list()
+      .then((bs) => {
+        const activas = bs.filter((b) => b.activa)
+        setBodegas(activas)
+        const principal = activas.find((b) => b.esPrincipal) ?? activas[0]
+        setBodegaId(principal?.id ?? '')
+      })
+      .catch(() => {})
   }, [open])
 
   const resetRow = useCallback(() => {
@@ -297,10 +308,15 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       toast.error('No hay ítems que registrar')
       return
     }
+    if (!bodegaId) {
+      toast.error('Selecciona una bodega destino')
+      return
+    }
     setSaving(true)
     try {
       const r = await window.api.entradas.create({
         usuarioId: userId,
+        bodegaId,
         items: items.map((i) => ({
           productoId: i.productoId,
           codigo: i.codigo,
@@ -325,7 +341,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     } finally {
       setSaving(false)
     }
-  }, [items, userId, onClose, onSaved])
+  }, [items, userId, bodegaId, onClose, onSaved])
 
   // Enter en cada campo avanza al siguiente / agrega
   const onKeyCode = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -374,6 +390,31 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         maxWidth="max-w-4xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
+          {/* Bodega destino */}
+          {bodegas.length > 0 && (
+            <section className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                Bodega destino:
+              </label>
+              {bodegas.length === 1 ? (
+                <span className="text-sm font-medium">{bodegas[0]!.nombre}</span>
+              ) : (
+                <select
+                  className="border border-border rounded px-2 py-1.5 bg-background text-sm"
+                  value={bodegaId}
+                  onChange={(e) => setBodegaId(e.target.value)}
+                >
+                  {bodegas.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.nombre}
+                      {b.esPrincipal ? ' (principal)' : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </section>
+          )}
+
           {/* Bulk CSV */}
           <section className="border border-dashed border-border rounded p-3 bg-muted/20">
             <div className="flex items-start justify-between gap-3">
