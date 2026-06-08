@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react'
 import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
+import Spinner from './Spinner'
 import type { LoteInfo, ProductoDto, SalidaItemInput } from '@shared/dto'
 import type { MotivoSalida } from '@shared/types'
 
@@ -449,9 +450,15 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
               type="button"
               onClick={save}
               disabled={saving || items.length === 0}
-              className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
-              {saving ? 'Guardando…' : 'Registrar salida'}
+              {saving ? (
+                <>
+                  <Spinner size={14} /> Guardando…
+                </>
+              ) : (
+                'Registrar salida'
+              )}
             </button>
           </div>
         </footer>

@@ -9,6 +9,8 @@ import {
 import { toast } from 'sonner'
 import { KeyRound, Pencil, Power, Plus, UserCheck, UserX } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
+import PasswordInput from './PasswordInput'
 import { useSession } from '../stores/session'
 import { formatRol } from '../lib/roles'
 import type { UsuarioListItem } from '@shared/dto'
@@ -122,8 +124,10 @@ export default function UsuariosModal({ open, onClose }: Props) {
               <tbody>
                 {loading && list.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-muted-foreground italic">
-                      Cargando…
+                    <td colSpan={6} className="px-2 py-6 text-muted-foreground italic">
+                      <div className="flex justify-center">
+                        <Spinner label="Cargando…" />
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -192,7 +196,7 @@ export default function UsuariosModal({ open, onClose }: Props) {
                             }`}
                             title={self ? 'No puedes cambiar tu propio estado' : u.activo ? 'Desactivar' : 'Activar'}
                           >
-                            <Power className="size-3" />
+                            {busyId === u.id ? <Spinner size={14} /> : <Power className="size-3" />}
                             {u.activo ? 'Desactivar' : 'Activar'}
                           </button>
                         </div>
@@ -382,9 +386,15 @@ function EditUsuarioSubModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Guardando…' : 'Guardar'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Guardando…
+              </>
+            ) : (
+              'Guardar'
+            )}
           </button>
         </div>
       </form>
@@ -515,8 +525,7 @@ function CreateUsuarioSubModal({
         </div>
 
         <Field label="Password (mínimo 3 caracteres)">
-          <input
-            type="text"
+          <PasswordInput
             required
             minLength={3}
             className="w-full border border-border rounded px-2 py-1.5 font-mono"
@@ -527,8 +536,7 @@ function CreateUsuarioSubModal({
         </Field>
 
         <Field label="Confirmar password">
-          <input
-            type="text"
+          <PasswordInput
             required
             minLength={3}
             className="w-full border border-border rounded px-2 py-1.5 font-mono"
@@ -550,9 +558,15 @@ function CreateUsuarioSubModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Creando…' : 'Crear usuario'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Creando…
+              </>
+            ) : (
+              'Crear usuario'
+            )}
           </button>
         </div>
       </form>
@@ -633,9 +647,8 @@ function ResetPasswordSubModal({
         </div>
 
         <Field label="Nueva password (mínimo 3 caracteres)">
-          <input
+          <PasswordInput
             ref={inputRef}
-            type="text"
             required
             minLength={3}
             className="w-full border border-border rounded px-2 py-1.5 font-mono"
@@ -646,8 +659,7 @@ function ResetPasswordSubModal({
         </Field>
 
         <Field label="Confirmar">
-          <input
-            type="text"
+          <PasswordInput
             required
             minLength={3}
             className="w-full border border-border rounded px-2 py-1.5 font-mono"
@@ -669,9 +681,15 @@ function ResetPasswordSubModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Guardando…' : 'Resetear'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Guardando…
+              </>
+            ) : (
+              'Resetear'
+            )}
           </button>
         </div>
       </form>

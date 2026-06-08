@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSession } from '../stores/session'
+import Spinner from '../components/Spinner'
+import Logo from '../components/Logo'
+import PasswordInput from '../components/PasswordInput'
 
 export default function LoginPage() {
   const { login } = useSession()
@@ -40,6 +43,9 @@ export default function LoginPage() {
         className="w-full max-w-sm border border-border bg-background rounded-lg p-6 space-y-4 shadow-sm"
       >
         <header className="text-center space-y-1">
+          <div className="flex justify-center mb-2">
+            <Logo size={88} />
+          </div>
           <h1 className="text-xl font-semibold tracking-tight">Farmacias MS</h1>
           <p className="text-xs text-muted-foreground">Medicamentos Grupo MS</p>
         </header>
@@ -65,9 +71,8 @@ export default function LoginPage() {
           <label className="block text-sm font-medium" htmlFor="password">
             Contraseña
           </label>
-          <input
+          <PasswordInput
             id="password"
-            type="password"
             autoComplete="current-password"
             className="w-full border border-border rounded px-2 py-1.5 bg-background"
             value={password}
@@ -88,7 +93,15 @@ export default function LoginPage() {
           className="w-full bg-primary text-primary-foreground rounded py-2 font-medium hover:opacity-90 disabled:opacity-50"
           disabled={loading}
         >
-          {loading ? 'Validando…' : 'Iniciar sesión'}
+          <span className="inline-flex items-center justify-center gap-2">
+            {loading ? (
+              <>
+                <Spinner size={14} /> Validando…
+              </>
+            ) : (
+              'Iniciar sesión'
+            )}
+          </span>
         </button>
 
         <p className="text-[11px] text-center text-muted-foreground">

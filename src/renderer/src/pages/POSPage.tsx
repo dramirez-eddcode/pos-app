@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings as SettingsIcon } from 'lucide-react'
+import { Settings as SettingsIcon, Printer, LogOut } from 'lucide-react'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
 import { useShortcut } from '../hooks/useShortcut'
@@ -12,6 +12,8 @@ import CancelVentaModal from '../components/CancelVentaModal'
 import CorteModal from '../components/CorteModal'
 import ProcesosEspecialesModal from '../components/ProcesosEspecialesModal'
 import EntradaModal from '../components/EntradaModal'
+import CargaInicialModal from '../components/CargaInicialModal'
+import RecibirTraspasoModal from '../components/RecibirTraspasoModal'
 import AjustesModal from '../components/AjustesModal'
 import PreciosModal from '../components/PreciosModal'
 import SalidasModal from '../components/SalidasModal'
@@ -21,6 +23,8 @@ import SucursalModal from '../components/SucursalModal'
 import CatalogoProductosModal from '../components/CatalogoProductosModal'
 import ImportarFarmaModal from '../components/ImportarFarmaModal'
 import RespaldoModal from '../components/RespaldoModal'
+import Logo from '../components/Logo'
+import Spinner from '../components/Spinner'
 import { calcTotals, makeCartItem, precioConIva, type CartItem } from '../lib/cart'
 import { fechaTicket, folio as fmtFolio, horaTicket, money } from '../lib/format'
 import { formatRol, isAdminLike } from '../lib/roles'
@@ -49,6 +53,8 @@ export default function POSPage() {
   const [corteOpen, setCorteOpen] = useState(false)
   const [procesosOpen, setProcesosOpen] = useState(false)
   const [entradaOpen, setEntradaOpen] = useState(false)
+  const [cargaInicialOpen, setCargaInicialOpen] = useState(false)
+  const [recibirTraspasoOpen, setRecibirTraspasoOpen] = useState(false)
   const [salidasOpen, setSalidasOpen] = useState(false)
   const [ajustesOpen, setAjustesOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
@@ -78,6 +84,8 @@ export default function POSPage() {
     corteOpen ||
     procesosOpen ||
     entradaOpen ||
+    cargaInicialOpen ||
+    recibirTraspasoOpen ||
     salidasOpen ||
     ajustesOpen ||
     preciosOpen ||
@@ -361,6 +369,7 @@ export default function POSPage() {
     { key: ',', ctrl: true, handler: () => setSettingsOpen(true), allowInInput: true },
     {
       key: 'ArrowUp',
+      allowInInput: true, // navegar el carrito aunque el foco esté en el input de código
       handler: () => {
         if (anyModalOpen) return
         setSelectedIdx((i) => (cart.length === 0 ? -1 : Math.max(0, i - 1)))
@@ -368,6 +377,7 @@ export default function POSPage() {
     },
     {
       key: 'ArrowDown',
+      allowInInput: true,
       handler: () => {
         if (anyModalOpen) return
         setSelectedIdx((i) => (cart.length === 0 ? -1 : Math.min(cart.length - 1, i + 1)))
@@ -389,6 +399,22 @@ export default function POSPage() {
             </p>
           </div>
           <div className="flex items-center gap-3 text-xs">
+            {/* Estatus de impresora — clic abre Configuración */}
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="Impresora configurada — clic para cambiar"
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border ${
+                settings?.printerName
+                  ? 'border-border text-foreground hover:bg-muted'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+            >
+              <Printer className="size-3.5" />
+              <span className="max-w-[180px] truncate">
+                {settings?.printerName ?? 'Sin impresora'}
+              </span>
+            </button>
             <div className="text-right">
               <div>
                 Folio <span className="font-mono">{fmtFolio(folioNum)}</span>
@@ -405,6 +431,15 @@ export default function POSPage() {
               aria-label="Configuración"
             >
               <SettingsIcon className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={requestLogout}
+              className="p-1.5 rounded hover:bg-muted"
+              title="Cerrar sesión (F12)"
+              aria-label="Cerrar sesión"
+            >
+              <LogOut className="size-4" />
             </button>
           </div>
         </div>
@@ -488,7 +523,8 @@ export default function POSPage() {
           </div>
         </section>
 
-        <aside className="border border-border rounded p-3 flex flex-col gap-3 bg-muted/30 self-start">
+        <div className="flex flex-col gap-[5px] self-start">
+          <aside className="border border-border rounded p-3 flex flex-col gap-3 bg-muted/30">
           <div className="space-y-1">
             <Label>ARTÍCULOS</Label>
             <div className="text-right text-xl font-mono">{totals.unitCount}</div>
@@ -513,22 +549,34 @@ export default function POSPage() {
             disabled={cart.length === 0 || charging}
             onClick={startCobro}
           >
-            Terminar venta (FIN)
+            <span className="inline-flex items-center justify-center gap-2">
+              {charging ? (
+                <>
+                  <Spinner size={14} /> Cobrando…
+                </>
+              ) : (
+                'Terminar venta (FIN)'
+              )}
+            </span>
           </button>
-        </aside>
+          </aside>
+
+          {/* Logo a todo el ancho de la columna, pegado al panel de arriba */}
+          <Logo full className="shadow-sm" />
+        </div>
       </main>
 
       <footer className="border-t border-border bg-muted/30">
         <div className="mx-auto max-w-[1200px] px-4 py-2 flex items-center justify-between text-[11px] font-mono">
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-muted-foreground">
-            <span>F5.- BUSCAR</span>
-            <span>F7.- INFO MEDICAMENTO</span>
-            {isAdmin && <span>F10.- PROCESOS</span>}
-            <span>F11.- FUNCIONES</span>
-            <span>F12.- SALIR</span>
-            <span>FIN.- TERMINAR VENTA</span>
-            <span>SUPR.- ELIMINAR</span>
-            <span>ESC.- CANCELAR VENTA</span>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
+            <FooterKey onClick={() => setSearchOpen(true)}>F5.- BUSCAR</FooterKey>
+            <FooterKey onClick={() => setSustanciaOpen(true)}>F7.- INFO MEDICAMENTO</FooterKey>
+            {isAdmin && <FooterKey onClick={() => setProcesosOpen(true)}>F10.- PROCESOS</FooterKey>}
+            <FooterKey onClick={() => setFunctionsOpen(true)}>F11.- FUNCIONES</FooterKey>
+            <FooterKey onClick={requestLogout}>F12.- SALIR</FooterKey>
+            <FooterKey onClick={startCobro}>FIN.- TERMINAR VENTA</FooterKey>
+            <FooterKey onClick={removeSelected}>SUPR.- ELIMINAR</FooterKey>
+            <FooterKey onClick={clearSale}>ESC.- CANCELAR VENTA</FooterKey>
           </div>
           <div className="text-right">
             <span className="text-muted-foreground">{formatRol(user.rol)}: </span>
@@ -544,7 +592,16 @@ export default function POSPage() {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => {
-          addProduct(p)
+          // No agrega de inmediato: coloca el código en el input y deja el cursor
+          // al final, para que el cajero pueda escribir "*5" y agregar N, o Enter = 1.
+          setCode(p.codigo)
+          setTimeout(() => {
+            const el = codeRef.current
+            if (!el) return
+            el.focus()
+            const len = el.value.length
+            el.setSelectionRange(len, len)
+          }, 40)
         }}
       />
       <PaymentModal
@@ -598,6 +655,8 @@ export default function POSPage() {
         open={procesosOpen}
         onClose={() => setProcesosOpen(false)}
         onEntrada={() => setEntradaOpen(true)}
+        onCargaInicial={() => setCargaInicialOpen(true)}
+        onRecibirTraspaso={() => setRecibirTraspasoOpen(true)}
         onSalidas={() => setSalidasOpen(true)}
         onAjustes={() => setAjustesOpen(true)}
         onPrecios={() => setPreciosOpen(true)}
@@ -609,6 +668,16 @@ export default function POSPage() {
       <EntradaModal
         open={entradaOpen}
         onClose={() => setEntradaOpen(false)}
+        userId={user.id}
+      />
+      <CargaInicialModal
+        open={cargaInicialOpen}
+        onClose={() => setCargaInicialOpen(false)}
+        userId={user.id}
+      />
+      <RecibirTraspasoModal
+        open={recibirTraspasoOpen}
+        onClose={() => setRecibirTraspasoOpen(false)}
         userId={user.id}
       />
       <SalidasModal
@@ -646,4 +715,23 @@ export default function POSPage() {
 
 function Label({ children }: { children: React.ReactNode }) {
   return <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{children}</div>
+}
+
+// Atajo del pie como botón sutil (también usable con mouse).
+function FooterKey({
+  onClick,
+  children
+}: {
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="hover:text-foreground hover:underline focus:outline-none focus:text-foreground"
+    >
+      {children}
+    </button>
+  )
 }

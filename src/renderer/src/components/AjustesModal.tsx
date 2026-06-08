@@ -5,6 +5,7 @@ import Papa from 'papaparse'
 import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
+import Spinner from './Spinner'
 import { money } from '../lib/format'
 import type { AjusteItemInput, LoteInfo, ProductoDto } from '@shared/dto'
 import type { MotivoAjuste } from '@shared/types'
@@ -427,7 +428,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                   disabled={importing}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50 text-xs"
                 >
-                  <Upload className="size-3.5" />
+                  {importing ? <Spinner size={14} /> : <Upload className="size-3.5" />}
                   {importing ? 'Procesando…' : 'Cargar CSV'}
                 </button>
                 <input
@@ -683,9 +684,15 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
               type="button"
               onClick={save}
               disabled={saving || items.length === 0}
-              className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
-              {saving ? 'Guardando…' : 'Guardar ajustes'}
+              {saving ? (
+                <>
+                  <Spinner size={14} /> Guardando…
+                </>
+              ) : (
+                'Guardar ajustes'
+              )}
             </button>
           </div>
         </footer>

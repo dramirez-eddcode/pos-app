@@ -54,7 +54,7 @@ export async function printCorte(
 
 export async function printTest(
   printer: string,
-  opts?: { showTime?: boolean }
+  opts?: { showTime?: boolean; footer?: string | null }
 ): Promise<PrintResult> {
   const bytes = buildTestReceiptBytes(opts)
   return sendRawToPrinter(printer, bytes)

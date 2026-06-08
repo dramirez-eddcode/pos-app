@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { Download, Upload } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
+import BusyOverlay from './BusyOverlay'
 import { useSession } from '../stores/session'
 import { isAdminLike } from '../lib/roles'
 
@@ -49,7 +51,8 @@ export default function RespaldoModal({ open, onClose }: Props) {
         onClose={onClose}
         maxWidth="max-w-md"
       >
-        <div className="p-4 space-y-3 text-sm">
+        <div className="relative p-4 space-y-3 text-sm">
+          <BusyOverlay show={busy} text="Generando respaldo…" />
           <p className="text-xs text-muted-foreground">
             Guarda una copia completa del sistema (productos, ventas, usuarios y datos) en una USB.
             Úsalo al cierre del día por seguridad, o para mover toda la información a otra
@@ -62,7 +65,7 @@ export default function RespaldoModal({ open, onClose }: Props) {
             disabled={busy}
             className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 text-sm"
           >
-            <Download className="size-4" />
+            {busy ? <Spinner size={14} /> : <Download className="size-4" />}
             {busy ? 'Respaldando…' : 'Crear respaldo en USB'}
           </button>
 
@@ -139,7 +142,8 @@ function RestoreSubModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal open title="⚠ Restaurar respaldo" onClose={busy ? () => {} : onClose} maxWidth="max-w-md">
-      <form onSubmit={submit} className="p-4 space-y-3 text-sm">
+      <form onSubmit={submit} className="relative p-4 space-y-3 text-sm">
+        <BusyOverlay show={busy} text="Restaurando respaldo…" />
         <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           Esta operación <span className="font-semibold">reemplaza completamente</span> la base de
           datos actual con la del archivo de respaldo. Los datos que no estén en el respaldo se
@@ -179,9 +183,15 @@ function RestoreSubModal({ onClose }: { onClose: () => void }) {
           <button
             type="submit"
             disabled={busy}
-            className="px-5 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center justify-center gap-1.5 px-5 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50 text-sm font-semibold"
           >
-            {busy ? 'Restaurando…' : 'Elegir respaldo y restaurar'}
+            {busy ? (
+              <>
+                <Spinner size={14} /> Restaurando…
+              </>
+            ) : (
+              'Elegir respaldo y restaurar'
+            )}
           </button>
         </div>
       </form>

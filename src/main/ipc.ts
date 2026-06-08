@@ -8,8 +8,10 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { login } from './services/auth'
 import {
   completeWizard,
+  completeWizardFromFarma,
   getBootstrapState,
   getInstalacion,
+  pickWizardFarma,
   resetInstalacion
 } from './services/instalacion'
 import { exportBackup, importBackup } from './services/backup'
@@ -51,6 +53,15 @@ import { createCorte, getCorteHoy } from './services/corte'
 import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
 import { createSalida } from './services/salidas'
+import { cargaInicialInventario } from './services/cargaInicial'
+import { getStockPorBodega } from './services/stock'
+import {
+  aplicarTraspaso,
+  crearTraspaso,
+  getTraspasoDetalle,
+  listTraspasos,
+  pickTraspaso
+} from './services/traspaso'
 import { updatePrecios } from './services/precios'
 import {
   createUsuario,
@@ -74,6 +85,10 @@ import type {
   BulkUpsertProductosInput,
   CompleteWizardInput,
   CorteTipo,
+  CargaInicialInput,
+  CompleteWizardFromFarmaInput,
+  CrearTraspasoInput,
+  ExportFarmaStockLote,
   CreateAjustesInput,
   CreateBodegaInput,
   UpdateBodegaInput,
@@ -104,6 +119,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('instalacion:bootstrap-state', () => getBootstrapState())
   ipcMain.handle('instalacion:complete-wizard', async (_e, input: CompleteWizardInput) =>
     completeWizard(input)
+  )
+  ipcMain.handle('instalacion:pick-wizard-farma', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pickWizardFarma(win)
+  })
+  ipcMain.handle(
+    'instalacion:complete-wizard-farma',
+    async (_e, input: CompleteWizardFromFarmaInput) => completeWizardFromFarma(input)
   )
   ipcMain.handle('instalacion:reset', async (_e, viewerUserId: string, currentPassword: string) =>
     resetInstalacion(viewerUserId, currentPassword)
@@ -189,6 +212,33 @@ export function registerIpcHandlers(): void {
   // ── salidas de inventario ──────────────────────────────────────────────
   ipcMain.handle('salidas:create', async (_e, input: CreateSalidaInput) => createSalida(input))
 
+  // ── carga inicial de inventario (migración / arranque) ──────────────────
+  ipcMain.handle('inventario:carga-inicial', async (_e, input: CargaInicialInput) =>
+    cargaInicialInventario(input)
+  )
+
+  // ── consulta de stock por bodega (inventario) ───────────────────────────
+  ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string) =>
+    getStockPorBodega(bodegaId)
+  )
+
+  // ── traspaso bodega (matriz) → sucursal (USB) ───────────────────────────
+  ipcMain.handle('traspaso:crear', async (e, viewerUserId: string, input: CrearTraspasoInput) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return crearTraspaso(viewerUserId, input, win)
+  })
+  ipcMain.handle('traspaso:pick', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pickTraspaso(win)
+  })
+  ipcMain.handle(
+    'traspaso:aplicar',
+    async (_e, viewerUserId: string, filePath: string, force?: boolean) =>
+      aplicarTraspaso(viewerUserId, filePath, Boolean(force))
+  )
+  ipcMain.handle('traspaso:list', async () => listTraspasos())
+  ipcMain.handle('traspaso:detalle', async (_e, folio: string) => getTraspasoDetalle(folio))
+
   // ── precios de venta ────────────────────────────────────────────────────
   ipcMain.handle('precios:update', async (_e, input: UpdatePreciosInput) => updatePrecios(input))
 
@@ -242,9 +292,9 @@ export function registerIpcHandlers(): void {
   // ── export .farma matriz → sucursal ─────────────────────────────────────
   ipcMain.handle(
     'export:sucursal-farma',
-    async (e, viewerUserId: string, sucursalId: string) => {
+    async (e, viewerUserId: string, sucursalId: string, stockInicial?: ExportFarmaStockLote[]) => {
       const win = BrowserWindow.fromWebContents(e.sender)
-      return exportarSucursalAFarma(viewerUserId, sucursalId, win)
+      return exportarSucursalAFarma(viewerUserId, sucursalId, win, stockInicial)
     }
   )
 
@@ -286,8 +336,10 @@ export function registerIpcHandlers(): void {
 
   // ── printer ──────────────────────────────────────────────────────────────
   ipcMain.handle('printer:list', async () => getPrinters())
-  ipcMain.handle('printer:print-test', async (_e, printer: string, opts?: { showTime?: boolean }) =>
-    printTest(printer, opts)
+  ipcMain.handle(
+    'printer:print-test',
+    async (_e, printer: string, opts?: { showTime?: boolean; footer?: string | null }) =>
+      printTest(printer, opts)
   )
   ipcMain.handle('printer:open-drawer', async (_e, printer: string) => openCashDrawer(printer))
   ipcMain.handle('printer:print-receipt', async (_e, printer: string, data: ReceiptData) =>

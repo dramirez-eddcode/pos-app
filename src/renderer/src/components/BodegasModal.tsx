@@ -9,6 +9,7 @@ import {
 import { toast } from 'sonner'
 import { Plus, Power, Pencil, Warehouse } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import type { BodegaDto, CreateBodegaInput, UpdateBodegaInput } from '@shared/dto'
 
@@ -96,8 +97,10 @@ export default function BodegasModal({ open, onClose }: Props) {
               <tbody>
                 {loading && list.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-muted-foreground italic">
-                      Cargando…
+                    <td colSpan={6} className="px-2 py-6 text-muted-foreground italic">
+                      <div className="flex justify-center">
+                        <Spinner label="Cargando…" />
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -153,7 +156,7 @@ export default function BodegasModal({ open, onClose }: Props) {
                                 : 'border-border hover:bg-green-50 hover:border-green-300 text-green-700'
                             }`}
                           >
-                            <Power className="size-3" />
+                            {busyId === b.id ? <Spinner size={14} /> : <Power className="size-3" />}
                             {b.activa ? 'Desactivar' : 'Activar'}
                           </button>
                         )}
@@ -372,7 +375,7 @@ function BodegaSubModal({ mode, target, onClose, onSaved }: SubProps) {
             disabled={saving}
             className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold inline-flex items-center gap-1.5"
           >
-            <Warehouse className="size-3.5" />
+            {saving ? <Spinner size={14} /> : <Warehouse className="size-3.5" />}
             {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear bodega'}
           </button>
         </div>

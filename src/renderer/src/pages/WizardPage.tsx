@@ -1,9 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { Building, ShoppingCart, ArrowRight, UserPlus, UserCheck } from 'lucide-react'
+import {
+  Building,
+  ShoppingCart,
+  ArrowRight,
+  UserPlus,
+  UserCheck,
+  FileDown,
+  CheckCircle2,
+  DatabaseBackup
+} from 'lucide-react'
 import { useSession } from '../stores/session'
 import { formatRol } from '../lib/roles'
-import type { CompleteWizardInput, ExistingAdminOption, InstalacionTipo } from '@shared/dto'
+import Spinner from '../components/Spinner'
+import PasswordInput from '../components/PasswordInput'
+import type {
+  CompleteWizardInput,
+  ExistingAdminOption,
+  InstalacionTipo,
+  WizardFarmaPreview
+} from '@shared/dto'
 
 interface Props {
   onConfigured: () => void
@@ -54,6 +70,12 @@ export default function WizardPage({ onConfigured }: Props) {
   const [adminMode, setAdminMode] = useState<'existente' | 'nuevo'>('nuevo')
   const [useExistingId, setUseExistingId] = useState<string>('')
   const propietarioRef = useRef<HTMLInputElement>(null)
+  // Configurar SUCURSAL desde archivo .farma de la matriz
+  const [farmaPreview, setFarmaPreview] = useState<WizardFarmaPreview | null>(null)
+  const [farmaPropietario, setFarmaPropietario] = useState('')
+  const [pickingFarma, setPickingFarma] = useState(false)
+  const [applyingFarma, setApplyingFarma] = useState(false)
+  const [restoring, setRestoring] = useState(false)
 
   useEffect(() => {
     window.api.instalacion
@@ -81,6 +103,73 @@ export default function WizardPage({ onConfigured }: Props) {
     setStep(2)
     setTimeout(() => propietarioRef.current?.focus(), 60)
   }, [])
+
+  const restoreFromBackup = useCallback(async () => {
+    setRestoring(true)
+    try {
+      const r = await window.api.backup.import()
+      if (r.cancelled) return
+      if (!r.ok) {
+        toast.error('No se pudo restaurar el respaldo', { description: r.error })
+        return
+      }
+      toast.success('Respaldo restaurado — reiniciando…')
+      setTimeout(() => window.api.reload(), 1000)
+    } catch (e) {
+      toast.error('Falló la restauración', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setRestoring(false)
+    }
+  }, [])
+
+  const pickFarma = useCallback(async () => {
+    setPickingFarma(true)
+    try {
+      const r = await window.api.instalacion.pickWizardFarma()
+      if (r.ok) {
+        setFarmaPreview(r.preview)
+        setFarmaPropietario(r.preview.matrizPropietario ?? '')
+      } else if (!r.cancelled) {
+        toast.error('No se pudo leer el archivo', { description: r.error })
+      }
+    } finally {
+      setPickingFarma(false)
+    }
+  }, [])
+
+  const applyFarma = useCallback(async () => {
+    if (!farmaPreview) return
+    if (!farmaPropietario.trim()) {
+      toast.error('Falta el nombre del propietario')
+      return
+    }
+    if (farmaPreview.usuarios.length === 0) {
+      toast.error('El archivo no incluye usuarios admin', {
+        description: 'Vuelve a exportarlo desde una matriz actualizada.'
+      })
+      return
+    }
+    setApplyingFarma(true)
+    try {
+      const r = await window.api.instalacion.completeWizardFromFarma({
+        filePath: farmaPreview.filePath,
+        propietarioNombre: farmaPropietario
+      })
+      toast.success('Sucursal configurada desde la matriz', {
+        description: `${r.productos} productos · ${r.stockLotes} lotes · ${r.usuarios} usuario(s). Inicia sesión con tu usuario de la matriz.`,
+        duration: 9000
+      })
+      onConfigured()
+    } catch (err) {
+      toast.error('No se pudo configurar la sucursal', {
+        description: err instanceof Error ? err.message : String(err)
+      })
+    } finally {
+      setApplyingFarma(false)
+    }
+  }, [farmaPreview, farmaPropietario, onConfigured])
 
   const submit = useCallback(
     async (e: FormEvent) => {
@@ -154,10 +243,38 @@ export default function WizardPage({ onConfigured }: Props) {
               descripcion="Esta computadora es una farmacia que vende. Recibe actualizaciones desde la matriz por USB y opera el POS día a día."
               onClick={() => pickModo('SUCURSAL')}
             />
+
+            {/* Restaurar desde respaldo (recuperar un equipo) */}
+            <div className="pt-2 mt-1 border-t border-border">
+              <p className="text-xs text-muted-foreground mb-2">
+                ¿Reinstalando un equipo? Restaura su base de datos completa desde un respaldo
+                <span className="font-mono"> .bak</span> (usuarios, productos, ventas, todo).
+              </p>
+              <button
+                type="button"
+                onClick={restoreFromBackup}
+                disabled={restoring}
+                className="w-full flex items-center gap-3 p-3 border border-border rounded hover:bg-muted disabled:opacity-50 text-left"
+              >
+                {restoring ? (
+                  <Spinner size={20} />
+                ) : (
+                  <DatabaseBackup className="size-5 text-amber-600 shrink-0" />
+                )}
+                <div className="flex-1">
+                  <div className="font-medium text-sm">
+                    {restoring ? 'Restaurando…' : 'Restaurar desde respaldo'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Reemplaza esta instalación con un archivo de respaldo y reinicia.
+                  </div>
+                </div>
+              </button>
+            </div>
           </div>
         )}
 
-        {step === 2 && form.tipo && (
+        {step === 2 && form.tipo && !farmaPreview && (
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -200,6 +317,25 @@ export default function WizardPage({ onConfigured }: Props) {
 
             {form.tipo === 'SUCURSAL' && (
               <>
+                <div className="rounded border border-dashed border-teal-300 bg-teal-50/50 px-3 py-2.5 flex items-start justify-between gap-3">
+                  <div className="text-xs">
+                    <div className="font-semibold text-teal-900">¿Tienes el archivo de la matriz?</div>
+                    <p className="text-teal-800/80">
+                      Carga el <span className="font-mono">.farma</span> del USB y configura la sucursal
+                      automáticamente (datos, catálogo, precios, stock y tu usuario admin).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={pickFarma}
+                    disabled={pickingFarma}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-teal-400 bg-white rounded hover:bg-teal-50 text-xs text-teal-900 disabled:opacity-50 shrink-0"
+                  >
+                    {pickingFarma ? <Spinner size={14} /> : <FileDown className="size-3.5" />}
+                    {pickingFarma ? 'Leyendo…' : 'Cargar desde .farma'}
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-[150px_1fr] gap-3">
                   <Field label="Código sucursal *">
                     <input
@@ -319,6 +455,81 @@ export default function WizardPage({ onConfigured }: Props) {
           </form>
         )}
 
+        {step === 2 && form.tipo === 'SUCURSAL' && farmaPreview && (
+          <div className="p-6 space-y-3 text-sm">
+            <div className="rounded border border-teal-300 bg-teal-50/50 px-3 py-2 flex items-center gap-2 text-teal-900">
+              <CheckCircle2 className="size-4 shrink-0" />
+              <span className="text-xs font-medium">Archivo de la matriz leído correctamente.</span>
+            </div>
+
+            <div className="rounded border border-border bg-background p-3 text-xs space-y-1">
+              <Row k="Sucursal" v={`${farmaPreview.sucursal.codigo} — ${farmaPreview.sucursal.nombre}`} />
+              {farmaPreview.sucursal.razonSocial && (
+                <Row k="Razón social" v={farmaPreview.sucursal.razonSocial} />
+              )}
+              <Row k="Productos" v={farmaPreview.productosCount.toLocaleString('es-MX')} />
+              <Row
+                k="Stock inicial"
+                v={
+                  farmaPreview.stockLotes > 0
+                    ? `${farmaPreview.stockLotes.toLocaleString('es-MX')} lotes`
+                    : 'sin stock (catálogo solo)'
+                }
+              />
+              <Row
+                k="Usuarios admin"
+                v={
+                  farmaPreview.usuarios.length > 0
+                    ? farmaPreview.usuarios.map((u) => u.login).join(', ')
+                    : '⚠ ninguno'
+                }
+              />
+              <Row k="Generado" v={new Date(farmaPreview.generadoEn).toLocaleString('es-MX')} />
+            </div>
+
+            <Field label="Nombre del propietario / dueño *">
+              <input
+                type="text"
+                value={farmaPropietario}
+                onChange={(e) => setFarmaPropietario(e.target.value)}
+                className="w-full border border-border rounded px-2 py-1.5"
+                autoComplete="off"
+              />
+            </Field>
+
+            <p className="text-[11px] text-muted-foreground">
+              Al finalizar entrarás en la pantalla de inicio de sesión. Usa el{' '}
+              <span className="font-medium">mismo usuario y contraseña de la matriz</span> (puedes
+              cambiarlos después en Gestión de usuarios).
+            </p>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setFarmaPreview(null)}
+                disabled={applyingFarma}
+                className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={applyFarma}
+                disabled={applyingFarma || !farmaPropietario.trim() || farmaPreview.usuarios.length === 0}
+                className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              >
+                {applyingFarma ? (
+                  <>
+                    <Spinner size={14} /> Configurando…
+                  </>
+                ) : (
+                  'Configurar sucursal'
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
         {step === 3 && form.tipo && (
           <form onSubmit={submit} className="p-6 space-y-3 text-sm">
             {existingAdmins.length > 0 ? (
@@ -400,8 +611,7 @@ export default function WizardPage({ onConfigured }: Props) {
                 </div>
 
                 <Field label="Contraseña *">
-                  <input
-                    type="password"
+                  <PasswordInput
                     required
                     minLength={3}
                     value={form.adminPassword}
@@ -411,8 +621,7 @@ export default function WizardPage({ onConfigured }: Props) {
                   />
                 </Field>
                 <Field label="Confirmar contraseña *">
-                  <input
-                    type="password"
+                  <PasswordInput
                     required
                     minLength={3}
                     value={form.adminPasswordConfirm}
@@ -436,9 +645,15 @@ export default function WizardPage({ onConfigured }: Props) {
               <button
                 type="submit"
                 disabled={saving}
-                className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+                className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
               >
-                {saving ? 'Configurando…' : 'Finalizar y entrar'}
+                {saving ? (
+                  <>
+                    <Spinner size={14} /> Configurando…
+                  </>
+                ) : (
+                  'Finalizar y entrar'
+                )}
               </button>
             </div>
           </form>
@@ -499,6 +714,15 @@ function ModeTab({
       {icon}
       {label}
     </button>
+  )
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-muted-foreground">{k}</span>
+      <span className="font-medium text-right">{v}</span>
+    </div>
   )
 }
 

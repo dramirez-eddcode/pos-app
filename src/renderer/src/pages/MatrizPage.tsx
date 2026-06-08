@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   Boxes,
-  Building,
+  ArrowRightLeft,
+  ClipboardList,
+  History,
   DatabaseBackup,
   LogOut,
+  PackageCheck,
   PackagePlus,
   Percent,
   Settings as SettingsIcon,
@@ -18,7 +21,12 @@ import { useSession } from '../stores/session'
 import { fechaTicket, horaTicket } from '../lib/format'
 import { formatRol } from '../lib/roles'
 import CatalogoProductosModal from '../components/CatalogoProductosModal'
+import Logo from '../components/Logo'
 import EntradaModal from '../components/EntradaModal'
+import CargaInicialModal from '../components/CargaInicialModal'
+import StockBodegaModal from '../components/StockBodegaModal'
+import TraspasoModal from '../components/TraspasoModal'
+import TraspasosListModal from '../components/TraspasosListModal'
 import PreciosModal from '../components/PreciosModal'
 import SettingsModal from '../components/SettingsModal'
 import SucursalesModal from '../components/SucursalesModal'
@@ -26,6 +34,7 @@ import UsuariosModal from '../components/UsuariosModal'
 import RespaldoModal from '../components/RespaldoModal'
 import IvaConfigModal from '../components/IvaConfigModal'
 import BodegasModal from '../components/BodegasModal'
+import Spinner from '../components/Spinner'
 
 interface Props {
   propietarioNombre: string | null
@@ -45,6 +54,10 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
   const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [usuariosOpen, setUsuariosOpen] = useState(false)
   const [entradaOpen, setEntradaOpen] = useState(false)
+  const [cargaInicialOpen, setCargaInicialOpen] = useState(false)
+  const [stockBodegaOpen, setStockBodegaOpen] = useState(false)
+  const [traspasoOpen, setTraspasoOpen] = useState(false)
+  const [traspasosListOpen, setTraspasosListOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
@@ -119,9 +132,7 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
       <header className="border-b border-border bg-background">
         <div className="mx-auto max-w-[1200px] px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="size-9 rounded bg-blue-600 text-white flex items-center justify-center">
-              <Building className="size-5" />
-            </div>
+            <Logo size={40} />
             <div>
               <h1 className="text-base font-semibold tracking-tight flex items-center gap-2">
                 Farmacias MS
@@ -176,9 +187,11 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             icon={<Store className="size-5 text-blue-600" />}
             titulo="Sucursales"
             subtitulo={
-              sucursalesCount
-                ? `${sucursalesCount.activas} activas · ${sucursalesCount.total} en total`
-                : 'Cargando…'
+              sucursalesCount ? (
+                `${sucursalesCount.activas} activas · ${sucursalesCount.total} en total`
+              ) : (
+                <Spinner label="Cargando…" size={12} />
+              )
             }
             descripcion="Alta, edición y activación de sucursales del dueño."
             cta="Gestionar"
@@ -191,9 +204,11 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             icon={<Warehouse className="size-5 text-cyan-600" />}
             titulo="Bodegas"
             subtitulo={
-              bodegasCount
-                ? `${bodegasCount.activas} activas · ${bodegasCount.total} en total`
-                : 'Cargando…'
+              bodegasCount ? (
+                `${bodegasCount.activas} activas · ${bodegasCount.total} en total`
+              ) : (
+                <Spinner label="Cargando…" size={12} />
+              )
             }
             descripcion="Almacenes de la matriz. El inventario y las entradas se separan por bodega."
             cta="Gestionar"
@@ -206,9 +221,11 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             icon={<Boxes className="size-5 text-purple-600" />}
             titulo="Catálogo de productos"
             subtitulo={
-              catalogoStats
-                ? `${catalogoStats.activos} activos · ${catalogoStats.productos} en total`
-                : 'Cargando…'
+              catalogoStats ? (
+                `${catalogoStats.activos} activos · ${catalogoStats.productos} en total`
+              ) : (
+                <Spinner label="Cargando…" size={12} />
+              )
             }
             descripcion="Productos globales que se sincronizan a todas las sucursales."
             cta="Gestionar"
@@ -249,11 +266,61 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             accent="green"
           />
 
+          {/* Carga inicial de inventario (migración / arranque) */}
+          <DashCard
+            icon={<PackageCheck className="size-5 text-teal-700" />}
+            titulo="Carga inicial de inventario"
+            subtitulo="Migración / arranque"
+            descripcion="Fija existencias desde CSV (idempotente). Ideal para migrar una sucursal."
+            cta="Cargar"
+            onClick={() => setCargaInicialOpen(true)}
+            accent="green"
+          />
+
+          {/* Stock por bodega (consulta / inventario) */}
+          <DashCard
+            icon={<ClipboardList className="size-5 text-cyan-700" />}
+            titulo="Stock por bodega"
+            subtitulo="Inventario y caducidades"
+            descripcion="Consulta existencias, valor y lotes por bodega. Exporta hoja de conteo."
+            cta="Consultar"
+            onClick={() => setStockBodegaOpen(true)}
+            accent="cyan"
+          />
+
+          {/* Traspaso bodega → sucursal */}
+          <DashCard
+            icon={<ArrowRightLeft className="size-5 text-violet-700" />}
+            titulo="Traspaso a sucursal"
+            subtitulo="Reabasto por USB"
+            descripcion="Descuenta de una bodega y genera archivo para cargar en la sucursal."
+            cta="Generar"
+            onClick={() => setTraspasoOpen(true)}
+            accent="purple"
+          />
+
+          {/* Historial de traspasos */}
+          <DashCard
+            icon={<History className="size-5 text-violet-700" />}
+            titulo="Historial de traspasos"
+            subtitulo="Realizados"
+            descripcion="Consulta los traspasos generados y su detalle por producto."
+            cta="Ver"
+            onClick={() => setTraspasosListOpen(true)}
+            accent="purple"
+          />
+
           {/* Usuarios */}
           <DashCard
             icon={<Users className="size-5 text-indigo-600" />}
             titulo="Usuarios"
-            subtitulo={usuariosCount != null ? `${usuariosCount} registrados` : 'Cargando…'}
+            subtitulo={
+              usuariosCount != null ? (
+                `${usuariosCount} registrados`
+              ) : (
+                <Spinner label="Cargando…" size={12} />
+              )
+            }
             descripcion="Admin matriz + usuarios semilla que viajan en el export USB."
             cta="Gestionar"
             onClick={() => setUsuariosOpen(true)}
@@ -303,6 +370,14 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
       <CatalogoProductosModal open={catalogoOpen} onClose={() => setCatalogoOpen(false)} />
       <UsuariosModal open={usuariosOpen} onClose={() => setUsuariosOpen(false)} />
       <EntradaModal open={entradaOpen} onClose={() => setEntradaOpen(false)} userId={user.id} />
+      <CargaInicialModal
+        open={cargaInicialOpen}
+        onClose={() => setCargaInicialOpen(false)}
+        userId={user.id}
+      />
+      <StockBodegaModal open={stockBodegaOpen} onClose={() => setStockBodegaOpen(false)} />
+      <TraspasoModal open={traspasoOpen} onClose={() => setTraspasoOpen(false)} userId={user.id} />
+      <TraspasosListModal open={traspasosListOpen} onClose={() => setTraspasosListOpen(false)} />
       <PreciosModal open={preciosOpen} onClose={() => setPreciosOpen(false)} userId={user.id} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
@@ -363,7 +438,7 @@ function DashCard({
 }: {
   icon: ReactNode
   titulo: string
-  subtitulo: string
+  subtitulo: ReactNode
   descripcion: string
   cta: string
   onClick?: () => void

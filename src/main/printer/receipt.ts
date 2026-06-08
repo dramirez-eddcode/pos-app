@@ -85,6 +85,7 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
 
   // ── Header (centrado) ─────────────────────────────────────────────────────
   p.align('center')
+  p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
   p.bold(true).line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
   p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
@@ -146,18 +147,16 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
     if (data.cambio > 0) p.line(labelValue('CAMBIO', formatMoney(data.cambio)))
   }
 
-  // ── Monto en letras + footer (mensaje custom o default) ──────────────────
+  // ── Monto en letras + footer (mensaje custom; vacío = no se imprime nada) ──
   p.feed(1)
   p.line(montoEnLetras(data.total))
-  p.feed(2)
-  p.align('center').bold(true)
   const footerLines = (data.footer ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
   if (footerLines.length > 0) {
+    p.feed(2)
+    p.align('center').bold(true)
     for (const ln of footerLines) p.line(ln)
-  } else {
-    p.line('¡ GRACIAS POR SU COMPRA !')
+    p.bold(false)
   }
-  p.bold(false)
   p.feed(3)
 
   // ── Corte y (opcional) cajón ──────────────────────────────────────────────
@@ -176,6 +175,7 @@ export function buildCancelReceiptBytes(data: CancelReceiptData): Uint8Array {
 
   // Header de la sucursal (centrado)
   p.align('center')
+  p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
   p.bold(true).line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
   p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
@@ -239,6 +239,7 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
 
   // Header sucursal
   p.align('center')
+  p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
   p.bold(true).line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
   p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
@@ -312,10 +313,14 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
  * Ticket de prueba — se usa desde el panel de configuración para verificar
  * que la EPSON está bien cableada antes de operar.
  */
-export function buildTestReceiptBytes(opts?: { showTime?: boolean }): Uint8Array {
+export function buildTestReceiptBytes(opts?: {
+  showTime?: boolean
+  footer?: string | null
+}): Uint8Array {
   const now = new Date()
   return buildReceiptBytes({
     showTime: opts?.showTime ?? false,
+    footer: opts?.footer ?? null,
     empresa: {
       nombreComercial: 'FARMACIAS MS - TICKET DE PRUEBA',
       rfc: '----',

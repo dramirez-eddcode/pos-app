@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { money, folio as fmtFolio } from '../lib/format'
 import type { MetodoPago } from '@shared/types'
 
@@ -147,7 +148,13 @@ export default function PaymentModal({ open, onClose, onConfirm, total, folioPre
             disabled={!puedeCobrar || busy}
             className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {busy ? 'Procesando…' : 'Cobrar'}
+            {busy ? (
+              <>
+                <Spinner size={14} /> Procesando…
+              </>
+            ) : (
+              'Cobrar'
+            )}
           </button>
         </div>
       </footer>

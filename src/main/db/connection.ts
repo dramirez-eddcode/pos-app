@@ -373,6 +373,25 @@ function ensureSchema(sqlite: Database.Database): void {
     CREATE INDEX IF NOT EXISTS precio_historico_producto_idx ON precio_historico (producto_id, fecha);
   `)
 
+  // Historial de traspasos bodega → sucursal (matriz). Guarda encabezado + las
+  // líneas como JSON, para listar y ver detalle. Vive en la BD → se respalda.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS traspaso (
+      folio TEXT PRIMARY KEY NOT NULL,
+      fecha INTEGER NOT NULL,
+      usuario_id TEXT,
+      bodega_origen_id TEXT,
+      bodega_origen_nombre TEXT,
+      sucursal_id TEXT,
+      sucursal_codigo TEXT,
+      sucursal_nombre TEXT,
+      lineas INTEGER NOT NULL DEFAULT 0,
+      unidades INTEGER NOT NULL DEFAULT 0,
+      items_json TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE INDEX IF NOT EXISTS traspaso_fecha_idx ON traspaso (fecha);
+  `)
+
   // producto.iva_modo — agregado en Fase 3. ADD COLUMN es idempotente sólo si
   // validamos antes (SQLite no soporta IF NOT EXISTS en ALTER TABLE hasta 3.35).
   const hasIvaModo = sqlite

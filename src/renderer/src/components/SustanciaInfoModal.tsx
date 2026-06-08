@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { toast } from 'sonner'
 import { Copy } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { money } from '../lib/format'
 import type { LoteInfo, ProductoDto, ProductoSearchMode } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
@@ -217,7 +218,15 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
                   {results.length === 0 && (
                     <tr>
                       <td colSpan={4} className="px-2 py-8 text-center text-muted-foreground italic">
-                        {loading ? 'Buscando…' : term ? 'Sin resultados' : 'Escribe para buscar'}
+                        {loading ? (
+                          <span className="inline-flex justify-center">
+                            <Spinner label="Buscando…" />
+                          </span>
+                        ) : term ? (
+                          'Sin resultados'
+                        ) : (
+                          'Escribe para buscar'
+                        )}
                       </td>
                     </tr>
                   )}
@@ -308,8 +317,9 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
                   </div>
 
                   <div className="border-t border-border pt-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
-                      Lotes {loadingLotes ? '(cargando…)' : `(${lotes.length})`}
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 inline-flex items-center gap-1.5">
+                      Lotes{' '}
+                      {loadingLotes ? <Spinner size={12} label="cargando…" /> : `(${lotes.length})`}
                     </div>
                     {!loadingLotes && lotes.length === 0 && (
                       <div className="text-muted-foreground italic text-[11px]">

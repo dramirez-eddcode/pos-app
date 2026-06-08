@@ -5,6 +5,9 @@ import type {
   CancelVentaResult,
   CatalogoSucursalItem,
   CompleteWizardInput,
+  CompleteWizardFromFarmaInput,
+  CompleteWizardFromFarmaResult,
+  PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
   CreateAjustesInput,
@@ -15,6 +18,15 @@ import type {
   CreateProductoInput,
   CreateSalidaInput,
   CreateSalidaResult,
+  CargaInicialInput,
+  CargaInicialResult,
+  StockBodegaResult,
+  CrearTraspasoInput,
+  CrearTraspasoResult,
+  PickTraspasoResult,
+  AplicarTraspasoResult,
+  TraspasoHistItem,
+  TraspasoHistDetalle,
   CreateSucursalInput,
   CreateUsuarioInput,
   CreateVentaInput,
@@ -29,6 +41,7 @@ import type {
   UpdateBodegaInput,
   EmpresaDto,
   ExportSucursalResult,
+  ExportFarmaStockLote,
   InstalacionDto,
   PickFarmaResult,
   LoginResult,
@@ -78,6 +91,12 @@ const api = {
       input: CompleteWizardInput
     ): Promise<{ ok: true; user: import('@shared/dto').SessionUser }> =>
       ipcRenderer.invoke('instalacion:complete-wizard', input),
+    pickWizardFarma: (): Promise<PickWizardFarmaResult> =>
+      ipcRenderer.invoke('instalacion:pick-wizard-farma'),
+    completeWizardFromFarma: (
+      input: CompleteWizardFromFarmaInput
+    ): Promise<CompleteWizardFromFarmaResult> =>
+      ipcRenderer.invoke('instalacion:complete-wizard-farma', input),
     reset: (viewerUserId: string, currentPassword: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke('instalacion:reset', viewerUserId, currentPassword)
   },
@@ -156,8 +175,12 @@ const api = {
   },
 
   exportSucursal: {
-    farma: (viewerUserId: string, sucursalId: string): Promise<ExportSucursalResult> =>
-      ipcRenderer.invoke('export:sucursal-farma', viewerUserId, sucursalId)
+    farma: (
+      viewerUserId: string,
+      sucursalId: string,
+      stockInicial?: ExportFarmaStockLote[]
+    ): Promise<ExportSucursalResult> =>
+      ipcRenderer.invoke('export:sucursal-farma', viewerUserId, sucursalId, stockInicial)
   },
 
   importFarma: {
@@ -253,6 +276,28 @@ const api = {
       ipcRenderer.invoke('salidas:create', input)
   },
 
+  inventario: {
+    cargaInicial: (input: CargaInicialInput): Promise<CargaInicialResult> =>
+      ipcRenderer.invoke('inventario:carga-inicial', input),
+    stockBodega: (bodegaId: string): Promise<StockBodegaResult> =>
+      ipcRenderer.invoke('inventario:stock-bodega', bodegaId)
+  },
+
+  traspaso: {
+    crear: (viewerUserId: string, input: CrearTraspasoInput): Promise<CrearTraspasoResult> =>
+      ipcRenderer.invoke('traspaso:crear', viewerUserId, input),
+    pick: (): Promise<PickTraspasoResult> => ipcRenderer.invoke('traspaso:pick'),
+    aplicar: (
+      viewerUserId: string,
+      filePath: string,
+      force?: boolean
+    ): Promise<AplicarTraspasoResult> =>
+      ipcRenderer.invoke('traspaso:aplicar', viewerUserId, filePath, force),
+    list: (): Promise<TraspasoHistItem[]> => ipcRenderer.invoke('traspaso:list'),
+    detalle: (folio: string): Promise<TraspasoHistDetalle | null> =>
+      ipcRenderer.invoke('traspaso:detalle', folio)
+  },
+
   precios: {
     update: (input: UpdatePreciosInput): Promise<UpdatePreciosResult> =>
       ipcRenderer.invoke('precios:update', input)
@@ -281,8 +326,10 @@ const api = {
 
   printer: {
     list: (): Promise<string[]> => ipcRenderer.invoke('printer:list'),
-    printTest: (printer: string, opts?: { showTime?: boolean }): Promise<PrintResultLike> =>
-      ipcRenderer.invoke('printer:print-test', printer, opts),
+    printTest: (
+      printer: string,
+      opts?: { showTime?: boolean; footer?: string | null }
+    ): Promise<PrintResultLike> => ipcRenderer.invoke('printer:print-test', printer, opts),
     openDrawer: (printer: string): Promise<PrintResultLike> =>
       ipcRenderer.invoke('printer:open-drawer', printer),
     printReceipt: (printer: string, data: ReceiptData): Promise<PrintResultLike> =>

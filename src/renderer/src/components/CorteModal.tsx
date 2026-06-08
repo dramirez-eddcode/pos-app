@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import Modal from './Modal'
+import Spinner from './Spinner'
+import BusyOverlay from './BusyOverlay'
 import InfoTooltip from './InfoTooltip'
 import { folio as fmtFolio, money } from '../lib/format'
 import { useSession } from '../stores/session'
@@ -232,9 +234,12 @@ export default function CorteModal({ open, onClose }: Props) {
       onClose={onClose}
       maxWidth="max-w-5xl"
     >
-      <div className="p-4 text-sm max-h-[75vh] overflow-y-auto">
+      <div className="relative p-4 text-sm max-h-[75vh] overflow-y-auto">
+        <BusyOverlay show={cerrando !== null} text={`Registrando ${TIPO_LABEL[cerrando ?? 'PARCIAL'].toLowerCase()}…`} />
         {loading && !data && (
-          <div className="text-center py-8 text-muted-foreground">Cargando…</div>
+          <div className="flex justify-center py-8">
+            <Spinner label="Cargando…" />
+          </div>
         )}
 
         {data && (
@@ -414,7 +419,13 @@ export default function CorteModal({ open, onClose }: Props) {
                     disabled={cerrando !== null || !data.pendiente}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   >
-                    {cerrando === 'PARCIAL' ? 'Procesando…' : 'Corte parcial'}
+                    {cerrando === 'PARCIAL' ? (
+                      <>
+                        <Spinner size={14} /> Procesando…
+                      </>
+                    ) : (
+                      'Corte parcial'
+                    )}
                     <InfoTooltip title="Corte parcial" align="start">
                       Cierra el rango de folios actual e imprime el resumen,{' '}
                       <strong>sin cambio de cajero</strong>. El siguiente rango arranca desde el
@@ -431,7 +442,13 @@ export default function CorteModal({ open, onClose }: Props) {
                     disabled={cerrando !== null || !data.pendiente}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   >
-                    {cerrando === 'CAMBIO_TURNO' ? 'Procesando…' : 'Cambio de turno'}
+                    {cerrando === 'CAMBIO_TURNO' ? (
+                      <>
+                        <Spinner size={14} /> Procesando…
+                      </>
+                    ) : (
+                      'Cambio de turno'
+                    )}
                     <InfoTooltip title="Cambio de turno" align="center">
                       Igual que el parcial pero indica que un cajero{' '}
                       <strong>entrega la caja a otro</strong>. Queda registrado como{' '}
@@ -449,7 +466,13 @@ export default function CorteModal({ open, onClose }: Props) {
                     disabled={cerrando !== null || !data.pendiente}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
                   >
-                    {cerrando === 'FINAL' ? 'Procesando…' : 'Corte final'}
+                    {cerrando === 'FINAL' ? (
+                      <>
+                        <Spinner size={14} /> Procesando…
+                      </>
+                    ) : (
+                      'Corte final'
+                    )}
                     <InfoTooltip title="Corte final" align="end">
                       El <strong>cierre del día</strong>. Marca el fin contable de la jornada.
                       Todo el efectivo y totales quedan congelados como registro histórico.
@@ -564,9 +587,15 @@ export default function CorteModal({ open, onClose }: Props) {
             type="button"
             onClick={load}
             disabled={loading}
-            className="px-3 py-1 border border-border rounded hover:bg-muted"
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-1 border border-border rounded hover:bg-muted"
           >
-            {loading ? 'Cargando…' : 'Recargar'}
+            {loading ? (
+              <>
+                <Spinner size={14} /> Cargando…
+              </>
+            ) : (
+              'Recargar'
+            )}
           </button>
           <button
             type="button"

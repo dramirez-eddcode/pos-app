@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { AlertTriangle, Database } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import RespaldoModal from './RespaldoModal'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
@@ -51,7 +52,12 @@ export default function SettingsModal({ open, onClose }: Props) {
       return
     }
     setBusy('test')
-    const r = await window.api.printer.printTest(selected, { showTime })
+    // Usa el pie tal como está en el campo (aún sin guardar) para previsualizar;
+    // vacío → no se imprime ningún pie.
+    const r = await window.api.printer.printTest(selected, {
+      showTime,
+      footer: receiptFooter.trim() || null
+    })
     setBusy(null)
     if (r.ok) toast.success('Ticket de prueba enviado', { description: `${r.bytesSent} bytes → ${selected}` })
     else toast.error('Falló la impresión', { description: (r.stderr || r.stdout).trim() })
@@ -166,7 +172,13 @@ export default function SettingsModal({ open, onClose }: Props) {
             disabled={!selected || busy !== null}
             className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
           >
-            {busy === 'test' ? 'Enviando…' : 'Ticket de prueba'}
+            {busy === 'test' ? (
+              <>
+                <Spinner size={14} /> Enviando…
+              </>
+            ) : (
+              'Ticket de prueba'
+            )}
           </button>
           <button
             type="button"
@@ -174,7 +186,13 @@ export default function SettingsModal({ open, onClose }: Props) {
             disabled={!selected || busy !== null}
             className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
           >
-            {busy === 'drawer' ? 'Enviando…' : 'Abrir cajón'}
+            {busy === 'drawer' ? (
+              <>
+                <Spinner size={14} /> Enviando…
+              </>
+            ) : (
+              'Abrir cajón'
+            )}
           </button>
         </section>
 
@@ -235,7 +253,13 @@ export default function SettingsModal({ open, onClose }: Props) {
           disabled={busy !== null}
           className="px-4 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-medium"
         >
-          {busy === 'save' ? 'Guardando…' : 'Guardar'}
+          {busy === 'save' ? (
+            <>
+              <Spinner size={14} /> Guardando…
+            </>
+          ) : (
+            'Guardar'
+          )}
         </button>
       </footer>
     </Modal>
@@ -336,7 +360,13 @@ function ResetModoSubModal({ userId, onClose }: { userId: string; onClose: () =>
             disabled={busy}
             className="px-5 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
           >
-            {busy ? 'Reseteando…' : 'Sí, resetear modo'}
+            {busy ? (
+              <>
+                <Spinner size={14} /> Reseteando…
+              </>
+            ) : (
+              'Sí, resetear modo'
+            )}
           </button>
         </div>
       </form>

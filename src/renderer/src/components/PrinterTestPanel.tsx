@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import Spinner from './Spinner'
 import type { PrintResultLike } from '@shared/types'
 
 type State =
@@ -91,17 +92,19 @@ export default function PrinterTestPanel() {
 
       <div className="flex gap-2 pt-2">
         <button
-          className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
           disabled={!selected || state.kind === 'loading'}
           onClick={printTest}
         >
+          {state.kind === 'loading' && <Spinner size={14} />}
           Imprimir ticket de prueba
         </button>
         <button
-          className="flex-1 px-4 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
           disabled={!selected || state.kind === 'loading'}
           onClick={openDrawer}
         >
+          {state.kind === 'loading' && <Spinner size={14} />}
           Abrir cajón
         </button>
       </div>

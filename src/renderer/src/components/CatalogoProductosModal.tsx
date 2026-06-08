@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { Plus, Power, Pencil, Search, Download, Upload, FileDown } from 'lucide-react'
 import Papa from 'papaparse'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import { money } from '../lib/format'
 import { calcFromBase } from '@shared/iva'
@@ -44,6 +45,8 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   const [sub, setSub] = useState<SubForm>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
@@ -87,6 +90,19 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
     }
     return stats
   }, [list])
+
+  // ── Paginación ──────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const pageSafe = Math.min(page, totalPages)
+  const pageItems = useMemo(
+    () => filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize),
+    [filtered, pageSafe, pageSize]
+  )
+
+  // Vuelve a la primera página cuando cambian filtros o el tamaño de página.
+  useEffect(() => {
+    setPage(1)
+  }, [filtro, showInactivos, ivaFilter, pageSize])
 
   const onToggleActivo = useCallback(
     async (p: ProductoCatalogoItem) => {
@@ -290,7 +306,7 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
               disabled={importing}
               className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded hover:bg-muted disabled:opacity-50"
             >
-              <Upload className="size-3.5" />
+              {importing ? <Spinner size={14} /> : <Upload className="size-3.5" />}
               {importing ? 'Importando…' : 'Importar'}
             </button>
             <input
@@ -322,8 +338,10 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
               <tbody>
                 {loading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-2 py-6 text-center text-muted-foreground italic">
-                      Cargando…
+                    <td colSpan={8} className="px-2 py-6 text-muted-foreground">
+                      <span className="flex items-center justify-center">
+                        <Spinner label="Cargando…" />
+                      </span>
                     </td>
                   </tr>
                 )}
@@ -336,7 +354,7 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
                     </td>
                   </tr>
                 )}
-                {filtered.map((p) => (
+                {pageItems.map((p) => (
                   <tr
                     key={p.id}
                     className={`border-b border-border/60 ${!p.activo ? 'text-muted-foreground' : ''}`}
@@ -382,7 +400,7 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
                               : 'border-border hover:bg-green-50 hover:border-green-300 text-green-700'
                           }`}
                         >
-                          <Power className="size-3" />
+                          {busyId === p.id ? <Spinner size={12} /> : <Power className="size-3" />}
                           {p.activo ? 'Desactivar' : 'Activar'}
                         </button>
                       </div>
@@ -393,9 +411,72 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
             </table>
           </div>
 
-          <div className="text-[11px] text-muted-foreground">
-            {filtered.length} de {list.length} productos · Para cambiar precio o IVA usa los módulos
-            específicos (deja auditoría).
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span>Mostrar</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border border-border rounded px-1.5 py-1 bg-background"
+              >
+                {[10, 20, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+              <span>por página</span>
+            </div>
+
+            <div>
+              {filtered.length === 0
+                ? '0 productos'
+                : `Mostrando ${(pageSafe - 1) * pageSize + 1}–${Math.min(
+                    pageSafe * pageSize,
+                    filtered.length
+                  )} de ${filtered.length}`}
+              {filtered.length !== list.length && ` (filtrados de ${list.length})`}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setPage(1)}
+                disabled={pageSafe <= 1}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+                title="Primera página"
+              >
+                «
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage(pageSafe - 1)}
+                disabled={pageSafe <= 1}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+              >
+                ‹ Anterior
+              </button>
+              <span className="px-2 whitespace-nowrap">
+                Página {pageSafe} de {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(pageSafe + 1)}
+                disabled={pageSafe >= totalPages}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+              >
+                Siguiente ›
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage(totalPages)}
+                disabled={pageSafe >= totalPages}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+                title="Última página"
+              >
+                »
+              </button>
+            </div>
           </div>
         </div>
 
@@ -542,7 +623,8 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
         toast.error('Precio inválido')
         return
       }
-      if (mode === 'create' && form.ivaModo !== 'exento' && (ivaPorcentaje < 0 || ivaPorcentaje > 100)) {
+      // El IVA es editable también al editar, así que validamos en ambos modos.
+      if (form.ivaModo !== 'exento' && (ivaPorcentaje < 0 || ivaPorcentaje > 100)) {
         toast.error('Porcentaje de IVA inválido (0–100)')
         return
       }
@@ -578,6 +660,24 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
             stockMinimo
           }
           await window.api.productos.update(user.id, input)
+          // El IVA no viaja en update() (catálogo básico); si cambió, se aplica
+          // con su propio servicio (queda como cambio de configuración fiscal).
+          if (form.ivaModo !== target.ivaModo || ivaPorcentaje !== target.ivaPorcentaje) {
+            await window.api.productos.updateIva({
+              cajeroId: user.id,
+              items: [
+                {
+                  productoId: target.id,
+                  productoNombre: form.nombre || target.nombre,
+                  codigo: form.codigo || target.codigo,
+                  ivaModoAnterior: target.ivaModo,
+                  ivaPorcentajeAnterior: target.ivaPorcentaje,
+                  nuevoModo: form.ivaModo,
+                  nuevoPorcentaje: ivaPorcentaje
+                }
+              ]
+            })
+          }
           toast.success(`Producto "${form.nombre}" actualizado`)
         }
         onSaved()
@@ -681,9 +781,8 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
               autoComplete="off"
             />
           </Field>
-          <Field label={isEdit ? 'IVA modo (sólo lectura)' : 'IVA modo'}>
+          <Field label="IVA modo">
             <select
-              disabled={isEdit}
               className="w-full border border-border rounded px-2 py-1.5 bg-background disabled:bg-muted/30"
               value={form.ivaModo}
               onChange={onIvaModoChange}
@@ -698,7 +797,7 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
               type="number"
               min="0"
               max="100"
-              disabled={isEdit || form.ivaModo === 'exento'}
+              disabled={form.ivaModo === 'exento'}
               className="w-full border border-border rounded px-2 py-1.5 font-mono disabled:bg-muted/30"
               value={form.ivaPorcentaje}
               onChange={onChange('ivaPorcentaje')}
@@ -756,7 +855,8 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
 
         {isEdit && (
           <p className="text-[11px] text-muted-foreground border-t border-border pt-2">
-            Para cambiar precio o IVA usa los módulos específicos (registran historial / auditoría).
+            El precio se cambia en el módulo de Precios (registra historial / auditoría). El IVA
+            sí puede editarse aquí.
           </p>
         )}
 
@@ -772,8 +872,9 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
+            {saving && <Spinner size={14} />}
             {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear producto'}
           </button>
         </div>

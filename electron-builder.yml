@@ -13,14 +13,19 @@ files:
 asarUnpack:
   - resources/**
   - '**/*.{node,dll}'
+# Copia scripts auxiliares (impresión RAW) a <install>/resources/scripts/
+# que es donde los busca el proceso principal en producción (process.resourcesPath).
+extraResources:
+  - from: resources/scripts
+    to: scripts
 win:
   executableName: farmacias-ms-pos
   target:
     - nsis
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: Farmacias MS POS
-  uninstallDisplayName: ${productName}
+  shortcutName: ${productName} v${version}
+  uninstallDisplayName: ${productName} v${version}
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true

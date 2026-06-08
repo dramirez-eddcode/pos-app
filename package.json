@@ -1,7 +1,7 @@
 {
   "name": "farmacias-ms-pos",
-  "version": "0.1.0",
-  "description": "POS local-first para Farmacias MS (Electron + React + TS)",
+  "version": "1.0.0",
+  "description": "Farmacias MS POS v1.0.0",
   "main": "./out/main/index.js",
   "author": "Eddcode <dramirez@eddcode.com>",
   "private": true,

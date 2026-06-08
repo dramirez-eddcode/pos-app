@@ -5,7 +5,9 @@ import Papa from 'papaparse'
 import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
+import Spinner from './Spinner'
 import { money } from '../lib/format'
+import { calcFromBase } from '@shared/iva'
 import type { ProductoDto, UpdateIvaItemInput, UpdatePrecioItemInput } from '@shared/dto'
 import type { IvaModo, MotivoPrecio } from '@shared/types'
 
@@ -60,6 +62,9 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   const [nuevoPrecio, setNuevoPrecio] = useState('')
   const [motivo, setMotivo] = useState<MotivoPrecio>('CAMBIO_LISTA')
   const [nota, setNota] = useState('')
+  // IVA editable también desde la pestaña Precios (con preview, como en Editar producto)
+  const [precioIvaModo, setPrecioIvaModo] = useState<IvaModo>('exento')
+  const [precioIvaPct, setPrecioIvaPct] = useState<string>(String(DEFAULT_IVA_PORCENTAJE))
   const [saving, setSaving] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
 
@@ -99,6 +104,8 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     setCodigo('')
     setNuevoPrecio('')
     setNota('')
+    setPrecioIvaModo('exento')
+    setPrecioIvaPct(String(DEFAULT_IVA_PORCENTAJE))
     setTimeout(() => codRef.current?.focus(), 30)
   }, [])
 
@@ -127,6 +134,12 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     setCurrent(p)
     setCodigo(p.codigo)
     setNuevoPrecio(String(p.precio.toFixed(2)))
+    setPrecioIvaModo(p.ivaModo)
+    setPrecioIvaPct(
+      p.ivaModo === 'exento'
+        ? String(DEFAULT_IVA_PORCENTAJE)
+        : String(p.ivaPorcentaje || DEFAULT_IVA_PORCENTAJE)
+    )
     setTimeout(() => {
       precioRef.current?.focus()
       precioRef.current?.select()
@@ -154,30 +167,63 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
       toast.error('Precio inválido')
       return
     }
-    if (nuevo === current.precio) {
-      toast.warning('El nuevo precio es igual al actual')
+    const pct =
+      precioIvaModo === 'exento'
+        ? 0
+        : Math.max(0, Math.min(100, Math.round(Number(precioIvaPct) || 0)))
+    const precioCambio = nuevo !== current.precio
+    const ivaCambio = precioIvaModo !== current.ivaModo || pct !== current.ivaPorcentaje
+    if (!precioCambio && !ivaCambio) {
+      toast.warning('No hay cambios (precio e IVA iguales a los actuales)')
       return
     }
-    setItems((prev) => {
-      const existing = prev.findIndex((x) => x.productoId === current.id)
-      const row: UpdatePrecioItemInput = {
-        productoId: current.id,
-        productoNombre: current.nombre,
-        codigo: current.codigo,
-        precioAnterior: current.precio,
-        nuevoPrecio: nuevo,
-        motivo,
-        nota: nota.trim() || null
-      }
-      if (existing >= 0) {
-        const next = [...prev]
-        next[existing] = row
-        return next
-      }
-      return [...prev, row]
-    })
+
+    // Cambio de precio → lista de precios
+    if (precioCambio) {
+      setItems((prev) => {
+        const existing = prev.findIndex((x) => x.productoId === current.id)
+        const row: UpdatePrecioItemInput = {
+          productoId: current.id,
+          productoNombre: current.nombre,
+          codigo: current.codigo,
+          precioAnterior: current.precio,
+          nuevoPrecio: nuevo,
+          motivo,
+          nota: nota.trim() || null
+        }
+        if (existing >= 0) {
+          const next = [...prev]
+          next[existing] = row
+          return next
+        }
+        return [...prev, row]
+      })
+    }
+
+    // Cambio de IVA → lista de IVA (se aplica junto con los precios al guardar)
+    if (ivaCambio) {
+      setIvaItems((prev) => {
+        const existing = prev.findIndex((x) => x.productoId === current.id)
+        const row: UpdateIvaItemInput = {
+          productoId: current.id,
+          productoNombre: current.nombre,
+          codigo: current.codigo,
+          ivaModoAnterior: current.ivaModo,
+          ivaPorcentajeAnterior: current.ivaPorcentaje,
+          nuevoModo: precioIvaModo,
+          nuevoPorcentaje: pct
+        }
+        if (existing >= 0) {
+          const next = [...prev]
+          next[existing] = row
+          return next
+        }
+        return [...prev, row]
+      })
+    }
+
     resetRow()
-  }, [current, nuevoPrecio, motivo, nota, resetRow])
+  }, [current, nuevoPrecio, precioIvaModo, precioIvaPct, motivo, nota, resetRow])
 
   const removeItem = useCallback((i: number) => {
     setItems((prev) => prev.filter((_, idx) => idx !== i))
@@ -259,9 +305,12 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   const downloadCSV = useCallback(async () => {
     try {
       const all = await window.api.productos.getAllActivos()
-      const header = 'codigo,nombre,precio,motivo,nota'
+      const header = 'codigo,nombre,precio,iva_modo,iva_porcentaje,motivo,nota'
       const lines = all.map(
-        (p) => `${escapeCsv(p.codigo)},${escapeCsv(p.nombre)},${p.precio.toFixed(2)},,`
+        (p) =>
+          `${escapeCsv(p.codigo)},${escapeCsv(p.nombre)},${p.precio.toFixed(2)},${p.ivaModo},${
+            p.ivaModo === 'exento' ? 0 : p.ivaPorcentaje
+          },,`
       )
       const content = '﻿' + [header, ...lines].join('\r\n')
       const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' })
@@ -275,7 +324,8 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
       toast.success(`Plantilla descargada con ${all.length.toLocaleString('es-MX')} productos`, {
-        description: 'Edita la columna "precio" en Excel y vuelve a cargar el archivo.'
+        description:
+          'Edita "precio" y/o el IVA (iva_modo: exento, sumar, incluido · iva_porcentaje 0–100) y vuelve a cargar.'
       })
     } catch (e) {
       toast.error('No pude descargar la plantilla', {
@@ -304,7 +354,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
       const rows = parsed.data.filter((r) => r.codigo && r.codigo.trim())
       if (rows.length === 0) {
         toast.error('El CSV no tiene filas válidas', {
-          description: 'Verifica el encabezado: codigo,nombre,precio,motivo,nota'
+          description: 'Verifica el encabezado: codigo,nombre,precio,iva_modo,iva_porcentaje,motivo,nota'
         })
         return
       }
@@ -312,15 +362,16 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
       const all = await window.api.productos.getAllActivos()
       const byCodigo = new Map(all.map((p) => [p.codigo, p]))
 
-      let added = 0
+      let priceAdded = 0
+      let ivaAdded = 0
       let unchanged = 0
       const notFound: string[] = []
       const invalid: string[] = []
       const newItems: UpdatePrecioItemInput[] = []
+      const newIvaItems: UpdateIvaItemInput[] = []
 
       for (const row of rows) {
         const codigo = (row.codigo ?? '').trim()
-        const precioStr = (row.precio ?? '').trim()
         if (!codigo) continue
 
         const prod = byCodigo.get(codigo)
@@ -329,54 +380,91 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
           continue
         }
 
-        const nuevo = Math.round(parseFloat(precioStr) * 100) / 100
-        if (!Number.isFinite(nuevo) || nuevo < 0) {
-          invalid.push(codigo)
-          continue
+        let touched = false
+
+        // ── Precio (sólo si la columna trae valor) ──────────────────────────
+        const precioStr = (row.precio ?? '').trim()
+        if (precioStr !== '') {
+          const nuevo = Math.round(parseFloat(precioStr) * 100) / 100
+          if (!Number.isFinite(nuevo) || nuevo < 0) {
+            invalid.push(`${codigo} (precio)`)
+          } else if (nuevo !== prod.precio) {
+            const motivoRaw = (row.motivo ?? '').trim().toUpperCase() as MotivoPrecio
+            const motivo: MotivoPrecio = VALID_MOTIVOS.includes(motivoRaw)
+              ? motivoRaw
+              : 'CAMBIO_LISTA'
+            const nota = (row.nota ?? '').trim() || null
+            newItems.push({
+              productoId: prod.id,
+              productoNombre: prod.nombre,
+              codigo: prod.codigo,
+              precioAnterior: prod.precio,
+              nuevoPrecio: nuevo,
+              motivo,
+              nota
+            })
+            priceAdded++
+            touched = true
+          }
         }
 
-        if (nuevo === prod.precio) {
-          unchanged++
-          continue
+        // ── IVA (sólo si la plantilla trae la columna iva_modo) ─────────────
+        const modoStr = (row.iva_modo ?? '').trim().toLowerCase()
+        if (modoStr !== '') {
+          const modo = modoStr as IvaModo
+          if (!VALID_IVA_MODOS.includes(modo)) {
+            invalid.push(`${codigo} (iva_modo)`)
+          } else {
+            const pctNum = Math.max(
+              0,
+              Math.min(100, Math.round(Number((row.iva_porcentaje ?? '').trim()) || 0))
+            )
+            const pct = modo === 'exento' ? 0 : pctNum
+            if (modo !== prod.ivaModo || pct !== prod.ivaPorcentaje) {
+              newIvaItems.push({
+                productoId: prod.id,
+                productoNombre: prod.nombre,
+                codigo: prod.codigo,
+                ivaModoAnterior: prod.ivaModo,
+                ivaPorcentajeAnterior: prod.ivaPorcentaje,
+                nuevoModo: modo,
+                nuevoPorcentaje: pct
+              })
+              ivaAdded++
+              touched = true
+            }
+          }
         }
 
-        const motivoRaw = (row.motivo ?? '').trim().toUpperCase() as MotivoPrecio
-        const motivo: MotivoPrecio = VALID_MOTIVOS.includes(motivoRaw) ? motivoRaw : 'CAMBIO_LISTA'
-        const nota = (row.nota ?? '').trim() || null
-
-        newItems.push({
-          productoId: prod.id,
-          productoNombre: prod.nombre,
-          codigo: prod.codigo,
-          precioAnterior: prod.precio,
-          nuevoPrecio: nuevo,
-          motivo,
-          nota
-        })
-        added++
+        if (!touched) unchanged++
       }
 
       setItems((prev) => {
         const keep = prev.filter((p) => !newItems.some((n) => n.productoId === p.productoId))
         return [...keep, ...newItems]
       })
+      setIvaItems((prev) => {
+        const keep = prev.filter((p) => !newIvaItems.some((n) => n.productoId === p.productoId))
+        return [...keep, ...newIvaItems]
+      })
 
       const parts: string[] = []
-      parts.push(`${added} cambio${added === 1 ? '' : 's'} cargado${added === 1 ? '' : 's'}`)
+      parts.push(`${priceAdded} precio${priceAdded === 1 ? '' : 's'}`)
+      parts.push(`${ivaAdded} IVA`)
       if (unchanged > 0) parts.push(`${unchanged} sin cambios`)
       if (notFound.length > 0)
-        parts.push(`${notFound.length} código${notFound.length === 1 ? '' : 's'} no encontrado${notFound.length === 1 ? '' : 's'}`)
+        parts.push(`${notFound.length} no encontrado${notFound.length === 1 ? '' : 's'}`)
       if (invalid.length > 0)
-        parts.push(`${invalid.length} precio${invalid.length === 1 ? '' : 's'} inválido${invalid.length === 1 ? '' : 's'}`)
+        parts.push(`${invalid.length} inválido${invalid.length === 1 ? '' : 's'}`)
 
-      if (added > 0) {
+      if (priceAdded > 0 || ivaAdded > 0) {
         toast.success('CSV procesado', { description: parts.join(' · ') })
       } else {
         toast.warning('No se encontraron cambios para aplicar', { description: parts.join(' · ') })
       }
 
       if (notFound.length > 0) console.warn('[csv] Códigos no encontrados:', notFound.slice(0, 50))
-      if (invalid.length > 0) console.warn('[csv] Precios inválidos:', invalid.slice(0, 50))
+      if (invalid.length > 0) console.warn('[csv] Valores inválidos:', invalid.slice(0, 50))
     } catch (err) {
       toast.error('Error leyendo CSV', {
         description: err instanceof Error ? err.message : String(err)
@@ -515,15 +603,25 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
 
   // ── Save ─────────────────────────────────────────────────────────────────
   const save = useCallback(async () => {
-    if (items.length === 0) {
+    if (items.length === 0 && ivaItems.length === 0) {
       toast.error('No hay cambios que registrar')
       return
     }
     setSaving(true)
     try {
-      const r = await window.api.precios.update({ cajeroId: userId, items })
-      toast.success(`Precios actualizados: ${r.actualizados}`, {
-        description: 'Cambios registrados en el histórico de precios.'
+      let nPrecios = 0
+      let nIva = 0
+      if (items.length > 0) {
+        const r = await window.api.precios.update({ cajeroId: userId, items })
+        nPrecios = r.actualizados
+      }
+      // Si la carga masiva trajo cambios de IVA, se aplican en el mismo paso.
+      if (ivaItems.length > 0) {
+        const r2 = await window.api.productos.updateIva({ cajeroId: userId, items: ivaItems })
+        nIva = r2.actualizados
+      }
+      toast.success('Cambios aplicados', {
+        description: `Precios: ${nPrecios} (con histórico) · IVA: ${nIva}`
       })
       onClose()
     } catch (e) {
@@ -533,7 +631,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     } finally {
       setSaving(false)
     }
-  }, [items, userId, onClose])
+  }, [items, ivaItems, userId, onClose])
 
   const saveIva = useCallback(async () => {
     if (ivaItems.length === 0) {
@@ -590,8 +688,20 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   const subidas = preciosCambiados.filter((i) => i.nuevoPrecio > i.precioAnterior).length
   const bajadas = preciosCambiados.filter((i) => i.nuevoPrecio < i.precioAnterior).length
 
+  // Preview del precio según el IVA (misma lógica que "Editar producto" y el POS)
+  const precioPrevNum = Number(nuevoPrecio)
+  const precioPrevPct = precioIvaModo === 'exento' ? 0 : Number(precioIvaPct || '0')
+  const precioPrevOk =
+    !!current && nuevoPrecio.trim() !== '' && Number.isFinite(precioPrevNum) && precioPrevNum >= 0
+  const desglosePrecio = precioPrevOk
+    ? calcFromBase(precioPrevNum, precioPrevPct, precioIvaModo)
+    : null
+
   const isIva = tab === 'iva'
-  const saveDisabled = isIva ? savingIva || ivaItems.length === 0 : saving || items.length === 0
+  const saveBusy = isIva ? savingIva : saving
+  const saveDisabled = isIva
+    ? savingIva || ivaItems.length === 0
+    : saving || (items.length === 0 && ivaItems.length === 0)
   const saveLabel = isIva
     ? savingIva
       ? 'Guardando…'
@@ -632,11 +742,13 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
               <section className="border border-dashed border-border rounded p-3 bg-muted/20">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 text-xs">
-                    <div className="font-semibold mb-0.5">Actualización masiva por CSV</div>
+                    <div className="font-semibold mb-0.5">Actualización masiva por CSV (precio e IVA)</div>
                     <p className="text-muted-foreground">
-                      Descarga la plantilla con todos los productos y sus precios actuales,
-                      edítala en Excel (sólo cambia la columna{' '}
-                      <span className="font-mono">precio</span>) y vuelve a cargarla.
+                      Descarga la plantilla con todos los productos (precio e IVA actuales). En Excel
+                      edita <span className="font-mono">precio</span> y/o el IVA:{' '}
+                      <span className="font-mono">iva_modo</span> (exento, sumar, incluido) y{' '}
+                      <span className="font-mono">iva_porcentaje</span>. Vuelve a cargarla y aplica;
+                      el precio queda con histórico de auditoría.
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
@@ -654,7 +766,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                       disabled={importing}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50 text-xs"
                     >
-                      <Upload className="size-3.5" />
+                      {importing ? <Spinner size={14} /> : <Upload className="size-3.5" />}
                       {importing ? 'Procesando…' : 'Cargar CSV'}
                     </button>
                     <input
@@ -752,6 +864,65 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                     </select>
                   </div>
                 </div>
+
+                {/* IVA del producto + preview (igual que en "Editar producto") */}
+                <div className="grid grid-cols-[1fr_120px] gap-2">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">IVA modo</label>
+                    <select
+                      value={precioIvaModo}
+                      onChange={(e) => {
+                        const modo = e.target.value as IvaModo
+                        setPrecioIvaModo(modo)
+                        if (modo !== 'exento' && (precioIvaPct === '' || precioIvaPct === '0')) {
+                          setPrecioIvaPct(String(DEFAULT_IVA_PORCENTAJE))
+                        }
+                      }}
+                      disabled={!current}
+                      className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
+                    >
+                      {IVA_MODO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value} title={o.hint}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">% IVA</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={precioIvaPct}
+                      onChange={(e) => setPrecioIvaPct(e.target.value)}
+                      disabled={!current || precioIvaModo === 'exento'}
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono text-right disabled:bg-muted/30"
+                    />
+                  </div>
+                </div>
+
+                {desglosePrecio && (
+                  <div className="rounded border border-border bg-muted/30 px-3 py-2 space-y-1.5">
+                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                      Vista previa del precio
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 font-mono text-sm">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase">Importe (neto)</div>
+                        <div>{money(desglosePrecio.importe)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase">IVA</div>
+                        <div>{money(desglosePrecio.iva)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase">Precio de venta</div>
+                        <div className="font-semibold text-blue-700">{money(desglosePrecio.total)}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">
@@ -908,7 +1079,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                       disabled={importingIva}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50 text-xs"
                     >
-                      <Upload className="size-3.5" />
+                      {importingIva ? <Spinner size={14} /> : <Upload className="size-3.5" />}
                       {importingIva ? 'Procesando…' : 'Cargar CSV'}
                     </button>
                     <input
@@ -1118,8 +1289,9 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
               type="button"
               onClick={isIva ? saveIva : save}
               disabled={saveDisabled}
-              className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
+              {saveBusy && <Spinner size={14} />}
               {saveLabel}
             </button>
           </div>

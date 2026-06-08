@@ -12,7 +12,8 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    title: 'Farmacias MS POS',
+    title: `Farmacias MS POS v${app.getVersion()}`,
+    icon: join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -23,7 +24,11 @@ function createWindow(): void {
     }
   })
 
+  // El <title> del HTML no debe pisar el título con versión de la ventana.
+  mainWindow.on('page-title-updated', (e) => e.preventDefault())
+
   mainWindow.on('ready-to-show', () => {
+    mainWindow.maximize() // abre ocupando toda la pantalla (conserva barra de título)
     mainWindow.show()
     if (is.dev) mainWindow.webContents.openDevTools({ mode: 'detach' })
   })

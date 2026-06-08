@@ -10,6 +10,7 @@ import {
   Sparkles
 } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import type { ImportFarmaPreview } from '@shared/dto'
 
@@ -31,6 +32,7 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
   const [resultStats, setResultStats] = useState<{
     creados: number
     actualizados: number
+    stockLotes: number
     sucursalNombre: string
   } | null>(null)
 
@@ -90,6 +92,7 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
       setResultStats({
         creados: r.productosCreados,
         actualizados: r.productosActualizados,
+        stockLotes: r.stockLotes,
         sucursalNombre: r.sucursal.nombre
       })
       // Refresh session.sucursal con los datos del import
@@ -145,7 +148,7 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
               disabled={phase === 'picking'}
               className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
-              <FolderOpen className="size-4" />
+              {phase === 'picking' ? <Spinner size={14} /> : <FolderOpen className="size-4" />}
               {phase === 'picking' ? 'Abriendo selector…' : 'Elegir archivo .farma'}
             </button>
           </div>
@@ -286,8 +289,8 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
         {/* ── Fase: applying ──────────────────────────────────────────── */}
         {phase === 'applying' && (
           <div className="py-8 text-center space-y-3">
-            <div className="inline-flex items-center justify-center size-12 rounded-full bg-blue-50 text-blue-700 animate-pulse">
-              <PackageCheck className="size-6" />
+            <div className="flex justify-center text-blue-700">
+              <Spinner size={32} />
             </div>
             <div className="text-sm">Aplicando actualización…</div>
             <div className="text-xs text-muted-foreground">
@@ -311,6 +314,12 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
                   Productos: <span className="font-semibold">{resultStats.creados}</span> creados ·{' '}
                   <span className="font-semibold">{resultStats.actualizados}</span> actualizados
                 </div>
+                {resultStats.stockLotes > 0 && (
+                  <div className="text-xs">
+                    Stock inicial:{' '}
+                    <span className="font-semibold">{resultStats.stockLotes}</span> lotes cargados
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex justify-end pt-2 border-t border-border">

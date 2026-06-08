@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  ArrowRightLeft,
   Boxes,
   Building2,
   Download,
+  PackageCheck,
   PackageMinus,
   PackagePlus,
   RefreshCcw,
@@ -25,6 +27,8 @@ interface Props {
   open: boolean
   onClose: () => void
   onEntrada: () => void
+  onCargaInicial: () => void
+  onRecibirTraspaso: () => void
   onSalidas: () => void
   onAjustes: () => void
   onPrecios: () => void
@@ -42,6 +46,8 @@ export default function ProcesosEspecialesModal({
   open,
   onClose,
   onEntrada,
+  onCargaInicial,
+  onRecibirTraspaso,
   onSalidas,
   onAjustes,
   onPrecios,
@@ -59,6 +65,26 @@ export default function ProcesosEspecialesModal({
       handler: () => {
         onClose()
         onEntrada()
+      }
+    },
+    {
+      id: 'carga-inicial',
+      label: 'Carga inicial de inventario',
+      hint: 'Fijar existencias desde CSV (migración / arranque) — idempotente',
+      icon: <PackageCheck className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onCargaInicial()
+      }
+    },
+    {
+      id: 'recibir-traspaso',
+      label: 'Recibir traspaso',
+      hint: 'Cargar un .traspaso enviado por la matriz (entra a tu inventario)',
+      icon: <ArrowRightLeft className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onRecibirTraspaso()
       }
     },
     {

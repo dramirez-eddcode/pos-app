@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { money, folio as fmtFolio } from '../lib/format'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
@@ -139,7 +140,13 @@ export default function CancelVentaModal({ open, onClose, onCancelled, currentUs
             disabled={!folioInput || searching}
             className="px-4 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50"
           >
-            {searching ? 'Buscando…' : 'Buscar'}
+            {searching ? (
+              <>
+                <Spinner size={14} /> Buscando…
+              </>
+            ) : (
+              'Buscar'
+            )}
           </button>
         </div>
 
@@ -260,7 +267,13 @@ export default function CancelVentaModal({ open, onClose, onCancelled, currentUs
                     disabled={cancelling}
                     className="px-4 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
                   >
-                    {cancelling ? 'Cancelando…' : 'Sí, cancelar'}
+                    {cancelling ? (
+                      <>
+                        <Spinner size={14} /> Cancelando…
+                      </>
+                    ) : (
+                      'Sí, cancelar'
+                    )}
                   </button>
                 </>
               )}

@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner'
 import { Ban, CheckCircle2, Pencil, RotateCcw, Search } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import { money } from '../lib/format'
 import type {
@@ -36,6 +37,8 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
   const [showExcluidos, setShowExcluidos] = useState(true)
   const [sub, setSub] = useState<SubForm>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
 
   const load = useCallback(async () => {
     if (!user || !sucursal) return
@@ -76,6 +79,15 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
     const excluidos = list.filter((p) => p.override?.excluida).length
     return { total, conOverride, excluidos }
   }, [list])
+
+  // ── Paginación ──────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const pageSafe = Math.min(page, totalPages)
+  const pageItems = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize)
+
+  useEffect(() => {
+    setPage(1)
+  }, [filtro, showSoloOverride, showExcluidos, pageSize])
 
   const clearOverride = useCallback(
     async (p: CatalogoSucursalItem) => {
@@ -192,8 +204,10 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
               <tbody>
                 {loading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-2 py-6 text-center text-muted-foreground italic">
-                      Cargando…
+                    <td colSpan={7} className="px-2 py-6 text-muted-foreground italic">
+                      <div className="flex justify-center">
+                        <Spinner label="Cargando…" />
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -206,7 +220,7 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
                     </td>
                   </tr>
                 )}
-                {filtered.map((p) => {
+                {pageItems.map((p) => {
                   const hasOverride = Boolean(p.override)
                   const excluida = p.override?.excluida ?? false
                   return (
@@ -278,7 +292,11 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
                             }`}
                             title={excluida ? 'Volver a aplicar en esta sucursal' : 'Excluir de esta sucursal'}
                           >
-                            <Ban className="size-3" />
+                            {busyId === p.productoId ? (
+                              <Spinner size={14} />
+                            ) : (
+                              <Ban className="size-3" />
+                            )}
                             {excluida ? 'Aplicar' : 'Excluir'}
                           </button>
                           {hasOverride && (
@@ -289,7 +307,11 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
                               className="inline-flex items-center gap-1 px-2 py-1 border border-border rounded hover:bg-muted text-[11px] disabled:opacity-50"
                               title="Reiniciar — volver al catálogo global"
                             >
-                              <RotateCcw className="size-3" />
+                              {busyId === p.productoId ? (
+                                <Spinner size={14} />
+                              ) : (
+                                <RotateCcw className="size-3" />
+                              )}
                               Reset
                             </button>
                           )}
@@ -302,18 +324,46 @@ export default function SucursalCatalogoModal({ open, onClose, sucursal }: Props
             </table>
           </div>
 
-          <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
-            <span>{filtered.length} mostrados</span>
-            <span>·</span>
-            <span>{stats.total} en catálogo global</span>
-            <span>·</span>
-            <span className="text-blue-700 font-medium">{stats.conOverride} con override</span>
-            {stats.excluidos > 0 && (
-              <>
-                <span>·</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>{filtered.length} de {stats.total}</span>
+              <span className="text-blue-700 font-medium">{stats.conOverride} con override</span>
+              {stats.excluidos > 0 && (
                 <span className="text-red-700 font-medium">{stats.excluidos} excluidos</span>
-              </>
-            )}
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border border-border rounded px-1.5 py-1 bg-background"
+              >
+                {[10, 20, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n}/pág
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setPage(pageSafe - 1)}
+                disabled={pageSafe <= 1}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+              >
+                ‹
+              </button>
+              <span className="whitespace-nowrap">
+                Pág {pageSafe}/{totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(pageSafe + 1)}
+                disabled={pageSafe >= totalPages}
+                className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+              >
+                ›
+              </button>
+            </div>
           </div>
         </div>
 
@@ -536,9 +586,15 @@ function OverrideEditorSubModal({ sucursalId, target, onClose, onSaved }: SubPro
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Guardando…' : 'Guardar override'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Guardando…
+              </>
+            ) : (
+              'Guardar override'
+            )}
           </button>
         </div>
       </form>

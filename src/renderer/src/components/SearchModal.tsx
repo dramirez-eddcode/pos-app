@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { money } from '../lib/format'
 import type { ProductoDto, ProductoSearchMode } from '@shared/dto'
 
@@ -24,6 +25,7 @@ const MODE_LABEL: Record<ProductoSearchMode, string> = {
 }
 
 const DEBOUNCE_MS = 180
+const SEARCH_LIMIT = 200
 
 export default function SearchModal({ open, onClose, onSelect, allowZeroStock = false }: Props) {
   const [mode, setMode] = useState<ProductoSearchMode>('nombre')
@@ -31,8 +33,16 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
   const [results, setResults] = useState<ProductoDto[]>([])
   const [loading, setLoading] = useState(false)
   const [idx, setIdx] = useState(0)
+  const [pageSize, setPageSize] = useState(20)
   const inputRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableSectionElement>(null)
+
+  // Paginación: la página se deriva de la fila seleccionada (idx) para no romper
+  // la navegación con teclado (↑/↓ saltan de página automáticamente).
+  const totalPages = Math.max(1, Math.ceil(results.length / pageSize))
+  const page = Math.min(Math.floor(idx / pageSize), totalPages - 1)
+  const pageStart = page * pageSize
+  const pageItems = results.slice(pageStart, pageStart + pageSize)
 
   useEffect(() => {
     if (!open) return
@@ -48,7 +58,7 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     const t = setTimeout(async () => {
       setLoading(true)
       try {
-        const r = await window.api.productos.search({ mode, term, limit: 200 })
+        const r = await window.api.productos.search({ mode, term, limit: SEARCH_LIMIT })
         setResults(r)
         setIdx(0)
       } finally {
@@ -58,13 +68,13 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     return () => clearTimeout(t)
   }, [term, mode, open])
 
-  // Auto-scroll a la fila seleccionada
+  // Auto-scroll a la fila seleccionada (índice relativo a la página visible)
   useEffect(() => {
     const tbody = tableRef.current
     if (!tbody) return
-    const row = tbody.children[idx] as HTMLElement | undefined
+    const row = tbody.children[idx - pageStart] as HTMLElement | undefined
     row?.scrollIntoView({ block: 'nearest' })
-  }, [idx])
+  }, [idx, pageStart])
 
   const commit = useCallback(
     (p: ProductoDto) => {
@@ -144,7 +154,13 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
             />
           </div>
           <div className="text-xs text-muted-foreground pt-5">
-            {loading ? '…' : `${results.length} resultado${results.length === 1 ? '' : 's'}`}
+            {loading ? (
+              <Spinner size={14} label="Buscando…" />
+            ) : results.length >= SEARCH_LIMIT ? (
+              `${SEARCH_LIMIT}+ resultados · escribe para acotar`
+            ) : (
+              `${results.length} resultado${results.length === 1 ? '' : 's'}`
+            )}
           </div>
         </div>
 
@@ -163,11 +179,20 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
               {results.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-2 py-8 text-center text-muted-foreground">
-                    {term ? 'Sin resultados' : 'Escribe para buscar'}
+                    {loading ? (
+                      <span className="inline-flex items-center justify-center">
+                        <Spinner label="Buscando…" />
+                      </span>
+                    ) : term ? (
+                      'Sin resultados'
+                    ) : (
+                      'Escribe para buscar'
+                    )}
                   </td>
                 </tr>
               )}
-              {results.map((p, i) => {
+              {pageItems.map((p, localI) => {
+                const i = pageStart + localI
                 const sinStock = p.existenciasTotal <= 0
                 // En modo allowZeroStock, los 0 no son "bloqueados" — sólo informativos
                 const blocked = sinStock && !allowZeroStock
@@ -205,16 +230,53 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
           </table>
         </div>
       </div>
-      <footer className="flex justify-between items-center px-4 py-2 border-t border-border bg-muted/20 text-xs">
-        <div className="text-muted-foreground">
+      <footer className="flex justify-between items-center gap-3 px-4 py-2 border-t border-border bg-muted/20 text-xs">
+        <div className="text-muted-foreground hidden md:block">
           <span className="font-mono">↑/↓</span> navegar · <span className="font-mono">Enter</span>{' '}
-          agregar · <span className="font-mono">F9</span> cambiar modo · <span className="font-mono">Esc</span>{' '}
+          agregar · <span className="font-mono">F9</span> modo · <span className="font-mono">Esc</span>{' '}
           cerrar
         </div>
+
+        {results.length > 0 && (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="border border-border rounded px-1.5 py-1 bg-background"
+              title="Resultados por página"
+            >
+              {[10, 20, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>
+                  {n}/pág
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setIdx(Math.max(0, pageStart - pageSize))}
+              disabled={page <= 0}
+              className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+            >
+              ‹
+            </button>
+            <span className="whitespace-nowrap">
+              Pág {page + 1}/{totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setIdx(Math.min(results.length - 1, pageStart + pageSize))}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-40"
+            >
+              ›
+            </button>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={onClose}
-          className="px-3 py-1 border border-border rounded hover:bg-muted"
+          className="px-3 py-1 border border-border rounded hover:bg-muted shrink-0"
         >
           Cerrar
         </button>

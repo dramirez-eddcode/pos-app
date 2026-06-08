@@ -8,11 +8,18 @@ import {
   type ReactNode
 } from 'react'
 import { toast } from 'sonner'
-import { Boxes, Pencil, Plus, Power, Search, Store, Upload } from 'lucide-react'
+import { Boxes, PackagePlus, Pencil, Plus, Power, Search, Store, Upload } from 'lucide-react'
+import Papa from 'papaparse'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import SucursalCatalogoModal from './SucursalCatalogoModal'
 import { useSession } from '../stores/session'
-import type { CreateSucursalInput, SucursalDto, UpdateSucursalInput } from '@shared/dto'
+import type {
+  CreateSucursalInput,
+  ExportFarmaStockLote,
+  SucursalDto,
+  UpdateSucursalInput
+} from '@shared/dto'
 
 interface Props {
   open: boolean
@@ -31,6 +38,9 @@ export default function SucursalesModal({ open, onClose }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [catalogoFor, setCatalogoFor] = useState<SucursalDto | null>(null)
   const [exportingId, setExportingId] = useState<string | null>(null)
+  // Export con stock inicial: sucursal pendiente + input de archivo CSV.
+  const stockSucursalRef = useRef<SucursalDto | null>(null)
+  const stockFileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -83,6 +93,63 @@ export default function SucursalesModal({ open, onClose }: Props) {
       } catch (e) {
         toast.error('Falló el export', {
           description: e instanceof Error ? e.message : String(e)
+        })
+      } finally {
+        setExportingId(null)
+      }
+    },
+    [user]
+  )
+
+  // Exportar incluyendo stock inicial: pide el CSV de existencias y lo adjunta.
+  const onExportConStock = useCallback((s: SucursalDto) => {
+    stockSucursalRef.current = s
+    stockFileRef.current?.click()
+  }, [])
+
+  const onStockFileSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = ''
+      const s = stockSucursalRef.current
+      stockSucursalRef.current = null
+      if (!file || !s || !user) return
+      setExportingId(s.id)
+      try {
+        const text = await file.text()
+        const parsed = Papa.parse<Record<string, string>>(text, {
+          header: true,
+          skipEmptyLines: true,
+          transformHeader: (h) => h.trim().toLowerCase()
+        })
+        const items: ExportFarmaStockLote[] = parsed.data
+          .filter((r) => (r.codigo ?? '').trim() && (r.cantidad ?? '').trim())
+          .map((r) => ({
+            codigo: (r.codigo ?? '').trim(),
+            cantidad: Math.round(Number((r.cantidad ?? '').trim()) || 0),
+            caducidad: (r.caducidad ?? '').trim() || null
+          }))
+          .filter((it) => it.cantidad > 0)
+        if (items.length === 0) {
+          toast.error('El CSV no tiene existencias válidas', {
+            description: 'Se esperan columnas: codigo, cantidad, caducidad'
+          })
+          return
+        }
+        const r = await window.api.exportSucursal.farma(user.id, s.id, items)
+        if (!r.ok) {
+          if (r.cancelled) return
+          toast.error('Falló el export', { description: r.error ?? 'Error desconocido' })
+          return
+        }
+        const kb = ((r.bytes ?? 0) / 1024).toFixed(1)
+        toast.success(`Exportado a ${s.nombre} (con stock inicial)`, {
+          description: `${r.productosCount} productos · ${r.stockLineas} lotes de stock · ${kb} KB · ${r.path}`,
+          duration: 9000
+        })
+      } catch (err) {
+        toast.error('Falló el export con stock', {
+          description: err instanceof Error ? err.message : String(err)
         })
       } finally {
         setExportingId(null)
@@ -163,8 +230,10 @@ export default function SucursalesModal({ open, onClose }: Props) {
               <tbody>
                 {loading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-2 py-6 text-center text-muted-foreground italic">
-                      Cargando…
+                    <td colSpan={6} className="px-2 py-6 text-muted-foreground italic">
+                      <div className="flex justify-center">
+                        <Spinner label="Cargando…" />
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -220,8 +289,22 @@ export default function SucursalesModal({ open, onClose }: Props) {
                           className="inline-flex items-center gap-1 px-2 py-1 border border-blue-300 rounded hover:bg-blue-50 text-[11px] text-blue-800 disabled:opacity-50"
                           title={s.activa ? 'Exportar .farma para esta sucursal' : 'Activa la sucursal para exportar'}
                         >
-                          <Upload className="size-3" />
+                          {exportingId === s.id ? <Spinner size={14} /> : <Upload className="size-3" />}
                           {exportingId === s.id ? 'Exportando…' : 'Exportar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onExportConStock(s)}
+                          disabled={!s.activa || exportingId === s.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 border border-teal-300 rounded hover:bg-teal-50 text-[11px] text-teal-800 disabled:opacity-50"
+                          title={
+                            s.activa
+                              ? 'Exportar incluyendo stock inicial (adjunta existencias-entradas.csv del legacy)'
+                              : 'Activa la sucursal para exportar'
+                          }
+                        >
+                          <PackagePlus className="size-3" />
+                          Exportar + stock
                         </button>
                         <button
                           type="button"
@@ -241,7 +324,7 @@ export default function SucursalesModal({ open, onClose }: Props) {
                               : 'border-border hover:bg-green-50 hover:border-green-300 text-green-700'
                           }`}
                         >
-                          <Power className="size-3" />
+                          {busyId === s.id ? <Spinner size={14} /> : <Power className="size-3" />}
                           {s.activa ? 'Desactivar' : 'Activar'}
                         </button>
                       </div>
@@ -267,6 +350,14 @@ export default function SucursalesModal({ open, onClose }: Props) {
           </button>
         </footer>
       </Modal>
+
+      <input
+        ref={stockFileRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={onStockFileSelected}
+      />
 
       {sub?.kind === 'create' && (
         <SucursalEditorSubModal
@@ -512,9 +603,17 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Crear sucursal'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Guardando…
+              </>
+            ) : isEdit ? (
+              'Guardar cambios'
+            ) : (
+              'Crear sucursal'
+            )}
           </button>
         </div>
       </form>

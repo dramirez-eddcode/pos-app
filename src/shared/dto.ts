@@ -70,6 +70,40 @@ export interface SessionUser {
   sucursal: EmpresaDto | null
 }
 
+// ── Wizard: configurar SUCURSAL desde un archivo .farma (USB de la matriz) ──
+export interface WizardFarmaPreview {
+  filePath: string
+  generadoEn: string
+  matrizPropietario: string | null
+  sucursal: {
+    id: string
+    codigo: string
+    nombre: string
+    razonSocial: string | null
+    rfc: string | null
+  }
+  productosCount: number
+  stockLotes: number
+  usuarios: { login: string; nombre: string; rol: string }[]
+}
+
+export type PickWizardFarmaResult =
+  | { ok: true; preview: WizardFarmaPreview }
+  | { ok: false; cancelled?: boolean; error?: string }
+
+export interface CompleteWizardFromFarmaInput {
+  filePath: string
+  propietarioNombre: string
+}
+
+export interface CompleteWizardFromFarmaResult {
+  ok: true
+  sucursalNombre: string
+  productos: number
+  stockLotes: number
+  usuarios: number
+}
+
 export interface EmpresaDto {
   id: string
   nombreComercial: string
@@ -202,6 +236,29 @@ export interface ExportFarmaPayload {
     estado: string | null
   }
   productos: ExportFarmaProducto[]
+  // Stock inicial opcional (solo se incluye en la PRIMERA exportación de una
+  // sucursal que se migra del legacy). Se aplica únicamente en la primera
+  // importación de la sucursal (no en actualizaciones posteriores).
+  stockInicial?: ExportFarmaStockLote[]
+  // Usuarios admin de la matriz, para configurar la sucursal con las mismas
+  // credenciales. Solo se usan en el wizard (primera configuración).
+  usuarios?: ExportFarmaUsuario[]
+}
+
+export interface ExportFarmaStockLote {
+  codigo: string
+  cantidad: number
+  caducidad: string | null // YYYY-MM-DD; null = sin caducidad
+}
+
+// Usuario admin que viaja en el .farma para poder configurar la sucursal con
+// las mismas credenciales de la matriz. La contraseña va como hash bcrypt.
+export interface ExportFarmaUsuario {
+  login: string
+  nombre: string
+  rol: string // ADMINISTRADOR | SUPERUSUARIO
+  passwordHash: string
+  puedeCancelar: boolean
 }
 
 // Archivo completo `.farma` en disco
@@ -245,6 +302,7 @@ export type ApplyFarmaResult =
       sucursal: { id: string; codigo: string; nombre: string }
       productosCreados: number
       productosActualizados: number
+      stockLotes: number // lotes de stock inicial aplicados (solo primera importación)
       generadoEn: string
       primeraImport: boolean
       sucursalCambiada: boolean
@@ -260,6 +318,7 @@ export type ExportSucursalResult =
       ok: true
       path: string
       productosCount: number
+      stockLineas: number
       bytes: number
       generadoEn: string
       checksum: string
@@ -508,6 +567,168 @@ export interface CreateSalidaInput {
 export interface CreateSalidaResult {
   itemsCreados: number
   unidadesTotales: number
+}
+
+// ── Carga inicial de inventario (migración / arranque) ──────────────────────
+// Idempotente: por cada (código, caducidad) FIJA el saldo del lote al valor
+// indicado (no suma). Re-ejecutar el mismo CSV deja el inventario igual.
+export interface CargaInicialItemInput {
+  codigo: string
+  cantidad: number // saldo objetivo (>= 0)
+  fechaCaducidad?: string | null // YYYY-MM-DD; vacío/null = lote sin caducidad
+}
+
+export interface CargaInicialInput {
+  usuarioId: string
+  bodegaId: string // bodega destino del inventario
+  items: CargaInicialItemInput[]
+  // Si true, los lotes de la bodega que NO vengan en el CSV se ponen en saldo 0
+  // (reconciliación total: la bodega queda EXACTAMENTE como el CSV).
+  reemplazarBodega?: boolean
+}
+
+export interface CargaInicialResult {
+  lotesCreados: number
+  lotesActualizados: number
+  lotesSinCambio: number
+  lotesPuestosCero: number
+  unidadesTotal: number
+  noEncontrados: string[] // códigos sin producto en el catálogo
+  invalidos: string[] // filas con cantidad inválida
+}
+
+// ── Consulta de stock por bodega (inventario) ───────────────────────────────
+export interface StockBodegaLote {
+  caducidad: string // YYYY-MM-DD
+  saldo: number
+  vencido: boolean
+  porVencer: boolean // <= 90 días y no vencido
+}
+
+export interface StockBodegaItem {
+  productoId: string
+  codigo: string
+  nombre: string
+  sustanciaActiva: string | null
+  activo: boolean
+  costo: number
+  precio: number
+  stockMinimo: number
+  existencias: number
+  valorCosto: number // existencias * costo
+  bajoMinimo: boolean
+  proximaCaducidad: string | null // la más próxima (FEFO)
+  lotes: StockBodegaLote[]
+}
+
+export interface StockBodegaResumen {
+  skusConStock: number
+  unidades: number
+  valorCosto: number
+  lotes: number
+  bajoMinimo: number
+  porVencer: number // # lotes por vencer (<= 90 días)
+  vencidos: number // # lotes ya vencidos
+}
+
+export interface StockBodegaResult {
+  resumen: StockBodegaResumen
+  items: StockBodegaItem[]
+}
+
+// ── Traspaso bodega (matriz) → sucursal (USB) ───────────────────────────────
+export interface TraspasoLineaFile {
+  codigo: string
+  nombre: string
+  cantidad: number
+  costo: number
+  caducidad: string // YYYY-MM-DD
+}
+
+export interface TraspasoPayload {
+  folio: string
+  matriz: { id: string | null; propietario: string | null }
+  bodegaOrigen: { id: string; codigo: string; nombre: string }
+  sucursal: { id: string; codigo: string; nombre: string }
+  items: TraspasoLineaFile[]
+}
+
+export interface TraspasoFile {
+  tipo: 'TRASPASO_BODEGA_SUCURSAL'
+  version: number
+  generadoEn: string
+  checksum: string
+  payload: TraspasoPayload
+}
+
+export interface CrearTraspasoItemInput {
+  codigo: string
+  cantidad: number
+}
+
+export interface CrearTraspasoInput {
+  bodegaOrigenId: string
+  sucursalId: string
+  items: CrearTraspasoItemInput[]
+}
+
+export interface TraspasoFaltante {
+  codigo: string
+  pedido: number
+  disponible: number
+}
+
+export interface CrearTraspasoResult {
+  ok: boolean
+  cancelled?: boolean
+  error?: string
+  path?: string
+  folio?: string
+  lineas?: number
+  unidades?: number
+  faltantes?: TraspasoFaltante[]
+}
+
+export interface TraspasoPreview {
+  filePath: string
+  folio: string
+  generadoEn: string
+  bodegaOrigen: string
+  sucursalNombre: string
+  lineas: number
+  unidades: number
+  yaAplicado: boolean
+  sucursalCoincide: boolean
+}
+
+export interface PickTraspasoResult {
+  ok: boolean
+  cancelled?: boolean
+  error?: string
+  preview?: TraspasoPreview
+}
+
+export interface AplicarTraspasoResult {
+  ok: boolean
+  error?: string
+  folio?: string
+  lotesCreados?: number
+  unidades?: number
+  noEncontrados?: string[]
+}
+
+// Historial de traspasos (matriz)
+export interface TraspasoHistItem {
+  folio: string
+  fecha: string // ISO
+  bodegaOrigen: string
+  sucursalNombre: string
+  lineas: number
+  unidades: number
+}
+
+export interface TraspasoHistDetalle extends TraspasoHistItem {
+  items: TraspasoLineaFile[]
 }
 
 export interface UpdatePrecioItemInput {

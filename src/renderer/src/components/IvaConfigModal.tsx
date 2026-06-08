@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { Percent } from 'lucide-react'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import { isAdminLike } from '../lib/roles'
 
@@ -81,7 +82,14 @@ export default function IvaConfigModal({ open, onClose }: Props) {
               className="w-full border border-border rounded px-2 py-1.5 font-mono pr-8 disabled:bg-muted/30"
               autoComplete="off"
             />
-            <Percent className="absolute right-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            {loading ? (
+              <Spinner
+                size={14}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+            ) : (
+              <Percent className="absolute right-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+            )}
           </div>
         </label>
 
@@ -104,9 +112,15 @@ export default function IvaConfigModal({ open, onClose }: Props) {
             <button
               type="submit"
               disabled={saving || loading}
-              className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              className="inline-flex items-center justify-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
-              {saving ? 'Guardando…' : 'Guardar'}
+              {saving ? (
+                <>
+                  <Spinner size={14} /> Guardando…
+                </>
+              ) : (
+                'Guardar'
+              )}
             </button>
           )}
         </div>

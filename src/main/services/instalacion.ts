@@ -1,12 +1,19 @@
-import { randomUUID } from 'node:crypto'
+import { BrowserWindow, dialog } from 'electron'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import bcrypt from 'bcryptjs'
 import { getSqlite } from '../db/connection'
+import { cargaInicialInventario } from './cargaInicial'
 import type {
   BootstrapStateDto,
+  CompleteWizardFromFarmaInput,
+  CompleteWizardFromFarmaResult,
   CompleteWizardInput,
   ExistingAdminOption,
+  FarmaFile,
   InstalacionDto,
   InstalacionTipo,
+  PickWizardFarmaResult,
   SessionUser
 } from '@shared/dto'
 
@@ -342,6 +349,246 @@ export function completeWizard(input: CompleteWizardInput): {
   }
 
   return { ok: true, user }
+}
+
+// ── Wizard desde archivo .farma (USB de la matriz) ──────────────────────────
+
+/** Lee y valida un .farma (tipo, versión, checksum). Lanza Error si algo falla. */
+function leerFarma(filePath: string): FarmaFile {
+  let raw: string
+  try {
+    raw = readFileSync(filePath, 'utf8')
+  } catch (e) {
+    throw new Error(`No se pudo leer el archivo: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('El archivo no es un JSON válido')
+  }
+  const obj = parsed as Record<string, unknown>
+  if (obj?.['tipo'] !== 'MATRIZ_A_SUCURSAL') {
+    throw new Error('Tipo de archivo inválido (no es un .farma de matriz)')
+  }
+  if (obj['version'] !== 1 && obj['version'] !== 2) {
+    throw new Error(`Versión de archivo no soportada: ${String(obj['version'])}`)
+  }
+  if (typeof obj['checksum'] !== 'string' || !obj['payload']) {
+    throw new Error('Archivo incompleto (sin checksum o payload)')
+  }
+  const payload = obj['payload']
+  const expected = createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+  if (expected !== obj['checksum']) {
+    throw new Error('Checksum inválido — el archivo está corrupto o fue modificado')
+  }
+  return obj as unknown as FarmaFile
+}
+
+/** Abre diálogo, valida el .farma y devuelve un preview para el wizard. */
+export async function pickWizardFarma(
+  window: BrowserWindow | null
+): Promise<PickWizardFarmaResult> {
+  try {
+    const opts = {
+      title: 'Seleccionar archivo .farma de la matriz',
+      properties: ['openFile' as const],
+      filters: [
+        { name: 'Archivo .farma', extensions: ['farma'] },
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'Todos', extensions: ['*'] }
+      ]
+    }
+    const res = window ? await dialog.showOpenDialog(window, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || res.filePaths.length === 0) return { ok: false, cancelled: true }
+
+    const filePath = res.filePaths[0]!
+    const file = leerFarma(filePath)
+    const p = file.payload
+    return {
+      ok: true,
+      preview: {
+        filePath,
+        generadoEn: file.generadoEn,
+        matrizPropietario: p.matriz?.propietario ?? null,
+        sucursal: {
+          id: p.sucursal.id,
+          codigo: p.sucursal.codigo,
+          nombre: p.sucursal.nombre,
+          razonSocial: p.sucursal.razonSocial ?? null,
+          rfc: p.sucursal.rfc ?? null
+        },
+        productosCount: p.productos?.length ?? 0,
+        stockLotes: p.stockInicial?.length ?? 0,
+        usuarios: (p.usuarios ?? []).map((u) => ({
+          login: u.login,
+          nombre: u.nombre,
+          rol: u.rol
+        }))
+      }
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * Configura una SUCURSAL desde un .farma: crea instalación, sucursal+empresa,
+ * usuarios admin (con la contraseña de la matriz), catálogo, precios y stock
+ * inicial. No inicia sesión (la contraseña viaja como hash) — al terminar, el
+ * usuario entra en la pantalla de login con sus credenciales de la matriz.
+ */
+export function completeWizardFromFarma(
+  input: CompleteWizardFromFarmaInput
+): CompleteWizardFromFarmaResult {
+  const propietario = requireField('Nombre del propietario', input.propietarioNombre)
+  const sqlite = getSqlite()
+  if (getInstalacion().configured) throw new Error('La instalación ya está configurada')
+
+  const file = leerFarma(input.filePath)
+  const p = file.payload
+  const usuarios = p.usuarios ?? []
+  if (usuarios.length === 0) {
+    throw new Error(
+      'El archivo no incluye usuarios admin. Vuelve a exportarlo desde una matriz actualizada.'
+    )
+  }
+
+  const run = sqlite.transaction(() => {
+    const now = Date.now()
+
+    // Roles por nombre
+    const rolIdByName = new Map<string, number>()
+    for (const r of sqlite.prepare('SELECT id, nombre FROM tipo_usuario').all() as Array<{
+      id: number
+      nombre: string
+    }>) {
+      rolIdByName.set(r.nombre, r.id)
+    }
+    const fallbackRol = rolIdByName.get('ADMINISTRADOR') ?? rolIdByName.get('SUPERUSUARIO')
+    if (!fallbackRol) throw new Error('Roles base no encontrados (seed roto)')
+
+    // ── Usuarios admin (con hash de la matriz) ────────────────────────────────
+    const insUser = sqlite.prepare(
+      `INSERT INTO usuario
+         (id, login, password_hash, nombre, tipo_usuario_id, activo, puede_cancelar, created_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`
+    )
+    let ownerId: string | null = null
+    let usuariosCreados = 0
+    for (const u of usuarios) {
+      const login = u.login.trim().toLowerCase()
+      if (!login) continue
+      if (sqlite.prepare('SELECT 1 FROM usuario WHERE login = ?').get(login)) continue
+      const id = randomUUID()
+      const tipoId = rolIdByName.get(u.rol) ?? fallbackRol
+      insUser.run(id, login, u.passwordHash, u.nombre, tipoId, u.puedeCancelar ? 1 : 0, now)
+      if (!ownerId) ownerId = id
+      usuariosCreados++
+    }
+    if (!ownerId) throw new Error('No se pudo crear ningún usuario admin del archivo')
+
+    // ── Sucursal + empresa ────────────────────────────────────────────────────
+    const sucursalId = randomUUID()
+    sqlite
+      .prepare(
+        `INSERT INTO sucursal
+           (id, codigo, nombre, razon_social, rfc, calle, colonia, ciudad, estado,
+            activa, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+      )
+      .run(
+        sucursalId,
+        p.sucursal.codigo,
+        p.sucursal.nombre,
+        p.sucursal.razonSocial ?? null,
+        p.sucursal.rfc ?? null,
+        p.sucursal.calle ?? null,
+        p.sucursal.colonia ?? null,
+        p.sucursal.ciudad ?? null,
+        p.sucursal.estado ?? null,
+        now,
+        now
+      )
+    sqlite
+      .prepare(
+        `INSERT INTO empresa
+           (id, nombre_comercial, razon_social, rfc, calle, colonia, ciudad, estado,
+            sucursal_nombre, owner_user_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        sucursalId,
+        p.sucursal.razonSocial ?? p.sucursal.nombre,
+        p.sucursal.razonSocial ?? p.sucursal.nombre,
+        p.sucursal.rfc ?? null,
+        p.sucursal.calle ?? null,
+        p.sucursal.colonia ?? null,
+        p.sucursal.ciudad ?? null,
+        p.sucursal.estado ?? null,
+        p.sucursal.nombre,
+        ownerId,
+        now
+      )
+
+    // ── Catálogo (DB nueva → solo INSERT) ─────────────────────────────────────
+    const insProd = sqlite.prepare(
+      `INSERT INTO producto
+         (id, codigo, nombre, sustancia_activa, descripcion, laboratorio,
+          precio, costo, iva_porcentaje, iva_modo, stock_maximo, stock_minimo,
+          activo, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+    )
+    let productos = 0
+    for (const pr of p.productos ?? []) {
+      insProd.run(
+        pr.id || randomUUID(),
+        pr.codigo,
+        pr.nombre,
+        pr.sustanciaActiva ?? null,
+        pr.descripcion ?? null,
+        pr.laboratorio ?? null,
+        Number(pr.precio) || 0,
+        Number(pr.costo) || 0,
+        Number(pr.ivaPorcentaje) || 0,
+        pr.ivaModo,
+        Number(pr.stockMaximo) || 0,
+        Number(pr.stockMinimo) || 0,
+        now
+      )
+      productos++
+    }
+
+    // ── Instalación SUCURSAL ──────────────────────────────────────────────────
+    sqlite
+      .prepare(
+        `INSERT OR REPLACE INTO instalacion
+           (id, tipo, sucursal_activa_id, matriz_id, propietario_nombre,
+            configured_at, schema_version)
+         VALUES (1, 'SUCURSAL', ?, ?, ?, ?, 1)`
+      )
+      .run(sucursalId, p.matriz?.id ?? null, propietario, now)
+
+    // ── Stock inicial (si el archivo lo trae) ────────────────────────────────
+    let stockLotes = 0
+    if (Array.isArray(p.stockInicial) && p.stockInicial.length > 0) {
+      const r = cargaInicialInventario({
+        usuarioId: ownerId,
+        bodegaId: 'bodega-principal',
+        items: p.stockInicial.map((s) => ({
+          codigo: s.codigo,
+          cantidad: s.cantidad,
+          fechaCaducidad: s.caducidad
+        }))
+      })
+      stockLotes = r.lotesCreados + r.lotesActualizados
+    }
+
+    return { sucursalNombre: p.sucursal.nombre, productos, stockLotes, usuarios: usuariosCreados }
+  })
+
+  const r = run()
+  return { ok: true, ...r }
 }
 
 /**

@@ -4,8 +4,20 @@ import type {
   CancelVentaResult,
   CatalogoSucursalItem,
   CompleteWizardInput,
+  CompleteWizardFromFarmaInput,
+  CompleteWizardFromFarmaResult,
+  PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
+  CargaInicialInput,
+  CargaInicialResult,
+  StockBodegaResult,
+  CrearTraspasoInput,
+  CrearTraspasoResult,
+  PickTraspasoResult,
+  AplicarTraspasoResult,
+  TraspasoHistItem,
+  TraspasoHistDetalle,
   CreateAjustesInput,
   CreateAjustesResult,
   CreateCorteResult,
@@ -28,6 +40,7 @@ import type {
   UpdateBodegaInput,
   EmpresaDto,
   ExportSucursalResult,
+  ExportFarmaStockLote,
   InstalacionDto,
   PickFarmaResult,
   LoginResult,
@@ -64,6 +77,10 @@ declare global {
         completeWizard: (
           input: CompleteWizardInput
         ) => Promise<{ ok: true; user: SessionUser }>
+        pickWizardFarma: () => Promise<PickWizardFarmaResult>
+        completeWizardFromFarma: (
+          input: CompleteWizardFromFarmaInput
+        ) => Promise<CompleteWizardFromFarmaResult>
         reset: (viewerUserId: string, currentPassword: string) => Promise<{ ok: true }>
       }
       backup: {
@@ -135,7 +152,11 @@ declare global {
         ) => Promise<{ ok: true }>
       }
       exportSucursal: {
-        farma: (viewerUserId: string, sucursalId: string) => Promise<ExportSucursalResult>
+        farma: (
+          viewerUserId: string,
+          sucursalId: string,
+          stockInicial?: ExportFarmaStockLote[]
+        ) => Promise<ExportSucursalResult>
       }
       importFarma: {
         pick: () => Promise<PickFarmaResult>
@@ -205,6 +226,21 @@ declare global {
       salidas: {
         create: (input: CreateSalidaInput) => Promise<CreateSalidaResult>
       }
+      inventario: {
+        cargaInicial: (input: CargaInicialInput) => Promise<CargaInicialResult>
+        stockBodega: (bodegaId: string) => Promise<StockBodegaResult>
+      }
+      traspaso: {
+        crear: (viewerUserId: string, input: CrearTraspasoInput) => Promise<CrearTraspasoResult>
+        pick: () => Promise<PickTraspasoResult>
+        aplicar: (
+          viewerUserId: string,
+          filePath: string,
+          force?: boolean
+        ) => Promise<AplicarTraspasoResult>
+        list: () => Promise<TraspasoHistItem[]>
+        detalle: (folio: string) => Promise<TraspasoHistDetalle | null>
+      }
       precios: {
         update: (input: UpdatePreciosInput) => Promise<UpdatePreciosResult>
       }
@@ -227,7 +263,7 @@ declare global {
         list: () => Promise<string[]>
         printTest: (
           printer: string,
-          opts?: { showTime?: boolean }
+          opts?: { showTime?: boolean; footer?: string | null }
         ) => Promise<PrintResultLike>
         openDrawer: (printer: string) => Promise<PrintResultLike>
         printReceipt: (printer: string, data: ReceiptData) => Promise<PrintResultLike>

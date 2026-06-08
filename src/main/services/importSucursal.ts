@@ -2,6 +2,7 @@ import { BrowserWindow, dialog } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { getSqlite } from '../db/connection'
+import { cargaInicialInventario } from './cargaInicial'
 import type {
   ApplyFarmaResult,
   ExportFarmaPayload,
@@ -116,7 +117,7 @@ function readAndValidateFarma(filePath: string): FarmaFile {
   if (obj['tipo'] !== 'MATRIZ_A_SUCURSAL') {
     throw new Error(`Tipo de archivo inválido (esperaba MATRIZ_A_SUCURSAL, recibí "${String(obj['tipo'])}")`)
   }
-  if (obj['version'] !== 1) {
+  if (obj['version'] !== 1 && obj['version'] !== 2) {
     throw new Error(`Versión de archivo no soportada: ${String(obj['version'])}. Actualiza el POS.`)
   }
   if (typeof obj['checksum'] !== 'string' || obj['checksum'].length === 0) {
@@ -413,7 +414,25 @@ export function applyFarma(
       }
     }
 
-    return { productosCreados, productosActualizados }
+    // ── 5. Stock inicial (solo en la PRIMERA importación de la sucursal) ────
+    // Viene en archivos v2 generados al migrar desde el legacy. En reimports
+    // posteriores (actualizaciones de catálogo/precio) NO se vuelve a aplicar,
+    // para no pisar el stock ya operado.
+    let stockLotes = 0
+    if (isFirstImport && Array.isArray(payload.stockInicial) && payload.stockInicial.length > 0) {
+      const r = cargaInicialInventario({
+        usuarioId: viewerUserId,
+        bodegaId: 'bodega-principal',
+        items: payload.stockInicial.map((s) => ({
+          codigo: s.codigo,
+          cantidad: s.cantidad,
+          fechaCaducidad: s.caducidad
+        }))
+      })
+      stockLotes = r.lotesCreados + r.lotesActualizados
+    }
+
+    return { productosCreados, productosActualizados, stockLotes }
   })
 
   const stats = run()
@@ -426,6 +445,7 @@ export function applyFarma(
     },
     productosCreados: stats.productosCreados,
     productosActualizados: stats.productosActualizados,
+    stockLotes: stats.stockLotes,
     generadoEn: file.generadoEn,
     sucursalCambiada: isSucursalSwitch,
     primeraImport: isFirstImport

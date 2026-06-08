@@ -2,7 +2,12 @@ import { BrowserWindow, dialog } from 'electron'
 import { createHash } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { getSqlite } from '../db/connection'
-import type { ExportFarmaPayload, ExportSucursalResult } from '@shared/dto'
+import type {
+  ExportFarmaPayload,
+  ExportFarmaStockLote,
+  ExportFarmaUsuario,
+  ExportSucursalResult
+} from '@shared/dto'
 import type { IvaModo } from '@shared/types'
 
 /**
@@ -81,7 +86,10 @@ function sanitizeFilename(s: string): string {
     .replace(/^_|_$/g, '')
 }
 
-function buildPayload(sucursalId: string): ExportFarmaPayload {
+function buildPayload(
+  sucursalId: string,
+  stockInicial?: ExportFarmaStockLote[]
+): ExportFarmaPayload {
   const sqlite = getSqlite()
 
   const matrizMeta = requireMatriz()
@@ -181,6 +189,33 @@ function buildPayload(sucursalId: string): ExportFarmaPayload {
     stockMinimo: r.stockMinimo == null ? 0 : Number(r.stockMinimo)
   }))
 
+  // Usuarios admin (ADMINISTRADOR/SUPERUSUARIO activos): viajan para configurar
+  // la sucursal con las mismas credenciales. Password va como hash bcrypt.
+  const usuarios = sqlite
+    .prepare(
+      `SELECT u.login, u.nombre, u.password_hash AS passwordHash,
+              u.puede_cancelar AS puedeCancelar, t.nombre AS rol
+         FROM usuario u
+         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
+        WHERE u.activo = 1 AND t.nombre IN ('ADMINISTRADOR', 'SUPERUSUARIO')
+        ORDER BY u.login`
+    )
+    .all() as Array<{
+    login: string
+    nombre: string
+    passwordHash: string
+    puedeCancelar: number
+    rol: string
+  }>
+
+  const usuariosFarma: ExportFarmaUsuario[] = usuarios.map((u) => ({
+    login: u.login,
+    nombre: u.nombre,
+    rol: u.rol,
+    passwordHash: u.passwordHash,
+    puedeCancelar: Boolean(u.puedeCancelar)
+  }))
+
   return {
     matriz: {
       id: matrizMeta.matrizId,
@@ -197,20 +232,23 @@ function buildPayload(sucursalId: string): ExportFarmaPayload {
       ciudad: sucursalRow.ciudad,
       estado: sucursalRow.estado
     },
-    productos
+    productos,
+    ...(stockInicial && stockInicial.length > 0 ? { stockInicial } : {}),
+    ...(usuariosFarma.length > 0 ? { usuarios: usuariosFarma } : {})
   }
 }
 
 export async function exportarSucursalAFarma(
   viewerUserId: string,
   sucursalId: string,
-  window: BrowserWindow | null
+  window: BrowserWindow | null,
+  stockInicial?: ExportFarmaStockLote[]
 ): Promise<ExportSucursalResult> {
   requireAdmin(viewerUserId)
   requireMatriz()
 
   try {
-    const payload = buildPayload(sucursalId)
+    const payload = buildPayload(sucursalId, stockInicial)
 
     // Hash sobre JSON serializado del payload — los lectores que validen
     // deben re-serializar el payload con las mismas keys/orden (lo controlamos
@@ -218,9 +256,10 @@ export async function exportarSucursalAFarma(
     const payloadText = JSON.stringify(payload)
     const checksum = createHash('sha256').update(payloadText).digest('hex')
 
+    // v2 cuando trae stock inicial (la sucursal sabrá aplicarlo); v1 si no.
     const fileObject = {
       tipo: 'MATRIZ_A_SUCURSAL' as const,
-      version: 1,
+      version: payload.stockInicial && payload.stockInicial.length > 0 ? 2 : 1,
       generadoEn: new Date().toISOString(),
       checksum,
       payload
@@ -261,6 +300,7 @@ export async function exportarSucursalAFarma(
       ok: true,
       path: dlg.filePath,
       productosCount: payload.productos.length,
+      stockLineas: payload.stockInicial?.length ?? 0,
       bytes: Buffer.byteLength(json, 'utf8'),
       generadoEn: fileObject.generadoEn,
       checksum

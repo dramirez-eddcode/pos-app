@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import Modal from './Modal'
+import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 
 interface Props {
@@ -114,7 +115,9 @@ export default function SucursalModal({ open, onClose }: Props) {
         </p>
 
         {loading ? (
-          <div className="py-6 text-center text-muted-foreground italic">Cargando…</div>
+          <div className="py-6 flex justify-center text-muted-foreground italic">
+            <Spinner label="Cargando…" />
+          </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -218,9 +221,15 @@ export default function SucursalModal({ open, onClose }: Props) {
           <button
             type="submit"
             disabled={saving || loading}
-            className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
-            {saving ? 'Guardando…' : 'Guardar cambios'}
+            {saving ? (
+              <>
+                <Spinner size={14} /> Guardando…
+              </>
+            ) : (
+              'Guardar cambios'
+            )}
           </button>
         </div>
       </form>
