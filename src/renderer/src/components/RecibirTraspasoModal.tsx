@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, FileDown } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
-import type { TraspasoPreview } from '@shared/dto'
+import type { BodegaDto, TraspasoPreview } from '@shared/dto'
 
 interface Props {
   open: boolean
@@ -18,6 +18,8 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
   const [picking, setPicking] = useState(false)
   const [aplicando, setAplicando] = useState(false)
   const [forzar, setForzar] = useState(false)
+  const [bodegas, setBodegas] = useState<BodegaDto[]>([])
+  const [bodegaId, setBodegaId] = useState('')
 
   useEffect(() => {
     if (!open) {
@@ -25,7 +27,18 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
       setPicking(false)
       setAplicando(false)
       setForzar(false)
+      return
     }
+    // En matriz hay varias bodegas: el traspaso entra a la que se elija.
+    window.api.bodegas
+      .list()
+      .then((bs) => {
+        const activas = bs.filter((b) => b.activa)
+        setBodegas(activas)
+        const principal = activas.find((b) => b.esPrincipal) ?? activas[0]
+        setBodegaId(principal?.id ?? '')
+      })
+      .catch(() => {})
   }, [open])
 
   const elegir = useCallback(async () => {
@@ -48,7 +61,7 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
     if (!preview) return
     setAplicando(true)
     try {
-      const r = await window.api.traspaso.aplicar(userId, preview.filePath, forzar)
+      const r = await window.api.traspaso.aplicar(userId, preview.filePath, forzar, bodegaId || null)
       if (!r.ok) {
         toast.error('No se pudo aplicar el traspaso', { description: r.error })
         return
@@ -67,7 +80,7 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
     } finally {
       setAplicando(false)
     }
-  }, [preview, userId, forzar, onSaved, onClose])
+  }, [preview, userId, forzar, bodegaId, onSaved, onClose])
 
   // Requiere confirmación manual cuando es "otra sucursal" (UUID distinto, p.ej.
   // tras respaldo/restauración). Ya aplicado = bloqueo duro siempre.
@@ -79,10 +92,32 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
       <div className="relative">
         <div className="p-4 space-y-3 text-sm">
           <div className="rounded border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-            Selecciona el archivo <span className="font-mono">.traspaso</span> que te enviaron desde la
-            matriz por USB. Se agregará como entrada a tu inventario (Bodega Principal). Cada traspaso
+            Selecciona el archivo <span className="font-mono">.traspaso</span> que te enviaron por
+            USB. Se agregará como entrada a tu inventario
+            {bodegas.length > 1 ? ' en la bodega que elijas' : ' (Bodega Principal)'}. Cada traspaso
             solo puede aplicarse una vez.
           </div>
+
+          {bodegas.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                Bodega destino:
+              </label>
+              <select
+                className="border border-border rounded px-2 py-1.5 bg-background text-sm"
+                value={bodegaId}
+                onChange={(e) => setBodegaId(e.target.value)}
+                disabled={aplicando}
+              >
+                {bodegas.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.nombre}
+                    {b.esPrincipal ? ' (principal)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <button
             type="button"

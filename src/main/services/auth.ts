@@ -49,6 +49,7 @@ export async function login(loginName: string, password: string): Promise<LoginR
           rfc: emp.rfc ?? null,
           calle: emp.calle ?? null,
           colonia: emp.colonia ?? null,
+          cp: emp.cp ?? null,
           ciudad: emp.ciudad ?? null,
           estado: emp.estado ?? null
         }

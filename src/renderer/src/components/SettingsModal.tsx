@@ -23,6 +23,10 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [drawerOnCash, setDrawerOnCash] = useState<boolean>(true)
   const [showTime, setShowTime] = useState<boolean>(false)
   const [receiptFooter, setReceiptFooter] = useState<string>('')
+  const [mostrarRazonSocial, setMostrarRazonSocial] = useState<boolean>(true)
+  const [mostrarRfc, setMostrarRfc] = useState<boolean>(true)
+  const [mostrarSucursal, setMostrarSucursal] = useState<boolean>(true)
+  const [mostrarDireccion, setMostrarDireccion] = useState<boolean>(true)
   const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save'>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
@@ -44,6 +48,10 @@ export default function SettingsModal({ open, onClose }: Props) {
     setDrawerOnCash(settings?.openDrawerOnCash ?? true)
     setShowTime(settings?.showTimeOnReceipt ?? false)
     setReceiptFooter(settings?.receiptFooter ?? '')
+    setMostrarRazonSocial(settings?.ticketMostrarRazonSocial ?? true)
+    setMostrarRfc(settings?.ticketMostrarRfc ?? true)
+    setMostrarSucursal(settings?.ticketMostrarSucursal ?? true)
+    setMostrarDireccion(settings?.ticketMostrarDireccion ?? true)
   }, [open, loadPrinters, settings])
 
   const printTest = async () => {
@@ -56,7 +64,11 @@ export default function SettingsModal({ open, onClose }: Props) {
     // vacío → no se imprime ningún pie.
     const r = await window.api.printer.printTest(selected, {
       showTime,
-      footer: receiptFooter.trim() || null
+      footer: receiptFooter.trim() || null,
+      mostrarRazonSocial,
+      mostrarRfc,
+      mostrarSucursal,
+      mostrarDireccion
     })
     setBusy(null)
     if (r.ok) toast.success('Ticket de prueba enviado', { description: `${r.bytesSent} bytes → ${selected}` })
@@ -82,7 +94,11 @@ export default function SettingsModal({ open, onClose }: Props) {
         printerName: selected || null,
         openDrawerOnCash: drawerOnCash,
         showTimeOnReceipt: showTime,
-        receiptFooter: receiptFooter.trim() || null
+        receiptFooter: receiptFooter.trim() || null,
+        ticketMostrarRazonSocial: mostrarRazonSocial,
+        ticketMostrarRfc: mostrarRfc,
+        ticketMostrarSucursal: mostrarSucursal,
+        ticketMostrarDireccion: mostrarDireccion
       })
       toast.success('Configuración guardada')
       onClose()
@@ -145,6 +161,48 @@ export default function SettingsModal({ open, onClose }: Props) {
             onChange={(e) => setShowTime(e.target.checked)}
           />
           <label htmlFor="show-time">Mostrar hora de la venta en el ticket</label>
+        </section>
+
+        <section className="space-y-1.5">
+          <div className="font-medium text-xs">Encabezado del ticket — qué imprimir</div>
+          <div className="border border-border rounded px-3 py-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarRazonSocial}
+                onChange={(e) => setMostrarRazonSocial(e.target.checked)}
+              />
+              Razón social
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarRfc}
+                onChange={(e) => setMostrarRfc(e.target.checked)}
+              />
+              RFC
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarSucursal}
+                onChange={(e) => setMostrarSucursal(e.target.checked)}
+              />
+              Nombre de la sucursal
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarDireccion}
+                onChange={(e) => setMostrarDireccion(e.target.checked)}
+              />
+              Dirección
+            </label>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Lo desmarcado no se imprime en ningún ticket (venta, cancelación y corte). Usa
+            "Ticket de prueba" para previsualizar antes de guardar.
+          </p>
         </section>
 
         <section className="space-y-1">

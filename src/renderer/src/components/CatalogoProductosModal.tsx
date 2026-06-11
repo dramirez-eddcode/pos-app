@@ -8,7 +8,18 @@ import {
   type ReactNode
 } from 'react'
 import { toast } from 'sonner'
-import { Plus, Power, Pencil, Search, Download, Upload, FileDown } from 'lucide-react'
+import {
+  AlertTriangle,
+  Plus,
+  Power,
+  PackageX,
+  Pencil,
+  Percent,
+  Search,
+  Download,
+  Upload,
+  FileDown
+} from 'lucide-react'
 import Papa from 'papaparse'
 import Modal from './Modal'
 import Spinner from './Spinner'
@@ -16,7 +27,9 @@ import { useSession } from '../stores/session'
 import { money } from '../lib/format'
 import { calcFromBase } from '@shared/iva'
 import type {
+  BodegaDto,
   BulkProductoRow,
+  CargaInicialItemInput,
   CreateProductoInput,
   ProductoCatalogoItem,
   UpdateProductoInput
@@ -26,6 +39,9 @@ import type { IvaModo } from '@shared/types'
 interface Props {
   open: boolean
   onClose: () => void
+  // SUCURSAL: permite al SUPERUSUARIO reemplazar TODAS las existencias desde
+  // el CSV del mdb-export (lo que no venga en el archivo queda en saldo 0).
+  permitirReemplazoExistencias?: boolean
 }
 
 type SubForm =
@@ -35,7 +51,11 @@ type SubForm =
 
 type IvaFilter = 'todos' | IvaModo
 
-export default function CatalogoProductosModal({ open, onClose }: Props) {
+export default function CatalogoProductosModal({
+  open,
+  onClose,
+  permitirReemplazoExistencias = false
+}: Props) {
   const { user } = useSession()
   const [list, setList] = useState<ProductoCatalogoItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -47,7 +67,16 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   const [importing, setImporting] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
+  const [ivaDefault, setIvaDefault] = useState<number | null>(null)
+  const [normalizandoIva, setNormalizandoIva] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Reemplazo total de existencias (sucursal, sólo SUPERUSUARIO): CSV parseado
+  // pendiente de confirmar en el sub-modal.
+  const [reemp, setReemp] = useState<{ fileName: string; items: CargaInicialItemInput[] } | null>(
+    null
+  )
+  const reempFileRef = useRef<HTMLInputElement>(null)
+  const esSuper = user?.rol === 'SUPERUSUARIO'
 
   const load = useCallback(async () => {
     if (!user) return
@@ -65,7 +94,13 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   }, [user])
 
   useEffect(() => {
-    if (open) load()
+    if (open) {
+      load()
+      window.api.config
+        .get()
+        .then((c) => setIvaDefault(c.ivaPorcentajeDefault))
+        .catch(() => {})
+    }
   }, [open, load])
 
   const filtered = useMemo(() => {
@@ -103,6 +138,108 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   useEffect(() => {
     setPage(1)
   }, [filtro, showInactivos, ivaFilter, pageSize])
+
+  // ── Igualar el % de IVA de los productos gravados al default del negocio ──
+  // Aplica a los que YA tienen un % de IVA (modo sumar/incluido con % > 0)
+  // distinto al configurado en Impuestos · IVA. Los exentos no se tocan.
+  const ivaDesactualizados = useMemo(
+    () =>
+      ivaDefault == null
+        ? []
+        : list.filter(
+            (p) => p.ivaModo !== 'exento' && p.ivaPorcentaje > 0 && p.ivaPorcentaje !== ivaDefault
+          ),
+    [list, ivaDefault]
+  )
+
+  const normalizarIva = useCallback(
+    async (afectados: ProductoCatalogoItem[]) => {
+      if (!user || ivaDefault == null) return
+      setNormalizandoIva(true)
+      try {
+        const r = await window.api.productos.updateIva({
+          cajeroId: user.id,
+          items: afectados.map((p) => ({
+            productoId: p.id,
+            productoNombre: p.nombre,
+            codigo: p.codigo,
+            ivaModoAnterior: p.ivaModo,
+            ivaPorcentajeAnterior: p.ivaPorcentaje,
+            nuevoModo: p.ivaModo,
+            nuevoPorcentaje: ivaDefault
+          }))
+        })
+        toast.success(`IVA actualizado al ${ivaDefault}% en ${r.actualizados} producto(s)`, {
+          description: 'Recuerda exportar el .farma a las sucursales para que les llegue.'
+        })
+        await load()
+      } catch (e) {
+        toast.error('No se pudo actualizar el IVA', {
+          description: e instanceof Error ? e.message : String(e)
+        })
+      } finally {
+        setNormalizandoIva(false)
+      }
+    },
+    [user, ivaDefault, load]
+  )
+
+  const pedirNormalizarIva = useCallback(() => {
+    if (!user || ivaDefault == null) return
+    const afectados = ivaDesactualizados
+    if (afectados.length === 0) {
+      toast.info(`Todos los productos con IVA ya están al ${ivaDefault}%`)
+      return
+    }
+    const porTasa = new Map<number, number>()
+    for (const p of afectados) porTasa.set(p.ivaPorcentaje, (porTasa.get(p.ivaPorcentaje) ?? 0) + 1)
+    const desglose = [...porTasa.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([pct, n]) => `${n} con ${pct}%`)
+      .join(' · ')
+    toast.warning(
+      `¿Actualizar el IVA de ${afectados.length} producto(s) al ${ivaDefault}%?`,
+      {
+        id: 'confirm-normalizar-iva',
+        description: `${desglose}. Los exentos no se modifican. El modo (sumar/incluido) de cada producto se conserva.`,
+        duration: 12000,
+        action: { label: 'Sí, actualizar', onClick: () => normalizarIva(afectados) }
+      }
+    )
+  }, [user, ivaDefault, ivaDesactualizados, normalizarIva])
+
+  // CSV de existencias del mdb-export (codigo, cantidad, caducidad) → sub-modal
+  // de confirmación para el reemplazo total.
+  const onReempFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const text = await file.text()
+      const parsed = Papa.parse<Record<string, string>>(text, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (h) => h.trim().toLowerCase()
+      })
+      const rows = parsed.data.filter((r) => (r.codigo ?? '').trim())
+      if (rows.length === 0) {
+        toast.error('El CSV no tiene filas válidas', {
+          description: 'Se esperan las columnas: codigo, cantidad, caducidad'
+        })
+        return
+      }
+      const items: CargaInicialItemInput[] = rows.map((r) => ({
+        codigo: (r.codigo ?? '').trim(),
+        cantidad: Math.round(Number((r.cantidad ?? '').trim()) || 0),
+        fechaCaducidad: parseCaducidadStock(r.caducidad ?? '') || null
+      }))
+      setReemp({ fileName: file.name, items })
+    } catch (err) {
+      toast.error('Error leyendo CSV', {
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }, [])
 
   const onToggleActivo = useCallback(
     async (p: ProductoCatalogoItem) => {
@@ -218,7 +355,7 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
   return (
     <>
       <Modal
-        open={open && !sub}
+        open={open && !sub && !reemp}
         title="Catálogo de productos"
         onClose={onClose}
         maxWidth="max-w-6xl"
@@ -279,6 +416,26 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
               onClick={() => setIvaFilter('incluido')}
               tone="blue"
             />
+            {ivaDefault != null && (
+              <button
+                type="button"
+                onClick={pedirNormalizarIva}
+                disabled={normalizandoIva || loading || ivaDesactualizados.length === 0}
+                title={
+                  ivaDesactualizados.length === 0
+                    ? `Todos los productos con IVA ya están al ${ivaDefault}%`
+                    : `Cambiar el % de IVA de ${ivaDesactualizados.length} producto(s) al default del negocio`
+                }
+                className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 text-[11px] font-medium"
+              >
+                {normalizandoIva ? <Spinner size={12} /> : <Percent className="size-3" />}
+                {normalizandoIva
+                  ? 'Actualizando…'
+                  : `Actualizar IVA al ${ivaDefault}%${
+                      ivaDesactualizados.length > 0 ? ` (${ivaDesactualizados.length})` : ''
+                    }`}
+              </button>
+            )}
           </div>
 
           {/* Barra CSV: plantilla / exportar / importar masivo */}
@@ -316,6 +473,27 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
               className="hidden"
               onChange={onFileSelected}
             />
+            {permitirReemplazoExistencias && esSuper && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => reempFileRef.current?.click()}
+                  disabled={importing || loading}
+                  title="Pone en cero TODAS las existencias y las recarga desde el CSV del mdb-export (sólo superusuario)"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-red-300 text-red-700 rounded hover:bg-red-50 disabled:opacity-50"
+                >
+                  <PackageX className="size-3.5" />
+                  Reemplazar existencias…
+                </button>
+                <input
+                  ref={reempFileRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  onChange={onReempFileSelected}
+                />
+              </>
+            )}
             <span className="text-[10px] text-muted-foreground ml-auto">
               Importar crea o actualiza por código (incluye precio e IVA).
             </span>
@@ -513,7 +691,190 @@ export default function CatalogoProductosModal({ open, onClose }: Props) {
           }}
         />
       )}
+
+      {reemp && user && (
+        <ReemplazarExistenciasSubModal
+          fileName={reemp.fileName}
+          items={reemp.items}
+          userId={user.id}
+          onClose={() => setReemp(null)}
+          onDone={async () => {
+            setReemp(null)
+            await load()
+          }}
+        />
+      )}
     </>
+  )
+}
+
+// ── Sub-modal: reemplazo TOTAL de existencias desde CSV (superusuario) ──────
+// En la matriz (varias bodegas) se elige cuál bodega reemplazar; en sucursal
+// solo existe la Bodega Principal y no se pregunta.
+function ReemplazarExistenciasSubModal({
+  fileName,
+  items,
+  userId,
+  onClose,
+  onDone
+}: {
+  fileName: string
+  items: CargaInicialItemInput[]
+  userId: string
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [phrase, setPhrase] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [bodegas, setBodegas] = useState<BodegaDto[]>([])
+  const [bodegaId, setBodegaId] = useState('')
+  const expected = 'REEMPLAZAR'
+  const totalUnidades = items.reduce((s, it) => s + (Number(it.cantidad) || 0), 0)
+
+  useEffect(() => {
+    window.api.bodegas
+      .list()
+      .then((bs) => {
+        const activas = bs.filter((b) => b.activa)
+        setBodegas(activas)
+        const principal = activas.find((b) => b.esPrincipal) ?? activas[0]
+        setBodegaId(principal?.id ?? 'bodega-principal')
+      })
+      .catch(() => setBodegaId('bodega-principal'))
+  }, [])
+
+  const aplicar = async (e: FormEvent): Promise<void> => {
+    e.preventDefault()
+    if (phrase.trim().toUpperCase() !== expected) {
+      toast.error(`Escribe exactamente "${expected}" para confirmar`)
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await window.api.inventario.cargaInicial({
+        usuarioId: userId,
+        bodegaId: bodegaId || 'bodega-principal',
+        items,
+        reemplazarBodega: true
+      })
+      const aplicados = r.lotesCreados + r.lotesActualizados + r.lotesPuestosCero
+      if (aplicados === 0 && r.noEncontrados.length > 0) {
+        toast.error('No se reemplazó nada: los códigos no existen en el catálogo', {
+          description: 'Importa primero el catálogo de productos y vuelve a intentar.'
+        })
+        setBusy(false)
+        return
+      }
+      const parts = [
+        `${r.lotesCreados} creados`,
+        `${r.lotesActualizados} ajustados`,
+        `${r.lotesPuestosCero} puestos en 0`
+      ]
+      if (r.noEncontrados.length > 0) {
+        parts.push(`${r.noEncontrados.length} sin producto`)
+        console.warn('[reemplazo existencias] códigos sin producto:', r.noEncontrados.slice(0, 100))
+      }
+      toast.success(
+        `Existencias reemplazadas · ${r.unidadesTotal.toLocaleString('es-MX')} unidades`,
+        { description: parts.join(' · '), duration: 10000 }
+      )
+      onDone()
+    } catch (err) {
+      toast.error('Falló el reemplazo de existencias', {
+        description: err instanceof Error ? err.message : String(err)
+      })
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      title="⚠ Reemplazar TODAS las existencias"
+      onClose={busy ? () => {} : onClose}
+      maxWidth="max-w-md"
+    >
+      <form onSubmit={aplicar} className="p-4 space-y-3 text-sm">
+        <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 space-y-1">
+          <div className="flex items-center gap-1.5 font-semibold">
+            <AlertTriangle className="size-4" /> Esta acción deja el inventario
+            {bodegas.length > 1 ? ' de la bodega seleccionada' : ''} EXACTAMENTE como el archivo:
+          </div>
+          <ul className="list-disc list-inside space-y-0.5">
+            <li>Los productos del CSV quedan con el saldo del CSV.</li>
+            <li>
+              Todo lo que <strong>no</strong> venga en el CSV queda en <strong>saldo 0</strong>.
+            </li>
+            <li>Cada cambio queda auditado en el historial de stock. No se puede deshacer.</li>
+          </ul>
+        </div>
+
+        {bodegas.length > 1 && (
+          <label className="block">
+            <span className="block text-xs text-muted-foreground mb-1">Bodega a reemplazar</span>
+            <select
+              value={bodegaId}
+              onChange={(e) => setBodegaId(e.target.value)}
+              disabled={busy}
+              className="w-full border border-border rounded px-2 py-1.5 bg-background"
+            >
+              {bodegas.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.nombre}
+                  {b.esPrincipal ? ' (principal)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <div className="rounded border border-border bg-background px-3 py-2 text-xs">
+          <div className="font-medium">{fileName}</div>
+          <div className="text-muted-foreground mt-0.5">
+            {items.length.toLocaleString('es-MX')} renglones ·{' '}
+            {totalUnidades.toLocaleString('es-MX')} unidades en total
+          </div>
+        </div>
+
+        <label className="block">
+          <span className="block text-xs text-muted-foreground mb-1">
+            Escribe <span className="font-mono font-bold">{expected}</span> para confirmar
+          </span>
+          <input
+            type="text"
+            required
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            className="w-full border border-border rounded px-2 py-1.5 font-mono"
+            autoComplete="off"
+          />
+        </label>
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !bodegaId}
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm font-semibold"
+          >
+            {busy ? (
+              <>
+                <Spinner size={14} /> Reemplazando…
+              </>
+            ) : (
+              'Sí, reemplazar existencias'
+            )}
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -806,29 +1167,37 @@ function CreateOrEditProductoSubModal({ mode, target, onClose, onSaved }: SubPro
           </Field>
         </div>
 
-        {/* Vista previa del precio de venta según el modo de IVA */}
-        {desglose && (
-          <div className="rounded border border-border bg-muted/30 px-3 py-2 space-y-1.5">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-              Vista previa del precio
-            </div>
-            <div className="grid grid-cols-3 gap-2 font-mono text-sm">
-              <div>
-                <div className="text-[10px] text-muted-foreground uppercase">Importe (neto)</div>
-                <div>{money(desglose.importe)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground uppercase">IVA</div>
-                <div>{money(desglose.iva)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] text-muted-foreground uppercase">Precio de venta</div>
-                <div className="font-semibold text-blue-700">{money(desglose.total)}</div>
-              </div>
-            </div>
-            <div className="text-[10px] text-muted-foreground">{ivaModoHint(form.ivaModo)}</div>
+        {/* Vista previa del precio de venta según el modo de IVA — siempre
+            visible; sin precio muestra la pista, con precio el desglose en vivo */}
+        <div className="rounded border border-border bg-muted/30 px-3 py-2 space-y-1.5">
+          <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+            Vista previa del precio
           </div>
-        )}
+          {desglose ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 font-mono text-sm">
+                <div>
+                  <div className="text-[10px] text-muted-foreground uppercase">Importe (neto)</div>
+                  <div>{money(desglose.importe)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground uppercase">IVA</div>
+                  <div>{money(desglose.iva)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground uppercase">Precio de venta</div>
+                  <div className="font-semibold text-blue-700">{money(desglose.total)}</div>
+                </div>
+              </div>
+              <div className="text-[10px] text-muted-foreground">{ivaModoHint(form.ivaModo)}</div>
+            </>
+          ) : (
+            <div className="text-xs text-muted-foreground italic">
+              Captura el precio de venta para ver cómo queda con el IVA (importe neto, IVA y
+              precio final al público).
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Stock mínimo (aviso)">
@@ -907,6 +1276,17 @@ function parseNum(raw: string | undefined): number {
 function csvIvaModo(raw: string | undefined): IvaModo {
   const v = (raw ?? '').trim().toLowerCase()
   return v === 'sumar' || v === 'incluido' ? v : 'exento'
+}
+
+/** Caducidad del CSV de existencias a YYYY-MM-DD (acepta DD/MM/YYYY). '' si vacía. */
+function parseCaducidadStock(raw: string): string {
+  const s = (raw ?? '').trim()
+  if (!s) return ''
+  const mIso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (mIso) return `${mIso[1]}-${mIso[2]!.padStart(2, '0')}-${mIso[3]!.padStart(2, '0')}`
+  const mMx = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (mMx) return `${mMx[3]}-${mMx[2]!.padStart(2, '0')}-${mMx[1]!.padStart(2, '0')}`
+  return ''
 }
 
 function todayStr(): string {

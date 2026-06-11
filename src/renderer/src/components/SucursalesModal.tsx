@@ -405,6 +405,7 @@ interface FormState {
   rfc: string
   calle: string
   colonia: string
+  cp: string
   ciudad: string
   estado: string
 }
@@ -420,6 +421,7 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
           rfc: target.rfc ?? '',
           calle: target.calle ?? '',
           colonia: target.colonia ?? '',
+          cp: target.cp ?? '',
           ciudad: target.ciudad ?? '',
           estado: target.estado ?? ''
         }
@@ -430,6 +432,7 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
           rfc: '',
           calle: '',
           colonia: '',
+          cp: '',
           ciudad: '',
           estado: ''
         }
@@ -459,6 +462,7 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
             rfc: form.rfc || null,
             calle: form.calle || null,
             colonia: form.colonia || null,
+            cp: form.cp || null,
             ciudad: form.ciudad || null,
             estado: form.estado || null
           }
@@ -475,6 +479,7 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
             rfc: form.rfc || null,
             calle: form.calle || null,
             colonia: form.colonia || null,
+            cp: form.cp || null,
             ciudad: form.ciudad || null,
             estado: form.estado || null
           }
@@ -561,13 +566,24 @@ function SucursalEditorSubModal({ mode, target, onClose, onSaved }: SubProps) {
           />
         </Field>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-[1fr_110px_1fr_1fr] gap-3">
           <Field label="Colonia">
             <input
               type="text"
               value={form.colonia}
               onChange={onChange('colonia')}
               className="w-full border border-border rounded px-2 py-1.5"
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="C.P.">
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={5}
+              value={form.cp}
+              onChange={onChange('cp')}
+              className="w-full border border-border rounded px-2 py-1.5 font-mono"
               autoComplete="off"
             />
           </Field>

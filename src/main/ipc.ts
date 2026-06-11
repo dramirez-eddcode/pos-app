@@ -49,7 +49,14 @@ import {
 } from './services/productos'
 import { peekNextFolio } from './services/folio'
 import { cancelVenta, createVenta, getTotalesRecientes, getVentaByFolio } from './services/ventas'
-import { createCorte, getCorteHoy } from './services/corte'
+import {
+  createCorte,
+  createCorteFinalPendiente,
+  getCorteHoy,
+  getCorteReimpresion,
+  getCortesPendientesDias,
+  listCortesFinales
+} from './services/corte'
 import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
 import { createSalida } from './services/salidas'
@@ -58,10 +65,22 @@ import { getStockPorBodega } from './services/stock'
 import {
   aplicarTraspaso,
   crearTraspaso,
-  getTraspasoDetalle,
-  listTraspasos,
-  pickTraspaso
+  pickTraspaso,
+  traspasoEntreBodegas
 } from './services/traspaso'
+import { getMovimientoDetalle, listMovimientos } from './services/movimientos'
+import {
+  exportMovimientoPdf,
+  exportStockBodegaPdf,
+  imprimirMovimiento,
+  imprimirStockBodega
+} from './services/pdf'
+import {
+  createProveedor,
+  listProveedores,
+  toggleActivoProveedor,
+  updateProveedor
+} from './services/proveedores'
 import { updatePrecios } from './services/precios'
 import {
   createUsuario,
@@ -88,12 +107,15 @@ import type {
   CargaInicialInput,
   CompleteWizardFromFarmaInput,
   CrearTraspasoInput,
+  TraspasoBodegasInput,
   ExportFarmaStockLote,
   CreateAjustesInput,
   CreateBodegaInput,
   UpdateBodegaInput,
   CreateEntradaInput,
   CreateProductoInput,
+  CreateProveedorInput,
+  UpdateProveedorInput,
   CreateSalidaInput,
   CreateSucursalInput,
   CreateUsuarioInput,
@@ -106,7 +128,8 @@ import type {
   UpdateProductoInput,
   UpdateSucursalInput,
   UpdateUsuarioInput,
-  UpdateConfigInput
+  UpdateConfigInput,
+  StockBodegaPdfInput
 } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
 
@@ -162,7 +185,9 @@ export function registerIpcHandlers(): void {
   // ── productos ────────────────────────────────────────────────────────────
   ipcMain.handle('productos:search', async (_e, query: ProductoSearchQuery) => searchProductos(query))
   ipcMain.handle('productos:by-codigo', async (_e, codigo: string) => getByCodigo(codigo))
-  ipcMain.handle('productos:get-lotes', async (_e, productoId: string) => getLotesByProducto(productoId))
+  ipcMain.handle('productos:get-lotes', async (_e, productoId: string, bodegaId?: string | null) =>
+    getLotesByProducto(productoId, bodegaId ?? null)
+  )
   ipcMain.handle('productos:get-all-activos', async () => getAllActivos())
   ipcMain.handle('productos:get-all-lotes-activos', async () => getAllLotesActivos())
   ipcMain.handle('productos:update-iva', async (_e, input: UpdateIvaInput) =>
@@ -202,9 +227,39 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('corte:create', async (_e, cajeroId: string, tipo: CorteTipo) =>
     createCorte(cajeroId, tipo)
   )
+  // Días anteriores sin corte final + cierre retroactivo (cualquier usuario, una vez)
+  ipcMain.handle('corte:pendientes-dias', async () => getCortesPendientesDias())
+  ipcMain.handle('corte:create-final-pendiente', async (_e, cajeroId: string, fechaYmd: string) =>
+    createCorteFinalPendiente(cajeroId, fechaYmd)
+  )
+  // Reimpresión de cortes finales (sólo admin/superusuario)
+  ipcMain.handle('corte:finales', async (_e, viewerUserId: string) =>
+    listCortesFinales(viewerUserId)
+  )
+  ipcMain.handle('corte:reimpresion', async (_e, viewerUserId: string, corteId: string) =>
+    getCorteReimpresion(viewerUserId, corteId)
+  )
 
   // ── entradas ─────────────────────────────────────────────────────────────
   ipcMain.handle('entradas:create', async (_e, input: CreateEntradaInput) => createEntrada(input))
+
+  // ── proveedores (catálogo de la matriz, vinculable a entradas) ──────────
+  ipcMain.handle('proveedores:list', async () => listProveedores())
+  ipcMain.handle(
+    'proveedores:create',
+    async (_e, viewerUserId: string, input: CreateProveedorInput) =>
+      createProveedor(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'proveedores:update',
+    async (_e, viewerUserId: string, input: UpdateProveedorInput) =>
+      updateProveedor(viewerUserId, input)
+  )
+  ipcMain.handle(
+    'proveedores:toggle-activo',
+    async (_e, viewerUserId: string, proveedorId: string, activo: boolean) =>
+      toggleActivoProveedor(viewerUserId, proveedorId, activo)
+  )
 
   // ── ajustes de inventario ───────────────────────────────────────────────
   ipcMain.handle('ajustes:create', async (_e, input: CreateAjustesInput) => createAjustes(input))
@@ -221,23 +276,47 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string) =>
     getStockPorBodega(bodegaId)
   )
+  // Reporte imprimible del stock (PDF / impresora normal)
+  ipcMain.handle('inventario:stock-pdf', async (e, input: StockBodegaPdfInput) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return exportStockBodegaPdf(input, win)
+  })
+  ipcMain.handle('inventario:stock-imprimir', async (_e, input: StockBodegaPdfInput) =>
+    imprimirStockBodega(input)
+  )
 
   // ── traspaso bodega (matriz) → sucursal (USB) ───────────────────────────
   ipcMain.handle('traspaso:crear', async (e, viewerUserId: string, input: CrearTraspasoInput) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     return crearTraspaso(viewerUserId, input, win)
   })
+  ipcMain.handle(
+    'traspaso:entre-bodegas',
+    async (_e, viewerUserId: string, input: TraspasoBodegasInput) =>
+      traspasoEntreBodegas(viewerUserId, input)
+  )
   ipcMain.handle('traspaso:pick', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     return pickTraspaso(win)
   })
   ipcMain.handle(
     'traspaso:aplicar',
-    async (_e, viewerUserId: string, filePath: string, force?: boolean) =>
-      aplicarTraspaso(viewerUserId, filePath, Boolean(force))
+    async (
+      _e,
+      viewerUserId: string,
+      filePath: string,
+      force?: boolean,
+      bodegaDestinoId?: string | null
+    ) => aplicarTraspaso(viewerUserId, filePath, Boolean(force), bodegaDestinoId ?? null)
   )
-  ipcMain.handle('traspaso:list', async () => listTraspasos())
-  ipcMain.handle('traspaso:detalle', async (_e, folio: string) => getTraspasoDetalle(folio))
+  // ── historial unificado de movimientos (entradas/salidas/traspasos) ─────
+  ipcMain.handle('movimientos:list', async () => listMovimientos())
+  ipcMain.handle('movimientos:detalle', async (_e, folio: string) => getMovimientoDetalle(folio))
+  ipcMain.handle('movimientos:pdf', async (e, folio: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return exportMovimientoPdf(folio, win)
+  })
+  ipcMain.handle('movimientos:imprimir', async (_e, folio: string) => imprimirMovimiento(folio))
 
   // ── precios de venta ────────────────────────────────────────────────────
   ipcMain.handle('precios:update', async (_e, input: UpdatePreciosInput) => updatePrecios(input))
@@ -338,8 +417,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('printer:list', async () => getPrinters())
   ipcMain.handle(
     'printer:print-test',
-    async (_e, printer: string, opts?: { showTime?: boolean; footer?: string | null }) =>
-      printTest(printer, opts)
+    async (
+      _e,
+      printer: string,
+      opts?: {
+        showTime?: boolean
+        footer?: string | null
+        mostrarRazonSocial?: boolean
+        mostrarRfc?: boolean
+        mostrarSucursal?: boolean
+        mostrarDireccion?: boolean
+      }
+    ) => printTest(printer, opts)
   )
   ipcMain.handle('printer:open-drawer', async (_e, printer: string) => openCashDrawer(printer))
   ipcMain.handle('printer:print-receipt', async (_e, printer: string, data: ReceiptData) =>

@@ -5,7 +5,6 @@ import { getSqlite } from '../db/connection'
 import type {
   ExportFarmaPayload,
   ExportFarmaStockLote,
-  ExportFarmaUsuario,
   ExportSucursalResult
 } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
@@ -27,6 +26,11 @@ import type { IvaModo } from '@shared/types'
  *       productos: [ … con overrides aplicados, excluidos omitidos … ]
  *     }
  *   }
+ *
+ * De la sucursal viajan SOLO los datos básicos (código, nombre, razón social,
+ * RFC y dirección). Los usuarios NO se incluyen (las credenciales no deben
+ * viajar en un JSON plano por USB) — el admin de la sucursal se crea en su
+ * wizard. El stock inicial es opcional y explícito (migraciones).
  *
  * Sólo en modo MATRIZ. Sólo admins.
  */
@@ -98,7 +102,7 @@ function buildPayload(
     .prepare(
       `SELECT id, codigo, nombre,
               razon_social AS razonSocial,
-              rfc, calle, colonia, ciudad, estado,
+              rfc, calle, colonia, cp, ciudad, estado,
               activa,
               created_at   AS createdAt,
               updated_at   AS updatedAt
@@ -114,6 +118,7 @@ function buildPayload(
         rfc: string | null
         calle: string | null
         colonia: string | null
+        cp: string | null
         ciudad: string | null
         estado: string | null
         activa: number
@@ -189,33 +194,6 @@ function buildPayload(
     stockMinimo: r.stockMinimo == null ? 0 : Number(r.stockMinimo)
   }))
 
-  // Usuarios admin (ADMINISTRADOR/SUPERUSUARIO activos): viajan para configurar
-  // la sucursal con las mismas credenciales. Password va como hash bcrypt.
-  const usuarios = sqlite
-    .prepare(
-      `SELECT u.login, u.nombre, u.password_hash AS passwordHash,
-              u.puede_cancelar AS puedeCancelar, t.nombre AS rol
-         FROM usuario u
-         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
-        WHERE u.activo = 1 AND t.nombre IN ('ADMINISTRADOR', 'SUPERUSUARIO')
-        ORDER BY u.login`
-    )
-    .all() as Array<{
-    login: string
-    nombre: string
-    passwordHash: string
-    puedeCancelar: number
-    rol: string
-  }>
-
-  const usuariosFarma: ExportFarmaUsuario[] = usuarios.map((u) => ({
-    login: u.login,
-    nombre: u.nombre,
-    rol: u.rol,
-    passwordHash: u.passwordHash,
-    puedeCancelar: Boolean(u.puedeCancelar)
-  }))
-
   return {
     matriz: {
       id: matrizMeta.matrizId,
@@ -229,12 +207,12 @@ function buildPayload(
       rfc: sucursalRow.rfc,
       calle: sucursalRow.calle,
       colonia: sucursalRow.colonia,
+      cp: sucursalRow.cp,
       ciudad: sucursalRow.ciudad,
       estado: sucursalRow.estado
     },
     productos,
-    ...(stockInicial && stockInicial.length > 0 ? { stockInicial } : {}),
-    ...(usuariosFarma.length > 0 ? { usuarios: usuariosFarma } : {})
+    ...(stockInicial && stockInicial.length > 0 ? { stockInicial } : {})
   }
 }
 

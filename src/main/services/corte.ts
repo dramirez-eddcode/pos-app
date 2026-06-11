@@ -3,7 +3,10 @@ import { and, eq, gte, lte, sql } from 'drizzle-orm'
 import { getDb, getSqlite } from '../db/connection'
 import { venta, pago, movCaja } from '../db/schema'
 import type {
+  CorteFinalHistItem,
   CorteHoyDto,
+  CortePendienteDia,
+  CorteReimpresionDto,
   CorteTipo,
   CreateCorteResult,
   MetodoPagoTotal,
@@ -169,6 +172,33 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+function startOfDayMs(ms: number): number {
+  const d = new Date(ms)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+}
+
+function ymdLocal(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function rolOf(userId: string): string | null {
+  const row = getSqlite()
+    .prepare(
+      `SELECT t.nombre FROM usuario u JOIN tipo_usuario t ON t.id = u.tipo_usuario_id WHERE u.id = ?`
+    )
+    .get(userId) as { nombre: string } | undefined
+  return row?.nombre ?? null
+}
+
+function requireAdmin(viewerUserId: string): void {
+  const rol = rolOf(viewerUserId)
+  if (!rol) throw new Error('Usuario no identificado')
+  if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO') {
+    throw new Error('Requiere permisos de administrador')
+  }
+}
+
 // ── Corte / snapshot ────────────────────────────────────────────────────────
 
 interface LastCorte {
@@ -194,6 +224,48 @@ interface VentasAggRow {
 interface CajaAggRow {
   entradas: number
   salidas: number
+}
+
+const AGG_VENTAS_SQL = `
+  SELECT
+    COALESCE(SUM(CASE WHEN p.metodo = 'EFECTIVO' AND v.cancelada = 0 THEN p.monto END), 0) AS total_efectivo,
+    COALESCE(SUM(CASE WHEN p.metodo = 'TARJETA' AND v.cancelada = 0 THEN p.monto END), 0) AS total_tarjeta,
+    COALESCE(SUM(CASE WHEN p.metodo = 'TRANSFERENCIA' AND v.cancelada = 0 THEN p.monto END), 0) AS total_transferencia,
+    COALESCE(SUM(CASE WHEN p.metodo = 'OTRO' AND v.cancelada = 0 THEN p.monto END), 0) AS total_otro,
+    COALESCE((SELECT SUM(v2.total) FROM venta v2 WHERE v2.folio_local BETWEEN ? AND ? AND v2.cancelada = 1), 0) AS cancelaciones,
+    (SELECT COUNT(*) FROM venta v3 WHERE v3.folio_local BETWEEN ? AND ? AND v3.cancelada = 0) AS folios_vendidos,
+    (SELECT COUNT(*) FROM venta v4 WHERE v4.folio_local BETWEEN ? AND ? AND v4.cancelada = 1) AS folios_cancelados,
+    (SELECT COALESCE(SUM(v5.subtotal), 0) FROM venta v5 WHERE v5.folio_local BETWEEN ? AND ? AND v5.cancelada = 0) AS subtotal,
+    (SELECT COALESCE(SUM(v6.iva), 0) FROM venta v6 WHERE v6.folio_local BETWEEN ? AND ? AND v6.cancelada = 0) AS iva,
+    (SELECT COALESCE(SUM(v7.total), 0) FROM venta v7 WHERE v7.folio_local BETWEEN ? AND ? AND v7.cancelada = 0) AS total
+  FROM venta v
+  LEFT JOIN pago p ON p.venta_id = v.id
+  WHERE v.folio_local BETWEEN ? AND ?`
+
+function aggVentasRango(folioInicio: number, folioFin: number): VentasAggRow {
+  return getSqlite()
+    .prepare(AGG_VENTAS_SQL)
+    .get(
+      folioInicio, folioFin,
+      folioInicio, folioFin,
+      folioInicio, folioFin,
+      folioInicio, folioFin,
+      folioInicio, folioFin,
+      folioInicio, folioFin,
+      folioInicio, folioFin
+    ) as VentasAggRow
+}
+
+function aggCaja(desde: number, hasta: number): CajaAggRow {
+  return getSqlite()
+    .prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN monto END), 0) AS entradas,
+         COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN monto END), 0) AS salidas
+       FROM mov_caja
+       WHERE fecha >= ? AND fecha <= ?`
+    )
+    .get(desde, hasta) as CajaAggRow
 }
 
 /**
@@ -225,46 +297,13 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
       throw new Error('No hay ventas nuevas desde el último corte')
     }
 
-    const agg = sqlite
-      .prepare(
-        `SELECT
-           COALESCE(SUM(CASE WHEN p.metodo = 'EFECTIVO' AND v.cancelada = 0 THEN p.monto END), 0) AS total_efectivo,
-           COALESCE(SUM(CASE WHEN p.metodo = 'TARJETA' AND v.cancelada = 0 THEN p.monto END), 0) AS total_tarjeta,
-           COALESCE(SUM(CASE WHEN p.metodo = 'TRANSFERENCIA' AND v.cancelada = 0 THEN p.monto END), 0) AS total_transferencia,
-           COALESCE(SUM(CASE WHEN p.metodo = 'OTRO' AND v.cancelada = 0 THEN p.monto END), 0) AS total_otro,
-           COALESCE((SELECT SUM(v2.total) FROM venta v2 WHERE v2.folio_local BETWEEN ? AND ? AND v2.cancelada = 1), 0) AS cancelaciones,
-           (SELECT COUNT(*) FROM venta v3 WHERE v3.folio_local BETWEEN ? AND ? AND v3.cancelada = 0) AS folios_vendidos,
-           (SELECT COUNT(*) FROM venta v4 WHERE v4.folio_local BETWEEN ? AND ? AND v4.cancelada = 1) AS folios_cancelados,
-           (SELECT COALESCE(SUM(v5.subtotal), 0) FROM venta v5 WHERE v5.folio_local BETWEEN ? AND ? AND v5.cancelada = 0) AS subtotal,
-           (SELECT COALESCE(SUM(v6.iva), 0) FROM venta v6 WHERE v6.folio_local BETWEEN ? AND ? AND v6.cancelada = 0) AS iva,
-           (SELECT COALESCE(SUM(v7.total), 0) FROM venta v7 WHERE v7.folio_local BETWEEN ? AND ? AND v7.cancelada = 0) AS total
-         FROM venta v
-         LEFT JOIN pago p ON p.venta_id = v.id
-         WHERE v.folio_local BETWEEN ? AND ?`
-      )
-      .get(
-        folioInicio, folioFin,
-        folioInicio, folioFin,
-        folioInicio, folioFin,
-        folioInicio, folioFin,
-        folioInicio, folioFin,
-        folioInicio, folioFin,
-        folioInicio, folioFin
-      ) as VentasAggRow
+    const agg = aggVentasRango(folioInicio, folioFin)
 
     const fechaDesde = lastCorte
       ? lastCorte.fecha
       : new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate()).getTime()
 
-    const cajaAgg = sqlite
-      .prepare(
-        `SELECT
-           COALESCE(SUM(CASE WHEN tipo = 'ENTRADA' THEN monto END), 0) AS entradas,
-           COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN monto END), 0) AS salidas
-         FROM mov_caja
-         WHERE fecha >= ? AND fecha <= ?`
-      )
-      .get(fechaDesde, now) as CajaAggRow
+    const cajaAgg = aggCaja(fechaDesde, now)
 
     const corteId = randomUUID()
     sqlite
@@ -319,4 +358,265 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
   })
 
   return run()
+}
+
+// ── Cortes finales pendientes de días anteriores ─────────────────────────────
+
+/**
+ * Días ANTERIORES a hoy con ventas que ningún corte cubre (se olvidó el corte
+ * final). Agrupa los folios sin cubrir por día local. Se cierran del más
+ * antiguo al más reciente para conservar la cadena de folios.
+ */
+export function getCortesPendientesDias(): CortePendienteDia[] {
+  const sqlite = getSqlite()
+  const last = sqlite
+    .prepare('SELECT folio_fin FROM corte ORDER BY fecha DESC LIMIT 1')
+    .get() as { folio_fin: number } | undefined
+  const desdeFolio = last ? last.folio_fin + 1 : 1
+  const hoy00 = startOfDayMs(Date.now())
+
+  const rows = sqlite
+    .prepare(
+      `SELECT folio_local AS folio, fecha, total, cancelada
+         FROM venta
+        WHERE folio_local >= ? AND fecha < ?
+        ORDER BY folio_local`
+    )
+    .all(desdeFolio, hoy00) as Array<{
+    folio: number
+    fecha: number
+    total: number
+    cancelada: number
+  }>
+
+  const porDia = new Map<string, CortePendienteDia>()
+  for (const r of rows) {
+    const key = ymdLocal(r.fecha)
+    let g = porDia.get(key)
+    if (!g) {
+      g = { fecha: key, folioInicio: r.folio, folioFin: r.folio, notas: 0, total: 0 }
+      porDia.set(key, g)
+    }
+    g.folioFin = Math.max(g.folioFin, r.folio)
+    g.folioInicio = Math.min(g.folioInicio, r.folio)
+    g.notas++
+    if (!r.cancelada) g.total += Number(r.total) || 0
+  }
+
+  return [...porDia.values()]
+    .map((g) => ({ ...g, total: round2(g.total) }))
+    .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
+}
+
+/**
+ * Registra el corte FINAL de un día anterior que quedó pendiente. Cubre los
+ * folios sin cortar hasta el fin de ese día y el corte queda fechado al final
+ * del día (23:59:59), así la cadena de folios y los días quedan consistentes.
+ *
+ * Reglas:
+ *  - Lo puede hacer CUALQUIER usuario (igual que el corte normal).
+ *  - Sólo procede una vez: al crearse, esos folios quedan cubiertos y el día
+ *    deja de estar pendiente (no se puede repetir).
+ *  - Debe cerrarse primero el día pendiente más antiguo.
+ */
+export function createCorteFinalPendiente(cajeroId: string, fechaYmd: string): CreateCorteResult {
+  const m = (fechaYmd ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (!m) throw new Error(`Fecha inválida: ${fechaYmd}`)
+  const dia00 = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+  const diaFin = dia00 + 24 * 3600 * 1000 - 1
+  const hoy00 = startOfDayMs(Date.now())
+  if (dia00 >= hoy00) {
+    throw new Error('Ese día aún no termina — usa el corte final normal')
+  }
+
+  const sqlite = getSqlite()
+  const run = sqlite.transaction(() => {
+    const lastCorte = sqlite
+      .prepare('SELECT id, fecha, folio_inicio, folio_fin FROM corte ORDER BY fecha DESC LIMIT 1')
+      .get() as LastCorte | undefined
+    const folioInicio = lastCorte ? lastCorte.folio_fin + 1 : 1
+
+    // El día más antiguo con folios sin cubrir debe ser exactamente el pedido.
+    const min = sqlite
+      .prepare('SELECT MIN(fecha) AS f FROM venta WHERE folio_local >= ?')
+      .get(folioInicio) as { f: number | null }
+    if (min.f == null || min.f >= hoy00) {
+      throw new Error('No hay días anteriores pendientes de corte')
+    }
+    const masAntiguo00 = startOfDayMs(min.f)
+    if (masAntiguo00 !== dia00) {
+      throw new Error(
+        `Primero cierra el día pendiente más antiguo (${ymdLocal(masAntiguo00)})`
+      )
+    }
+
+    const maxRow = sqlite
+      .prepare('SELECT MAX(folio_local) AS m FROM venta WHERE fecha <= ?')
+      .get(diaFin) as { m: number | null }
+    const folioFin = maxRow.m ?? 0
+    if (folioFin < folioInicio) {
+      throw new Error('Ese día ya está cubierto por un corte')
+    }
+
+    const agg = aggVentasRango(folioInicio, folioFin)
+    const fechaDesdeCaja = lastCorte ? lastCorte.fecha : dia00
+    const cajaAgg = aggCaja(fechaDesdeCaja, diaFin)
+
+    const corteId = randomUUID()
+    sqlite
+      .prepare(
+        `INSERT INTO corte (
+           id, cajero_id, fecha, folio_inicio, folio_fin, tipo,
+           total_efectivo, total_tarjeta,
+           total_transferencia, total_otro,
+           entradas_caja, salidas_caja, cancelaciones
+         ) VALUES (?, ?, ?, ?, ?, 'FINAL', ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        corteId,
+        cajeroId,
+        diaFin,
+        folioInicio,
+        folioFin,
+        agg.total_efectivo,
+        agg.total_tarjeta,
+        agg.total_transferencia,
+        agg.total_otro,
+        cajaAgg.entradas,
+        cajaAgg.salidas,
+        agg.cancelaciones
+      )
+
+    const efectivoEsperado = round2(agg.total_efectivo + cajaAgg.entradas - cajaAgg.salidas)
+
+    return {
+      corteId,
+      folioInicio,
+      folioFin,
+      fecha: new Date(diaFin).toISOString(),
+      tipo: 'FINAL' as CorteTipo,
+      totales: {
+        foliosVendidos: agg.folios_vendidos,
+        foliosCancelados: agg.folios_cancelados,
+        subtotal: round2(agg.subtotal),
+        iva: round2(agg.iva),
+        total: round2(agg.total),
+        efectivo: round2(agg.total_efectivo),
+        tarjeta: round2(agg.total_tarjeta),
+        transferencia: round2(agg.total_transferencia),
+        otro: round2(agg.total_otro),
+        entradasCaja: round2(cajaAgg.entradas),
+        salidasCaja: round2(cajaAgg.salidas),
+        cancelaciones: round2(agg.cancelaciones),
+        efectivoEsperado
+      }
+    }
+  })
+
+  return run()
+}
+
+// ── Reimpresión de cortes finales (sólo admin/superusuario) ──────────────────
+
+export function listCortesFinales(viewerUserId: string, limit = 30): CorteFinalHistItem[] {
+  requireAdmin(viewerUserId)
+  const rows = getSqlite()
+    .prepare(
+      `SELECT c.id, c.fecha,
+              c.folio_inicio AS folioInicio,
+              c.folio_fin    AS folioFin,
+              (c.total_efectivo + c.total_tarjeta
+               + c.total_transferencia + c.total_otro) AS total,
+              u.nombre AS cajero
+         FROM corte c
+         LEFT JOIN usuario u ON u.id = c.cajero_id
+        WHERE c.tipo = 'FINAL'
+        ORDER BY c.fecha DESC
+        LIMIT ?`
+    )
+    .all(Math.max(1, Math.min(200, limit))) as Array<{
+    id: string
+    fecha: number
+    folioInicio: number
+    folioFin: number
+    total: number
+    cajero: string | null
+  }>
+  return rows.map((r) => ({
+    id: r.id,
+    fecha: new Date(r.fecha).toISOString(),
+    folioInicio: r.folioInicio,
+    folioFin: r.folioFin,
+    total: round2(Number(r.total) || 0),
+    cajero: r.cajero ?? null
+  }))
+}
+
+/**
+ * Reconstruye los datos del ticket de un corte ya registrado para reimprimirlo.
+ * Los totales por método vienen del snapshot del corte; los conteos y el
+ * desglose subtotal/IVA se recalculan del rango de folios (es estable).
+ */
+export function getCorteReimpresion(viewerUserId: string, corteId: string): CorteReimpresionDto {
+  requireAdmin(viewerUserId)
+  const sqlite = getSqlite()
+  const c = sqlite
+    .prepare(
+      `SELECT c.id, c.fecha, c.tipo,
+              c.folio_inicio AS folioInicio,
+              c.folio_fin    AS folioFin,
+              c.total_efectivo      AS efectivo,
+              c.total_tarjeta       AS tarjeta,
+              c.total_transferencia AS transferencia,
+              c.total_otro          AS otro,
+              c.entradas_caja       AS entradasCaja,
+              c.salidas_caja        AS salidasCaja,
+              c.cancelaciones,
+              u.nombre AS cajero
+         FROM corte c
+         LEFT JOIN usuario u ON u.id = c.cajero_id
+        WHERE c.id = ?`
+    )
+    .get(corteId) as
+    | {
+        id: string
+        fecha: number
+        tipo: string
+        folioInicio: number
+        folioFin: number
+        efectivo: number
+        tarjeta: number
+        transferencia: number
+        otro: number
+        entradasCaja: number
+        salidasCaja: number
+        cancelaciones: number
+        cajero: string | null
+      }
+    | undefined
+  if (!c) throw new Error('Corte no encontrado')
+
+  const agg = aggVentasRango(c.folioInicio, c.folioFin)
+  const efectivoEsperado = round2(c.efectivo + c.entradasCaja - c.salidasCaja)
+
+  return {
+    fecha: new Date(c.fecha).toISOString(),
+    tipo: c.tipo as CorteTipo,
+    cajero: c.cajero ?? '—',
+    folioInicio: c.folioInicio,
+    folioFin: c.folioFin,
+    foliosVendidos: agg.folios_vendidos,
+    foliosCancelados: agg.folios_cancelados,
+    subtotal: round2(agg.subtotal),
+    iva: round2(agg.iva),
+    total: round2(agg.total),
+    efectivo: round2(c.efectivo),
+    tarjeta: round2(c.tarjeta),
+    transferencia: round2(c.transferencia),
+    otro: round2(c.otro),
+    entradasCaja: round2(c.entradasCaja),
+    salidasCaja: round2(c.salidasCaja),
+    cancelaciones: round2(c.cancelaciones),
+    efectivoEsperado
+  }
 }

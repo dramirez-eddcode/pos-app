@@ -14,6 +14,7 @@ import ProcesosEspecialesModal from '../components/ProcesosEspecialesModal'
 import EntradaModal from '../components/EntradaModal'
 import CargaInicialModal from '../components/CargaInicialModal'
 import RecibirTraspasoModal from '../components/RecibirTraspasoModal'
+import TraspasoModal from '../components/TraspasoModal'
 import AjustesModal from '../components/AjustesModal'
 import PreciosModal from '../components/PreciosModal'
 import SalidasModal from '../components/SalidasModal'
@@ -55,6 +56,7 @@ export default function POSPage() {
   const [entradaOpen, setEntradaOpen] = useState(false)
   const [cargaInicialOpen, setCargaInicialOpen] = useState(false)
   const [recibirTraspasoOpen, setRecibirTraspasoOpen] = useState(false)
+  const [generarTraspasoOpen, setGenerarTraspasoOpen] = useState(false)
   const [salidasOpen, setSalidasOpen] = useState(false)
   const [ajustesOpen, setAjustesOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
@@ -86,6 +88,7 @@ export default function POSPage() {
     entradaOpen ||
     cargaInicialOpen ||
     recibirTraspasoOpen ||
+    generarTraspasoOpen ||
     salidasOpen ||
     ajustesOpen ||
     preciosOpen ||
@@ -296,7 +299,8 @@ export default function POSPage() {
             rfc: user.sucursal?.rfc ?? null,
             sucursalNombre: user.sucursal?.sucursalNombre ?? '—',
             calle: user.sucursal?.calle ?? null,
-            colonia: user.sucursal?.colonia ?? null
+            colonia: user.sucursal?.colonia ?? null,
+            cp: user.sucursal?.cp ?? null
           },
           folio: createRes.folioLocal,
           fecha: createRes.fecha,
@@ -657,6 +661,7 @@ export default function POSPage() {
         onEntrada={() => setEntradaOpen(true)}
         onCargaInicial={() => setCargaInicialOpen(true)}
         onRecibirTraspaso={() => setRecibirTraspasoOpen(true)}
+        onGenerarTraspaso={() => setGenerarTraspasoOpen(true)}
         onSalidas={() => setSalidasOpen(true)}
         onAjustes={() => setAjustesOpen(true)}
         onPrecios={() => setPreciosOpen(true)}
@@ -680,6 +685,12 @@ export default function POSPage() {
         onClose={() => setRecibirTraspasoOpen(false)}
         userId={user.id}
       />
+      <TraspasoModal
+        open={generarTraspasoOpen}
+        onClose={() => setGenerarTraspasoOpen(false)}
+        userId={user.id}
+        destinoLibre
+      />
       <SalidasModal
         open={salidasOpen}
         onClose={() => setSalidasOpen(false)}
@@ -702,7 +713,11 @@ export default function POSPage() {
       />
       <UsuariosModal open={usuariosOpen} onClose={() => setUsuariosOpen(false)} />
       <SucursalModal open={sucursalOpen} onClose={() => setSucursalOpen(false)} />
-      <CatalogoProductosModal open={catalogoOpen} onClose={() => setCatalogoOpen(false)} />
+      <CatalogoProductosModal
+        open={catalogoOpen}
+        onClose={() => setCatalogoOpen(false)}
+        permitirReemplazoExistencias
+      />
       <ImportarFarmaModal
         open={importarOpen}
         onClose={() => setImportarOpen(false)}

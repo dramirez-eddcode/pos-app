@@ -9,6 +9,7 @@ import {
   PackagePlus,
   RefreshCcw,
   Tags,
+  Upload,
   Users
 } from 'lucide-react'
 import Modal from './Modal'
@@ -29,6 +30,7 @@ interface Props {
   onEntrada: () => void
   onCargaInicial: () => void
   onRecibirTraspaso: () => void
+  onGenerarTraspaso: () => void
   onSalidas: () => void
   onAjustes: () => void
   onPrecios: () => void
@@ -48,6 +50,7 @@ export default function ProcesosEspecialesModal({
   onEntrada,
   onCargaInicial,
   onRecibirTraspaso,
+  onGenerarTraspaso,
   onSalidas,
   onAjustes,
   onPrecios,
@@ -80,11 +83,21 @@ export default function ProcesosEspecialesModal({
     {
       id: 'recibir-traspaso',
       label: 'Recibir traspaso',
-      hint: 'Cargar un .traspaso enviado por la matriz (entra a tu inventario)',
+      hint: 'Cargar un .traspaso enviado por la matriz u otra sucursal (entra a tu inventario)',
       icon: <ArrowRightLeft className="size-5 text-muted-foreground" />,
       handler: () => {
         onClose()
         onRecibirTraspaso()
+      }
+    },
+    {
+      id: 'generar-traspaso',
+      label: 'Generar traspaso',
+      hint: 'Manda stock de tu inventario a otra sucursal o a la matriz (.traspaso)',
+      icon: <Upload className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onGenerarTraspaso()
       }
     },
     {

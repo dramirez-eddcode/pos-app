@@ -6,21 +6,30 @@ import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
 import { money } from '../lib/format'
-import type { BodegaDto, StockBodegaItem, SucursalDto } from '@shared/dto'
+import type { BodegaDto, CrearTraspasoResult, StockBodegaItem, SucursalDto } from '@shared/dto'
 
 interface Props {
   open: boolean
   onClose: () => void
   userId: string
+  /**
+   * Destino libre (modo SUCURSAL): en lugar del catálogo de sucursales (que
+   * solo existe en la matriz), el destino se captura como código + nombre.
+   * Permite mandar a cualquier sucursal o de regreso a la matriz.
+   */
+  destinoLibre?: boolean
 }
 
 const PAGE_SIZES = [10, 20, 50, 100]
 
-export default function TraspasoModal({ open, onClose, userId }: Props) {
+export default function TraspasoModal({ open, onClose, userId, destinoLibre = false }: Props) {
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [sucursales, setSucursales] = useState<SucursalDto[]>([])
   const [bodegaId, setBodegaId] = useState('')
-  const [sucursalId, setSucursalId] = useState('')
+  // Destino en matriz: 'suc:<id>' (archivo .traspaso) o 'bod:<id>' (interno).
+  const [destinoKey, setDestinoKey] = useState('')
+  const [destinoCodigo, setDestinoCodigo] = useState('')
+  const [destinoNombre, setDestinoNombre] = useState('')
   const [stock, setStock] = useState<StockBodegaItem[]>([])
   const [loading, setLoading] = useState(false)
   const [generando, setGenerando] = useState(false)
@@ -35,17 +44,31 @@ export default function TraspasoModal({ open, onClose, userId }: Props) {
     setStock([])
     setCant({})
     setFiltro('')
-    Promise.all([window.api.bodegas.list(), window.api.sucursales.list(userId)])
-      .then(([bs, ss]) => {
+    setDestinoCodigo('')
+    setDestinoNombre('')
+    const cargas: Promise<void>[] = [
+      window.api.bodegas.list().then((bs) => {
         const bodActivas = bs.filter((b) => b.activa)
         setBodegas(bodActivas)
         setBodegaId((bodActivas.find((b) => b.esPrincipal) ?? bodActivas[0])?.id ?? '')
-        const sucActivas = ss.filter((s) => s.activa)
-        setSucursales(sucActivas)
-        setSucursalId(sucActivas[0]?.id ?? '')
       })
-      .catch(() => {})
-  }, [open, userId])
+    ]
+    if (!destinoLibre) {
+      cargas.push(
+        window.api.sucursales.list(userId).then((ss) => {
+          const sucActivas = ss.filter((s) => s.activa)
+          setSucursales(sucActivas)
+          setDestinoKey(sucActivas[0] ? `suc:${sucActivas[0].id}` : '')
+        })
+      )
+    }
+    Promise.all(cargas).catch(() => {})
+  }, [open, userId, destinoLibre])
+
+  // Si el destino interno elegido pasa a ser la bodega origen, se invalida.
+  useEffect(() => {
+    if (destinoKey === `bod:${bodegaId}`) setDestinoKey('')
+  }, [bodegaId, destinoKey])
 
   const cargarStock = useCallback(async (id: string) => {
     if (!id) return
@@ -135,15 +158,33 @@ export default function TraspasoModal({ open, onClose, userId }: Props) {
 
   const generar = useCallback(async () => {
     if (!bodegaId) return toast.error('Selecciona la bodega origen')
-    if (!sucursalId) return toast.error('Selecciona la sucursal destino')
+    if (destinoLibre) {
+      if (!destinoCodigo.trim()) return toast.error('Captura el código del destino')
+      if (!destinoNombre.trim()) return toast.error('Captura el nombre del destino')
+    } else if (!destinoKey) {
+      return toast.error('Selecciona el destino')
+    }
     if (seleccion.items.length === 0) return toast.error('Indica cantidades a traspasar')
+    const esInterno = !destinoLibre && destinoKey.startsWith('bod:')
     setGenerando(true)
     try {
-      const r = await window.api.traspaso.crear(userId, {
-        bodegaOrigenId: bodegaId,
-        sucursalId,
-        items: seleccion.items
-      })
+      let r: CrearTraspasoResult
+      if (esInterno) {
+        // Traspaso interno: mismo equipo, sin archivo — atómico.
+        r = await window.api.traspaso.entreBodegas(userId, {
+          bodegaOrigenId: bodegaId,
+          bodegaDestinoId: destinoKey.slice(4),
+          items: seleccion.items
+        })
+      } else {
+        r = await window.api.traspaso.crear(userId, {
+          bodegaOrigenId: bodegaId,
+          ...(destinoLibre
+            ? { destino: { codigo: destinoCodigo.trim(), nombre: destinoNombre.trim() } }
+            : { sucursalId: destinoKey.slice(4) }),
+          items: seleccion.items
+        })
+      }
       if (r.cancelled) return
       if (!r.ok) {
         if (r.faltantes && r.faltantes.length > 0) {
@@ -158,25 +199,63 @@ export default function TraspasoModal({ open, onClose, userId }: Props) {
         }
         return
       }
-      toast.success(`Traspaso generado · ${r.unidades?.toLocaleString('es-MX')} unidades`, {
-        description: `Folio ${r.folio?.slice(0, 8)}… · ${r.lineas} líneas · guardado en ${r.path}`
-      })
+      const folio = r.folio
+      toast.success(
+        `${esInterno ? 'Traspaso entre bodegas realizado' : 'Traspaso generado'} · ${r.unidades?.toLocaleString('es-MX')} unidades`,
+        {
+          description: esInterno
+            ? `Folio ${folio?.slice(0, 8)}… · ${r.lineas} líneas · el stock ya está en la bodega destino`
+            : `Folio ${folio?.slice(0, 8)}… · ${r.lineas} líneas · guardado en ${r.path}`,
+          duration: 10000,
+          action: folio
+            ? {
+                label: 'Imprimir PDF',
+                onClick: () => {
+                  window.api.movimientos.pdf(folio).then((p) => {
+                    if (!p.ok && !p.cancelled) {
+                      toast.error('No se pudo generar el PDF', { description: p.error })
+                    }
+                  })
+                }
+              }
+            : undefined
+        }
+      )
       onClose()
     } catch (e) {
       toast.error('Falló el traspaso', { description: e instanceof Error ? e.message : String(e) })
     } finally {
       setGenerando(false)
     }
-  }, [bodegaId, sucursalId, seleccion.items, userId, onClose])
+  }, [bodegaId, destinoKey, destinoLibre, destinoCodigo, destinoNombre, seleccion.items, userId, onClose])
 
   return (
-    <Modal open={open} title="Traspaso de bodega a sucursal" onClose={onClose} maxWidth="max-w-5xl">
+    <Modal
+      open={open}
+      title={destinoLibre ? 'Generar traspaso' : 'Traspaso de inventario'}
+      onClose={onClose}
+      maxWidth="max-w-5xl"
+    >
       <div className="relative">
         <div className="p-4 space-y-3 text-sm">
           <div className="rounded border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-            Mueve stock de una bodega de la matriz hacia una sucursal. Descuenta de la bodega (FEFO,
-            conservando caducidades) y genera un archivo <span className="font-mono">.traspaso</span>{' '}
-            para llevar por USB. En la sucursal se carga en <strong>Procesos → Recibir traspaso</strong>.
+            {destinoLibre ? (
+              <>
+                Mueve stock de tu inventario hacia <strong>otra sucursal o la matriz</strong>.
+                Descuenta de tu bodega (FEFO, conservando caducidades) y genera un archivo{' '}
+                <span className="font-mono">.traspaso</span> para llevar por USB. El destino se
+                captura libre: usa el <strong>código</strong> con el que está dado de alta en la
+                matriz para que el equipo receptor lo valide.
+              </>
+            ) : (
+              <>
+                Mueve stock de una bodega hacia una <strong>sucursal</strong> (genera archivo{' '}
+                <span className="font-mono">.traspaso</span> para llevar por USB y cargarlo en{' '}
+                <strong>Procesos → Recibir traspaso</strong>) o hacia <strong>otra bodega</strong>{' '}
+                de esta matriz (movimiento interno inmediato, sin archivo). Siempre descuenta FEFO
+                conservando caducidades.
+              </>
+            )}
           </div>
 
           {/* Origen / destino */}
@@ -193,15 +272,64 @@ export default function TraspasoModal({ open, onClose, userId }: Props) {
             <div className="hidden md:flex items-center justify-center pb-1.5 text-muted-foreground">
               <ArrowRightLeft className="size-4" />
             </div>
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Sucursal destino</label>
-              <select value={sucursalId} onChange={(e) => setSucursalId(e.target.value)} className="w-full border border-border rounded px-2 py-1.5 bg-background">
-                {sucursales.length === 0 && <option value="">(sin sucursales)</option>}
-                {sucursales.map((s) => (
-                  <option key={s.id} value={s.id}>{s.nombre}</option>
-                ))}
-              </select>
-            </div>
+            {destinoLibre ? (
+              <div className="grid grid-cols-[110px_1fr] gap-2">
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Código destino</label>
+                  <input
+                    type="text"
+                    value={destinoCodigo}
+                    onChange={(e) => setDestinoCodigo(e.target.value)}
+                    placeholder="S02 / MATRIZ"
+                    className="w-full border border-border rounded px-2 py-1.5 font-mono"
+                    autoComplete="off"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Nombre destino</label>
+                  <input
+                    type="text"
+                    value={destinoNombre}
+                    onChange={(e) => setDestinoNombre(e.target.value)}
+                    placeholder="Sucursal Centro / Bodega Matriz"
+                    className="w-full border border-border rounded px-2 py-1.5"
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Destino</label>
+                <select
+                  value={destinoKey}
+                  onChange={(e) => setDestinoKey(e.target.value)}
+                  className="w-full border border-border rounded px-2 py-1.5 bg-background"
+                >
+                  <option value="">— elige destino —</option>
+                  {sucursales.length > 0 && (
+                    <optgroup label="Sucursales (archivo .traspaso por USB)">
+                      {sucursales.map((s) => (
+                        <option key={s.id} value={`suc:${s.id}`}>
+                          {s.nombre}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {bodegas.filter((b) => b.id !== bodegaId).length > 0 && (
+                    <optgroup label="Bodegas (traspaso interno inmediato)">
+                      {bodegas
+                        .filter((b) => b.id !== bodegaId)
+                        .map((b) => (
+                          <option key={b.id} value={`bod:${b.id}`}>
+                            {b.nombre}
+                            {b.esPrincipal ? ' (principal)' : ''}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Filtro + CSV */}
@@ -281,7 +409,12 @@ export default function TraspasoModal({ open, onClose, userId }: Props) {
           <button
             type="button"
             onClick={generar}
-            disabled={generando || loading || seleccion.items.length === 0 || !sucursalId}
+            disabled={
+              generando ||
+              loading ||
+              seleccion.items.length === 0 ||
+              (destinoLibre ? !destinoCodigo.trim() || !destinoNombre.trim() : !destinoKey)
+            }
             className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
           >
             {generando && <Spinner size={14} />}

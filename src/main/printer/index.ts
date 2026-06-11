@@ -14,18 +14,43 @@ import {
   type CorteReceiptData
 } from './receipt'
 import { listPrinters, sendRawToPrinter, type PrintResult } from './windows'
+import { getSettings } from '../services/settings'
 import type {
   CancelReceiptData as CancelReceiptDataDto,
   CorteReceiptData as CorteReceiptDataDto,
-  ReceiptData as ReceiptDataDto
+  ReceiptData as ReceiptDataDto,
+  ReceiptEmpresa
 } from '@shared/receipt'
 
 export async function getPrinters(): Promise<string[]> {
   return listPrinters()
 }
 
+/**
+ * Aplica la configuración "qué imprimir en el encabezado del ticket": las
+ * líneas desactivadas en Configuración (razón social, RFC, sucursal,
+ * dirección) se vacían y el builder las omite. Punto único — aplica a venta,
+ * cancelación y corte.
+ */
+function empresaSegunSettings(e: ReceiptEmpresa): ReceiptEmpresa {
+  const s = getSettings()
+  return {
+    ...e,
+    nombreComercial: s.ticketMostrarRazonSocial ? e.nombreComercial : '',
+    rfc: s.ticketMostrarRfc ? (e.rfc ?? null) : null,
+    sucursalNombre: s.ticketMostrarSucursal ? e.sucursalNombre : '',
+    calle: s.ticketMostrarDireccion ? (e.calle ?? null) : null,
+    colonia: s.ticketMostrarDireccion ? (e.colonia ?? null) : null,
+    cp: s.ticketMostrarDireccion ? (e.cp ?? null) : null
+  }
+}
+
 export async function printReceipt(printer: string, data: ReceiptDataDto): Promise<PrintResult> {
-  const internal: ReceiptData = { ...data, fecha: new Date(data.fecha) }
+  const internal: ReceiptData = {
+    ...data,
+    empresa: empresaSegunSettings(data.empresa),
+    fecha: new Date(data.fecha)
+  }
   const bytes = buildReceiptBytes(internal)
   return sendRawToPrinter(printer, bytes)
 }
@@ -36,6 +61,7 @@ export async function printCancellation(
 ): Promise<PrintResult> {
   const internal: CancelReceiptData = {
     ...data,
+    empresa: empresaSegunSettings(data.empresa),
     fechaOriginal: new Date(data.fechaOriginal),
     fechaCancelacion: new Date(data.fechaCancelacion)
   }
@@ -47,15 +73,26 @@ export async function printCorte(
   printer: string,
   data: CorteReceiptDataDto
 ): Promise<PrintResult> {
-  const internal: CorteReceiptData = { ...data, fecha: new Date(data.fecha) }
+  const internal: CorteReceiptData = {
+    ...data,
+    empresa: empresaSegunSettings(data.empresa),
+    fecha: new Date(data.fecha)
+  }
   const bytes = buildCorteReceiptBytes(internal)
   return sendRawToPrinter(printer, bytes)
 }
 
-export async function printTest(
-  printer: string,
-  opts?: { showTime?: boolean; footer?: string | null }
-): Promise<PrintResult> {
+export interface PrintTestOpts {
+  showTime?: boolean
+  footer?: string | null
+  // Vista previa del encabezado (valores aún sin guardar del panel de config)
+  mostrarRazonSocial?: boolean
+  mostrarRfc?: boolean
+  mostrarSucursal?: boolean
+  mostrarDireccion?: boolean
+}
+
+export async function printTest(printer: string, opts?: PrintTestOpts): Promise<PrintResult> {
   const bytes = buildTestReceiptBytes(opts)
   return sendRawToPrinter(printer, bytes)
 }

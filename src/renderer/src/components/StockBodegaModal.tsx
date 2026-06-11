@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, ChevronDown, ChevronRight, Clock, FileDown, Search } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  FileDown,
+  FileText,
+  Printer,
+  Search
+} from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import { money } from '../lib/format'
-import type { BodegaDto, StockBodegaItem, StockBodegaResult } from '@shared/dto'
+import type {
+  BodegaDto,
+  StockBodegaItem,
+  StockBodegaPdfInput,
+  StockBodegaResult
+} from '@shared/dto'
 
 interface Props {
   open: boolean
@@ -30,6 +44,8 @@ export default function StockBodegaModal({ open, onClose }: Props) {
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [printBusy, setPrintBusy] = useState(false)
 
   // Cargar bodegas al abrir
   useEffect(() => {
@@ -137,6 +153,82 @@ export default function StockBodegaModal({ open, onClose }: Props) {
 
   const resumen = data?.resumen
 
+  // Arma el reporte imprimible con LO QUE SE VE (filtros aplicados) + resumen
+  // global de la bodega.
+  const buildPdfInput = useCallback((): StockBodegaPdfInput | null => {
+    if (!data) return null
+    const bodega = bodegas.find((b) => b.id === bodegaId)
+    const filtros: string[] = []
+    if (filtro.trim()) filtros.push(`texto "${filtro.trim()}"`)
+    if (soloBajoMinimo) filtros.push('solo bajo mínimo')
+    if (soloPorVencer) filtros.push('solo por vencer / vencidos')
+    return {
+      bodegaNombre: bodega?.nombre ?? 'Bodega',
+      resumen: data.resumen,
+      filtroDescripcion: filtros.length > 0 ? filtros.join(' · ') : null,
+      items: filtered.map((it) => ({
+        codigo: it.codigo,
+        nombre: it.nombre,
+        sustanciaActiva: it.sustanciaActiva,
+        existencias: it.existencias,
+        stockMinimo: it.stockMinimo,
+        bajoMinimo: it.bajoMinimo,
+        valorCosto: it.valorCosto,
+        proximaCaducidad: it.proximaCaducidad,
+        vencido: it.lotes[0]?.vencido ?? false,
+        porVencer: it.lotes[0]?.porVencer ?? false
+      }))
+    }
+  }, [data, bodegas, bodegaId, filtro, soloBajoMinimo, soloPorVencer, filtered])
+
+  const exportarPdf = useCallback(async () => {
+    const input = buildPdfInput()
+    if (!input || input.items.length === 0) {
+      toast.warning('No hay productos para el reporte')
+      return
+    }
+    setPdfBusy(true)
+    try {
+      const r = await window.api.inventario.stockPdf(input)
+      if (r.cancelled) return
+      if (!r.ok) {
+        toast.error('No se pudo generar el PDF', { description: r.error })
+        return
+      }
+      toast.success('PDF generado — se abrió para imprimir', { description: r.path })
+    } catch (e) {
+      toast.error('No se pudo generar el PDF', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setPdfBusy(false)
+    }
+  }, [buildPdfInput])
+
+  const imprimir = useCallback(async () => {
+    const input = buildPdfInput()
+    if (!input || input.items.length === 0) {
+      toast.warning('No hay productos para el reporte')
+      return
+    }
+    setPrintBusy(true)
+    try {
+      const r = await window.api.inventario.stockImprimir(input)
+      if (r.cancelled) return
+      if (!r.ok) {
+        toast.error('No se pudo imprimir', { description: r.error })
+        return
+      }
+      toast.success('Reporte enviado a la impresora')
+    } catch (e) {
+      toast.error('No se pudo imprimir', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setPrintBusy(false)
+    }
+  }, [buildPdfInput])
+
   return (
     <Modal open={open} title="Stock por bodega" onClose={onClose} maxWidth="max-w-6xl">
       <div className="p-4 space-y-3 text-sm">
@@ -158,15 +250,37 @@ export default function StockBodegaModal({ open, onClose }: Props) {
               ))}
             </select>
           </div>
-          <button
-            type="button"
-            onClick={exportarHojaConteo}
-            disabled={loading || filtered.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50 ml-auto"
-          >
-            <FileDown className="size-3.5" />
-            Exportar hoja de conteo
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportarHojaConteo}
+              disabled={loading || filtered.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              <FileDown className="size-3.5" />
+              Exportar hoja de conteo
+            </button>
+            <button
+              type="button"
+              onClick={exportarPdf}
+              disabled={loading || pdfBusy || printBusy || filtered.length === 0}
+              title="Guardar PDF del listado tal como se ve (con filtros) y abrirlo para imprimir"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              {pdfBusy ? <Spinner size={14} /> : <FileText className="size-3.5" />}
+              Guardar PDF
+            </button>
+            <button
+              type="button"
+              onClick={imprimir}
+              disabled={loading || pdfBusy || printBusy || filtered.length === 0}
+              title="Mandar el listado directo a la impresora"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 font-medium"
+            >
+              {printBusy ? <Spinner size={14} /> : <Printer className="size-3.5" />}
+              Imprimir
+            </button>
+          </div>
         </div>
 
         {/* KPIs */}

@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS sucursal (
   rfc TEXT,
   calle TEXT,
   colonia TEXT,
+  cp TEXT,
   ciudad TEXT,
   estado TEXT,
   activa INTEGER NOT NULL DEFAULT 1,
@@ -102,6 +103,7 @@ CREATE TABLE IF NOT EXISTS empresa (
   rfc TEXT,
   calle TEXT,
   colonia TEXT,
+  cp TEXT,
   ciudad TEXT,
   estado TEXT,
   sucursal_nombre TEXT NOT NULL,
@@ -348,6 +350,20 @@ function ensureSchema(sqlite: Database.Database): void {
     sqlite.exec(`ALTER TABLE instalacion ADD COLUMN ultimo_import_en INTEGER`)
   }
 
+  // sucursal.cp / empresa.cp — código postal (se imprime en el ticket).
+  const hasCpSucursal = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('sucursal') WHERE name = 'cp'`)
+    .get() as { v: number } | undefined
+  if (!hasCpSucursal) {
+    sqlite.exec(`ALTER TABLE sucursal ADD COLUMN cp TEXT`)
+  }
+  const hasCpEmpresa = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('empresa') WHERE name = 'cp'`)
+    .get() as { v: number } | undefined
+  if (!hasCpEmpresa) {
+    sqlite.exec(`ALTER TABLE empresa ADD COLUMN cp TEXT`)
+  }
+
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS mov_stock (
       id TEXT PRIMARY KEY NOT NULL,
@@ -373,8 +389,10 @@ function ensureSchema(sqlite: Database.Database): void {
     CREATE INDEX IF NOT EXISTS precio_historico_producto_idx ON precio_historico (producto_id, fecha);
   `)
 
-  // Historial de traspasos bodega → sucursal (matriz). Guarda encabezado + las
-  // líneas como JSON, para listar y ver detalle. Vive en la BD → se respalda.
+  // Historial de traspasos (matriz/sucursal). Guarda encabezado + las líneas
+  // como JSON, para listar y ver detalle. Vive en la BD → se respalda.
+  // destino_tipo: 'SUCURSAL' (archivo .traspaso) o 'BODEGA' (interno, mismo
+  // equipo); en ambos casos el nombre del destino vive en sucursal_nombre.
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS traspaso (
       folio TEXT PRIMARY KEY NOT NULL,
@@ -385,11 +403,69 @@ function ensureSchema(sqlite: Database.Database): void {
       sucursal_id TEXT,
       sucursal_codigo TEXT,
       sucursal_nombre TEXT,
+      destino_tipo TEXT,
       lineas INTEGER NOT NULL DEFAULT 0,
       unidades INTEGER NOT NULL DEFAULT 0,
       items_json TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS traspaso_fecha_idx ON traspaso (fecha);
+  `)
+  // traspaso.destino_tipo — ALTER idempotente para BDs que ya tenían la tabla.
+  const hasDestinoTipo = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('traspaso') WHERE name = 'destino_tipo'`)
+    .get() as { v: number } | undefined
+  if (!hasDestinoTipo) {
+    sqlite.exec(`ALTER TABLE traspaso ADD COLUMN destino_tipo TEXT`)
+  }
+
+  // Historial de movimientos de inventario (entradas y salidas) como documentos
+  // con folio: encabezado + líneas en JSON, igual que `traspaso`. Permite
+  // consultarlos y reimprimirlos en PDF. Vive en la BD → se respalda.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS movimiento (
+      folio TEXT PRIMARY KEY NOT NULL,
+      tipo TEXT NOT NULL,
+      fecha INTEGER NOT NULL,
+      usuario_id TEXT,
+      usuario_nombre TEXT,
+      bodega_id TEXT,
+      bodega_nombre TEXT,
+      proveedor_id TEXT,
+      proveedor_nombre TEXT,
+      motivo TEXT,
+      lineas INTEGER NOT NULL DEFAULT 0,
+      unidades INTEGER NOT NULL DEFAULT 0,
+      valor REAL NOT NULL DEFAULT 0,
+      items_json TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE INDEX IF NOT EXISTS movimiento_fecha_idx ON movimiento (fecha);
+  `)
+  // movimiento.proveedor_* — agregado después de crear la tabla; ALTER idempotente
+  // para BDs que ya la tenían sin estas columnas.
+  const hasProveedorMov = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('movimiento') WHERE name = 'proveedor_id'`)
+    .get() as { v: number } | undefined
+  if (!hasProveedorMov) {
+    sqlite.exec(`ALTER TABLE movimiento ADD COLUMN proveedor_id TEXT;
+                 ALTER TABLE movimiento ADD COLUMN proveedor_nombre TEXT;`)
+  }
+
+  // Catálogo de proveedores (matriz). Vinculable de forma opcional a las
+  // entradas de mercancía para dejar registrado de quién llegó.
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS proveedor (
+      id TEXT PRIMARY KEY NOT NULL,
+      nombre TEXT NOT NULL,
+      rfc TEXT,
+      telefono TEXT,
+      email TEXT,
+      contacto TEXT,
+      notas TEXT,
+      activo INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS proveedor_nombre_unique ON proveedor (nombre);
   `)
 
   // producto.iva_modo — agregado en Fase 3. ADD COLUMN es idempotente sólo si

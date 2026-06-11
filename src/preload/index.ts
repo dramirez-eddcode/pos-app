@@ -10,6 +10,9 @@ import type {
   PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
+  CortePendienteDia,
+  CorteFinalHistItem,
+  CorteReimpresionDto,
   CreateAjustesInput,
   CreateAjustesResult,
   CreateCorteResult,
@@ -21,12 +24,15 @@ import type {
   CargaInicialInput,
   CargaInicialResult,
   StockBodegaResult,
+  StockBodegaPdfInput,
   CrearTraspasoInput,
   CrearTraspasoResult,
+  TraspasoBodegasInput,
   PickTraspasoResult,
   AplicarTraspasoResult,
-  TraspasoHistItem,
-  TraspasoHistDetalle,
+  MovimientoHistItem,
+  MovimientoDetalle,
+  PdfMovimientoResult,
   CreateSucursalInput,
   CreateUsuarioInput,
   CreateVentaInput,
@@ -49,6 +55,9 @@ import type {
   ProductoCatalogoItem,
   ProductoDto,
   ProductoSearchQuery,
+  ProveedorDto,
+  CreateProveedorInput,
+  UpdateProveedorInput,
   SetSucursalProductoInput,
   UpdateEmpresaInput,
   UpdateIvaInput,
@@ -198,8 +207,8 @@ const api = {
       ipcRenderer.invoke('productos:search', query),
     byCodigo: (codigo: string): Promise<ProductoDto | null> =>
       ipcRenderer.invoke('productos:by-codigo', codigo),
-    getLotes: (productoId: string): Promise<LoteInfo[]> =>
-      ipcRenderer.invoke('productos:get-lotes', productoId),
+    getLotes: (productoId: string, bodegaId?: string | null): Promise<LoteInfo[]> =>
+      ipcRenderer.invoke('productos:get-lotes', productoId, bodegaId ?? null),
     getAllActivos: (): Promise<
       Array<{
         id: string
@@ -258,12 +267,34 @@ const api = {
   corte: {
     hoy: (): Promise<CorteHoyDto> => ipcRenderer.invoke('corte:hoy'),
     create: (cajeroId: string, tipo: CorteTipo): Promise<CreateCorteResult> =>
-      ipcRenderer.invoke('corte:create', cajeroId, tipo)
+      ipcRenderer.invoke('corte:create', cajeroId, tipo),
+    pendientesDias: (): Promise<CortePendienteDia[]> =>
+      ipcRenderer.invoke('corte:pendientes-dias'),
+    createFinalPendiente: (cajeroId: string, fechaYmd: string): Promise<CreateCorteResult> =>
+      ipcRenderer.invoke('corte:create-final-pendiente', cajeroId, fechaYmd),
+    finales: (viewerUserId: string): Promise<CorteFinalHistItem[]> =>
+      ipcRenderer.invoke('corte:finales', viewerUserId),
+    reimpresion: (viewerUserId: string, corteId: string): Promise<CorteReimpresionDto> =>
+      ipcRenderer.invoke('corte:reimpresion', viewerUserId, corteId)
   },
 
   entradas: {
     create: (input: CreateEntradaInput): Promise<CreateEntradaResult> =>
       ipcRenderer.invoke('entradas:create', input)
+  },
+
+  proveedores: {
+    list: (): Promise<ProveedorDto[]> => ipcRenderer.invoke('proveedores:list'),
+    create: (viewerUserId: string, input: CreateProveedorInput): Promise<{ id: string }> =>
+      ipcRenderer.invoke('proveedores:create', viewerUserId, input),
+    update: (viewerUserId: string, input: UpdateProveedorInput): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('proveedores:update', viewerUserId, input),
+    toggleActivo: (
+      viewerUserId: string,
+      proveedorId: string,
+      activo: boolean
+    ): Promise<{ ok: true }> =>
+      ipcRenderer.invoke('proveedores:toggle-activo', viewerUserId, proveedorId, activo)
   },
 
   ajustes: {
@@ -280,22 +311,39 @@ const api = {
     cargaInicial: (input: CargaInicialInput): Promise<CargaInicialResult> =>
       ipcRenderer.invoke('inventario:carga-inicial', input),
     stockBodega: (bodegaId: string): Promise<StockBodegaResult> =>
-      ipcRenderer.invoke('inventario:stock-bodega', bodegaId)
+      ipcRenderer.invoke('inventario:stock-bodega', bodegaId),
+    stockPdf: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('inventario:stock-pdf', input),
+    stockImprimir: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('inventario:stock-imprimir', input)
   },
 
   traspaso: {
     crear: (viewerUserId: string, input: CrearTraspasoInput): Promise<CrearTraspasoResult> =>
       ipcRenderer.invoke('traspaso:crear', viewerUserId, input),
+    entreBodegas: (
+      viewerUserId: string,
+      input: TraspasoBodegasInput
+    ): Promise<CrearTraspasoResult> =>
+      ipcRenderer.invoke('traspaso:entre-bodegas', viewerUserId, input),
     pick: (): Promise<PickTraspasoResult> => ipcRenderer.invoke('traspaso:pick'),
     aplicar: (
       viewerUserId: string,
       filePath: string,
-      force?: boolean
+      force?: boolean,
+      bodegaDestinoId?: string | null
     ): Promise<AplicarTraspasoResult> =>
-      ipcRenderer.invoke('traspaso:aplicar', viewerUserId, filePath, force),
-    list: (): Promise<TraspasoHistItem[]> => ipcRenderer.invoke('traspaso:list'),
-    detalle: (folio: string): Promise<TraspasoHistDetalle | null> =>
-      ipcRenderer.invoke('traspaso:detalle', folio)
+      ipcRenderer.invoke('traspaso:aplicar', viewerUserId, filePath, force, bodegaDestinoId ?? null)
+  },
+
+  movimientos: {
+    list: (): Promise<MovimientoHistItem[]> => ipcRenderer.invoke('movimientos:list'),
+    detalle: (folio: string): Promise<MovimientoDetalle | null> =>
+      ipcRenderer.invoke('movimientos:detalle', folio),
+    pdf: (folio: string): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('movimientos:pdf', folio),
+    imprimir: (folio: string): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('movimientos:imprimir', folio)
   },
 
   precios: {
@@ -328,7 +376,14 @@ const api = {
     list: (): Promise<string[]> => ipcRenderer.invoke('printer:list'),
     printTest: (
       printer: string,
-      opts?: { showTime?: boolean; footer?: string | null }
+      opts?: {
+        showTime?: boolean
+        footer?: string | null
+        mostrarRazonSocial?: boolean
+        mostrarRfc?: boolean
+        mostrarSucursal?: boolean
+        mostrarDireccion?: boolean
+      }
     ): Promise<PrintResultLike> => ipcRenderer.invoke('printer:print-test', printer, opts),
     openDrawer: (printer: string): Promise<PrintResultLike> =>
       ipcRenderer.invoke('printer:open-drawer', printer),

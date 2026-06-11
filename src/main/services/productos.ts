@@ -244,9 +244,11 @@ export function getAllLotesActivos(): Array<{
  * Devuelve los lotes de un producto (todos, incluyendo con saldo 0 — por si
  * el admin quiere ajustar un lote "vacío" hacia arriba). Ordenados por fecha
  * de caducidad ascendente (el más próximo a vencer primero, siguiendo FEFO).
+ * Con `bodegaId` se limita a los lotes de esa bodega (matriz multi-bodega).
  */
 export function getLotesByProducto(
-  productoId: string
+  productoId: string,
+  bodegaId?: string | null
 ): {
   id: string
   total: number
@@ -260,9 +262,10 @@ export function getLotesByProducto(
       `SELECT id, total, saldo, fecha_caducidad, fecha_entrada
          FROM caducidad_lote
         WHERE producto_id = ?
+          AND (? IS NULL OR bodega_id = ?)
         ORDER BY fecha_caducidad ASC, fecha_entrada ASC`
     )
-    .all(productoId) as Array<{
+    .all(productoId, bodegaId ?? null, bodegaId ?? null) as Array<{
     id: string
     total: number
     saldo: number

@@ -84,7 +84,8 @@ export default function CancelVentaModal({ open, onClose, onCancelled, currentUs
             rfc: user.sucursal.rfc ?? null,
             sucursalNombre: user.sucursal.sucursalNombre,
             calle: user.sucursal.calle ?? null,
-            colonia: user.sucursal.colonia ?? null
+            colonia: user.sucursal.colonia ?? null,
+            cp: user.sucursal.cp ?? null
           },
           folioOriginal: detail.folioLocal,
           fechaOriginal: detail.fecha,

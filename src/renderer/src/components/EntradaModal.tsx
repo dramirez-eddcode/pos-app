@@ -6,8 +6,9 @@ import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
 import Spinner from './Spinner'
+import { ProveedorSubModal } from './ProveedoresModal'
 import { money } from '../lib/format'
-import type { BodegaDto, ProductoDto } from '@shared/dto'
+import type { BodegaDto, ProductoDto, ProveedorDto } from '@shared/dto'
 
 interface EntryRow {
   productoId: string
@@ -16,6 +17,7 @@ interface EntryRow {
   cantidad: number
   costo: number
   fechaCaducidad?: string | null // YYYY-MM-DD
+  proveedorId: string | null // por renglón: una entrada puede mezclar proveedores
 }
 
 interface Props {
@@ -54,6 +56,19 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const [importing, setImporting] = useState(false)
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [bodegaId, setBodegaId] = useState<string>('')
+  const [proveedores, setProveedores] = useState<ProveedorDto[]>([])
+  // Alta rápida de proveedor sin salir de la entrada: a qué renglón se asigna
+  // el nuevo proveedor ('todos' = a todos los renglones capturados).
+  const [nuevoProvPara, setNuevoProvPara] = useState<number | 'todos' | null>(null)
+
+  const cargarProveedores = useCallback(async () => {
+    try {
+      const ps = await window.api.proveedores.list()
+      setProveedores(ps.filter((p) => p.activo))
+    } catch {
+      /* sin proveedores no se bloquea la entrada */
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -63,6 +78,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     setCantidad('')
     setCosto('')
     setCaducidad(defaultCaducidad())
+    setNuevoProvPara(null)
     setTimeout(() => codRef.current?.focus(), 80)
     window.api.bodegas
       .list()
@@ -73,7 +89,28 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         setBodegaId(principal?.id ?? '')
       })
       .catch(() => {})
-  }, [open])
+    cargarProveedores()
+  }, [open, cargarProveedores])
+
+  // Cambia el proveedor de un renglón; '__nuevo__' abre el alta rápida.
+  const onRowProveedor = useCallback((idx: number, value: string) => {
+    if (value === '__nuevo__') {
+      setNuevoProvPara(idx)
+      return
+    }
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, proveedorId: value || null } : it))
+    )
+  }, [])
+
+  const asignarProveedorTodos = useCallback((value: string) => {
+    if (!value) return
+    if (value === '__nuevo__') {
+      setNuevoProvPara('todos')
+      return
+    }
+    setItems((prev) => prev.map((it) => ({ ...it, proveedorId: value })))
+  }, [])
 
   const resetRow = useCallback(() => {
     setCurrent(null)
@@ -124,7 +161,8 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       nombre: current.nombre,
       cantidad: q,
       costo: c,
-      fechaCaducidad: caducidad || null
+      fechaCaducidad: caducidad || null,
+      proveedorId: null
     }
     setItems((prev) => [...prev, row])
     resetRow()
@@ -271,7 +309,8 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
           nombre: prod.nombre,
           cantidad: q,
           costo: Math.round(costo * 100) / 100,
-          fechaCaducidad: fecha
+          fechaCaducidad: fecha,
+          proveedorId: null
         })
         added++
       }
@@ -326,12 +365,26 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
           costo: i.costo,
           fechaCaducidad: i.fechaCaducidad
             ? new Date(i.fechaCaducidad + 'T12:00:00').toISOString()
-            : null
+            : null,
+          proveedorId: i.proveedorId
         }))
       })
       toast.success(
         `Entrada registrada: ${r.lotesCreados} lote(s), ${r.unidadesIngresadas} unidades`,
-        { description: `Costo total: $${r.totalCosto.toFixed(2)}` }
+        {
+          description: `Costo total: $${r.totalCosto.toFixed(2)}`,
+          duration: 10000,
+          action: {
+            label: 'Imprimir PDF',
+            onClick: () => {
+              window.api.movimientos.pdf(r.movimientoId).then((p) => {
+                if (!p.ok && !p.cancelled) {
+                  toast.error('No se pudo generar el PDF', { description: p.error })
+                }
+              })
+            }
+          }
+        }
       )
       onSaved?.()
       onClose()
@@ -385,13 +438,13 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   return (
     <>
       <Modal
-        open={open && !searchOpen}
+        open={open && !searchOpen && nuevoProvPara === null}
         title="Entrada de mercancía"
         onClose={onClose}
-        maxWidth="max-w-4xl"
+        maxWidth="max-w-5xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
-          {/* Bodega destino */}
+          {/* Bodega destino — el proveedor se asigna por renglón en la tabla */}
           {bodegas.length > 0 && (
             <section className="flex items-center gap-2">
               <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
@@ -604,6 +657,26 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                   <tr className="text-left">
                     <th className="px-2 py-1 w-12 text-right">Cant</th>
                     <th className="px-2 py-1">Producto</th>
+                    <th className="px-2 py-1 w-48">
+                      <div className="flex items-center gap-1.5">
+                        <span>Proveedor</span>
+                        {items.length > 1 && proveedores.length > 0 && (
+                          <select
+                            value=""
+                            onChange={(e) => asignarProveedorTodos(e.target.value)}
+                            title="Asignar el mismo proveedor a todos los renglones"
+                            className="border border-border rounded px-1 py-0.5 bg-background text-[10px] font-normal text-muted-foreground"
+                          >
+                            <option value="">todos…</option>
+                            {proveedores.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nombre}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </th>
                     <th className="px-2 py-1 w-24 text-right">Costo</th>
                     <th className="px-2 py-1 w-28 text-right">Importe</th>
                     <th className="px-2 py-1 w-28">Caducidad</th>
@@ -614,7 +687,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={7}
                         className="px-2 py-6 text-center text-muted-foreground italic"
                       >
                         Sin lotes — captura un producto arriba
@@ -629,6 +702,21 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                         <div className="text-[10px] text-muted-foreground font-mono">
                           {it.codigo}
                         </div>
+                      </td>
+                      <td className="px-2 py-1">
+                        <select
+                          value={it.proveedorId ?? ''}
+                          onChange={(e) => onRowProveedor(i, e.target.value)}
+                          className="w-full border border-border rounded px-1 py-1 bg-background text-[11px]"
+                        >
+                          <option value="">— sin proveedor —</option>
+                          {proveedores.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.nombre}
+                            </option>
+                          ))}
+                          <option value="__nuevo__">➕ Nuevo proveedor…</option>
+                        </select>
                       </td>
                       <td className="px-2 py-1 text-right font-mono">{money(it.costo)}</td>
                       <td className="px-2 py-1 text-right font-mono">
@@ -705,6 +793,27 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
       />
+
+      {/* Alta rápida de proveedor sin perder la captura: la entrada queda
+          montada (sólo oculta) y al guardar se asigna al renglón que lo pidió */}
+      {nuevoProvPara !== null && (
+        <ProveedorSubModal
+          mode="create"
+          onClose={() => setNuevoProvPara(null)}
+          onSaved={async (nuevoId) => {
+            const destino = nuevoProvPara
+            setNuevoProvPara(null)
+            await cargarProveedores()
+            if (nuevoId != null) {
+              setItems((prev) =>
+                prev.map((it, idx) =>
+                  destino === 'todos' || idx === destino ? { ...it, proveedorId: nuevoId } : it
+                )
+              )
+            }
+          }}
+        />
+      )}
     </>
   )
 }

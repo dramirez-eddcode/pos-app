@@ -36,6 +36,7 @@ interface FormState {
   rfc: string
   calle: string
   colonia: string
+  cp: string
   ciudad: string
   estado: string
   adminLogin: string
@@ -53,6 +54,7 @@ const EMPTY: FormState = {
   rfc: '',
   calle: '',
   colonia: '',
+  cp: '',
   ciudad: '',
   estado: '',
   adminLogin: 'admin',
@@ -139,26 +141,56 @@ export default function WizardPage({ onConfigured }: Props) {
     }
   }, [])
 
+  // Los .farma actuales no traen usuarios: el admin se crea en este paso.
+  // (Los archivos viejos que sí los traen siguen funcionando sin pedir nada.)
+  const farmaRequiereAdmin = farmaPreview != null && farmaPreview.usuarios.length === 0
+  const farmaAdminListo =
+    !farmaRequiereAdmin ||
+    (form.adminLogin.trim() !== '' &&
+      form.adminNombre.trim() !== '' &&
+      form.adminPassword.length >= 3 &&
+      form.adminPassword === form.adminPasswordConfirm)
+
   const applyFarma = useCallback(async () => {
     if (!farmaPreview) return
     if (!farmaPropietario.trim()) {
       toast.error('Falta el nombre del propietario')
       return
     }
-    if (farmaPreview.usuarios.length === 0) {
-      toast.error('El archivo no incluye usuarios admin', {
-        description: 'Vuelve a exportarlo desde una matriz actualizada.'
-      })
-      return
+    const requiereAdmin = farmaPreview.usuarios.length === 0
+    if (requiereAdmin) {
+      if (!form.adminLogin.trim() || !form.adminNombre.trim() || !form.adminPassword) {
+        toast.error('Faltan las credenciales del administrador')
+        return
+      }
+      if (form.adminPassword !== form.adminPasswordConfirm) {
+        toast.error('Las contraseñas no coinciden')
+        return
+      }
     }
     setApplyingFarma(true)
     try {
       const r = await window.api.instalacion.completeWizardFromFarma({
         filePath: farmaPreview.filePath,
-        propietarioNombre: farmaPropietario
+        propietarioNombre: farmaPropietario,
+        ...(requiereAdmin
+          ? {
+              adminLogin: form.adminLogin,
+              adminNombre: form.adminNombre,
+              adminPassword: form.adminPassword
+            }
+          : {})
       })
+      const stockWarn =
+        r.stockNoEncontrados > 0
+          ? ` · ⚠ ${r.stockNoEncontrados} renglón(es) de stock sin producto en el catálogo`
+          : ''
       toast.success('Sucursal configurada desde la matriz', {
-        description: `${r.productos} productos · ${r.stockLotes} lotes · ${r.usuarios} usuario(s). Inicia sesión con tu usuario de la matriz.`,
+        description: `${r.productos} productos · ${r.stockLotes} lotes${stockWarn}. ${
+          requiereAdmin
+            ? 'Inicia sesión con el usuario que acabas de crear.'
+            : 'Inicia sesión con tu usuario de la matriz.'
+        }`,
         duration: 9000
       })
       onConfigured()
@@ -169,7 +201,15 @@ export default function WizardPage({ onConfigured }: Props) {
     } finally {
       setApplyingFarma(false)
     }
-  }, [farmaPreview, farmaPropietario, onConfigured])
+  }, [
+    farmaPreview,
+    farmaPropietario,
+    form.adminLogin,
+    form.adminNombre,
+    form.adminPassword,
+    form.adminPasswordConfirm,
+    onConfigured
+  ])
 
   const submit = useCallback(
     async (e: FormEvent) => {
@@ -191,6 +231,7 @@ export default function WizardPage({ onConfigured }: Props) {
         rfc: form.rfc || null,
         calle: form.calle || null,
         colonia: form.colonia || null,
+        cp: form.cp || null,
         ciudad: form.ciudad || null,
         estado: form.estado || null
       }
@@ -322,7 +363,7 @@ export default function WizardPage({ onConfigured }: Props) {
                     <div className="font-semibold text-teal-900">¿Tienes el archivo de la matriz?</div>
                     <p className="text-teal-800/80">
                       Carga el <span className="font-mono">.farma</span> del USB y configura la sucursal
-                      automáticamente (datos, catálogo, precios, stock y tu usuario admin).
+                      automáticamente (datos de la sucursal, catálogo y precios).
                     </p>
                   </div>
                   <button
@@ -393,13 +434,24 @@ export default function WizardPage({ onConfigured }: Props) {
                   />
                 </Field>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-[1fr_100px_1fr_1fr] gap-3">
                   <Field label="Colonia">
                     <input
                       type="text"
                       value={form.colonia}
                       onChange={setField('colonia')}
                       className="w-full border border-border rounded px-2 py-1.5"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field label="C.P.">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={5}
+                      value={form.cp}
+                      onChange={setField('cp')}
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono"
                       autoComplete="off"
                     />
                   </Field>
@@ -481,7 +533,7 @@ export default function WizardPage({ onConfigured }: Props) {
                 v={
                   farmaPreview.usuarios.length > 0
                     ? farmaPreview.usuarios.map((u) => u.login).join(', ')
-                    : '⚠ ninguno'
+                    : 'no viajan en el archivo — se crea aquí'
                 }
               />
               <Row k="Generado" v={new Date(farmaPreview.generadoEn).toLocaleString('es-MX')} />
@@ -497,10 +549,72 @@ export default function WizardPage({ onConfigured }: Props) {
               />
             </Field>
 
+            {farmaRequiereAdmin && (
+              <div className="space-y-3 rounded border border-border bg-muted/20 p-3">
+                <p className="text-xs font-medium">
+                  Crea el usuario administrador de esta sucursal (SUPERUSUARIO):
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Login *">
+                    <input
+                      type="text"
+                      required
+                      value={form.adminLogin}
+                      onChange={setField('adminLogin')}
+                      pattern="[a-zA-Z0-9._-]+"
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono lowercase"
+                      autoComplete="off"
+                    />
+                  </Field>
+                  <Field label="Nombre completo *">
+                    <input
+                      type="text"
+                      required
+                      value={form.adminNombre}
+                      onChange={setField('adminNombre')}
+                      className="w-full border border-border rounded px-2 py-1.5"
+                      autoComplete="off"
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Contraseña *">
+                    <PasswordInput
+                      required
+                      minLength={3}
+                      value={form.adminPassword}
+                      onChange={setField('adminPassword')}
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono"
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                  <Field label="Confirmar contraseña *">
+                    <PasswordInput
+                      required
+                      minLength={3}
+                      value={form.adminPasswordConfirm}
+                      onChange={setField('adminPasswordConfirm')}
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono"
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                </div>
+              </div>
+            )}
+
             <p className="text-[11px] text-muted-foreground">
-              Al finalizar entrarás en la pantalla de inicio de sesión. Usa el{' '}
-              <span className="font-medium">mismo usuario y contraseña de la matriz</span> (puedes
-              cambiarlos después en Gestión de usuarios).
+              {farmaRequiereAdmin ? (
+                <>
+                  Al finalizar entrarás en la pantalla de inicio de sesión con el{' '}
+                  <span className="font-medium">usuario que acabas de crear</span>.
+                </>
+              ) : (
+                <>
+                  Al finalizar entrarás en la pantalla de inicio de sesión. Usa el{' '}
+                  <span className="font-medium">mismo usuario y contraseña de la matriz</span>{' '}
+                  (puedes cambiarlos después en Gestión de usuarios).
+                </>
+              )}
             </p>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-border">
@@ -515,7 +629,7 @@ export default function WizardPage({ onConfigured }: Props) {
               <button
                 type="button"
                 onClick={applyFarma}
-                disabled={applyingFarma || !farmaPropietario.trim() || farmaPreview.usuarios.length === 0}
+                disabled={applyingFarma || !farmaPropietario.trim() || !farmaAdminListo}
                 className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
               >
                 {applyingFarma ? (

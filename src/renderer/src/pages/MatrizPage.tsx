@@ -4,15 +4,18 @@ import {
   Boxes,
   ArrowRightLeft,
   ClipboardList,
+  Download,
   History,
   DatabaseBackup,
   LogOut,
   PackageCheck,
+  PackageMinus,
   PackagePlus,
   Percent,
   Settings as SettingsIcon,
   Store,
   Tags,
+  Truck,
   Upload,
   Users,
   Warehouse
@@ -26,7 +29,10 @@ import EntradaModal from '../components/EntradaModal'
 import CargaInicialModal from '../components/CargaInicialModal'
 import StockBodegaModal from '../components/StockBodegaModal'
 import TraspasoModal from '../components/TraspasoModal'
-import TraspasosListModal from '../components/TraspasosListModal'
+import MovimientosModal from '../components/MovimientosModal'
+import SalidasModal from '../components/SalidasModal'
+import ProveedoresModal from '../components/ProveedoresModal'
+import RecibirTraspasoModal from '../components/RecibirTraspasoModal'
 import PreciosModal from '../components/PreciosModal'
 import SettingsModal from '../components/SettingsModal'
 import SucursalesModal from '../components/SucursalesModal'
@@ -57,7 +63,10 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
   const [cargaInicialOpen, setCargaInicialOpen] = useState(false)
   const [stockBodegaOpen, setStockBodegaOpen] = useState(false)
   const [traspasoOpen, setTraspasoOpen] = useState(false)
-  const [traspasosListOpen, setTraspasosListOpen] = useState(false)
+  const [movimientosOpen, setMovimientosOpen] = useState(false)
+  const [salidasOpen, setSalidasOpen] = useState(false)
+  const [proveedoresOpen, setProveedoresOpen] = useState(false)
+  const [recibirTraspasoOpen, setRecibirTraspasoOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
@@ -105,10 +114,10 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
 
   // Re-refresh cuando se cierran modales (datos cambiaron)
   useEffect(() => {
-    if (!sucursalesOpen && !catalogoOpen && !usuariosOpen && !entradaOpen && !bodegasOpen) {
+    if (!sucursalesOpen && !catalogoOpen && !usuariosOpen && !entradaOpen && !bodegasOpen && !salidasOpen) {
       refresh()
     }
-  }, [sucursalesOpen, catalogoOpen, usuariosOpen, entradaOpen, bodegasOpen, refresh])
+  }, [sucursalesOpen, catalogoOpen, usuariosOpen, entradaOpen, bodegasOpen, salidasOpen, refresh])
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000)
@@ -255,6 +264,17 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             accent="orange"
           />
 
+          {/* Proveedores */}
+          <DashCard
+            icon={<Truck className="size-5 text-teal-700" />}
+            titulo="Proveedores"
+            subtitulo="Catálogo para entradas"
+            descripcion="Alta y edición de proveedores. Vincúlalos al registrar entradas de mercancía."
+            cta="Gestionar"
+            onClick={() => setProveedoresOpen(true)}
+            accent="teal"
+          />
+
           {/* Entradas */}
           <DashCard
             icon={<PackagePlus className="size-5 text-green-700" />}
@@ -264,6 +284,17 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             cta="Registrar"
             onClick={() => setEntradaOpen(true)}
             accent="green"
+          />
+
+          {/* Salidas de inventario */}
+          <DashCard
+            icon={<PackageMinus className="size-5 text-red-700" />}
+            titulo="Salidas de inventario"
+            subtitulo="Caducidad, merma y más"
+            descripcion="Retira producto de una bodega con motivo (caducado, dañado, muestra…)."
+            cta="Registrar"
+            onClick={() => setSalidasOpen(true)}
+            accent="rose"
           />
 
           {/* Carga inicial de inventario (migración / arranque) */}
@@ -288,25 +319,36 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
             accent="cyan"
           />
 
-          {/* Traspaso bodega → sucursal */}
+          {/* Traspasos: a sucursal (USB) o entre bodegas (interno) */}
           <DashCard
             icon={<ArrowRightLeft className="size-5 text-violet-700" />}
-            titulo="Traspaso a sucursal"
-            subtitulo="Reabasto por USB"
-            descripcion="Descuenta de una bodega y genera archivo para cargar en la sucursal."
+            titulo="Traspasos"
+            subtitulo="A sucursal (USB) o entre bodegas"
+            descripcion="Descuenta de una bodega y genera el .traspaso para una sucursal, o mueve stock a otra bodega al instante."
             cta="Generar"
             onClick={() => setTraspasoOpen(true)}
             accent="purple"
           />
 
-          {/* Historial de traspasos */}
+          {/* Recibir traspaso (de una sucursal) */}
+          <DashCard
+            icon={<Download className="size-5 text-violet-700" />}
+            titulo="Recibir traspaso"
+            subtitulo="Devoluciones de sucursal"
+            descripcion="Carga un archivo .traspaso enviado por una sucursal y entra a la bodega que elijas."
+            cta="Recibir"
+            onClick={() => setRecibirTraspasoOpen(true)}
+            accent="purple"
+          />
+
+          {/* Historial de movimientos */}
           <DashCard
             icon={<History className="size-5 text-violet-700" />}
-            titulo="Historial de traspasos"
-            subtitulo="Realizados"
-            descripcion="Consulta los traspasos generados y su detalle por producto."
+            titulo="Historial de movimientos"
+            subtitulo="Entradas · salidas · traspasos"
+            descripcion="Consulta todos los movimientos de inventario, su detalle e imprime en PDF."
             cta="Ver"
-            onClick={() => setTraspasosListOpen(true)}
+            onClick={() => setMovimientosOpen(true)}
             accent="purple"
           />
 
@@ -367,7 +409,11 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
 
       {/* ── Modales ───────────────────────────────────────────────────────── */}
       <SucursalesModal open={sucursalesOpen} onClose={() => setSucursalesOpen(false)} />
-      <CatalogoProductosModal open={catalogoOpen} onClose={() => setCatalogoOpen(false)} />
+      <CatalogoProductosModal
+        open={catalogoOpen}
+        onClose={() => setCatalogoOpen(false)}
+        permitirReemplazoExistencias
+      />
       <UsuariosModal open={usuariosOpen} onClose={() => setUsuariosOpen(false)} />
       <EntradaModal open={entradaOpen} onClose={() => setEntradaOpen(false)} userId={user.id} />
       <CargaInicialModal
@@ -377,7 +423,19 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
       />
       <StockBodegaModal open={stockBodegaOpen} onClose={() => setStockBodegaOpen(false)} />
       <TraspasoModal open={traspasoOpen} onClose={() => setTraspasoOpen(false)} userId={user.id} />
-      <TraspasosListModal open={traspasosListOpen} onClose={() => setTraspasosListOpen(false)} />
+      <ProveedoresModal open={proveedoresOpen} onClose={() => setProveedoresOpen(false)} />
+      <RecibirTraspasoModal
+        open={recibirTraspasoOpen}
+        onClose={() => setRecibirTraspasoOpen(false)}
+        userId={user.id}
+      />
+      <MovimientosModal open={movimientosOpen} onClose={() => setMovimientosOpen(false)} />
+      <SalidasModal
+        open={salidasOpen}
+        onClose={() => setSalidasOpen(false)}
+        userId={user.id}
+        userNombre={user.nombre}
+      />
       <PreciosModal open={preciosOpen} onClose={() => setPreciosOpen(false)} userId={user.id} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />

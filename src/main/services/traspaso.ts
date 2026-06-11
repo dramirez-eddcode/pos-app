@@ -7,27 +7,28 @@ import type {
   CrearTraspasoInput,
   CrearTraspasoResult,
   PickTraspasoResult,
+  TraspasoBodegasInput,
   TraspasoFaltante,
   TraspasoFile,
-  TraspasoHistDetalle,
-  TraspasoHistItem,
   TraspasoLineaFile,
   TraspasoPayload
 } from '@shared/dto'
 
 /**
- * Traspaso de inventario de una BODEGA (matriz) a una SUCURSAL, transportado por
- * USB en un archivo `.traspaso` (JSON + checksum). Flujo de dos lados:
+ * Traspaso de inventario entre instalaciones, transportado por USB en un
+ * archivo `.traspaso` (JSON + checksum). Flujo de dos lados:
  *
- *   MATRIZ  → crearTraspaso(): valida stock, consume FEFO de la bodega origen
+ *   ORIGEN  → crearTraspaso(): valida stock, consume FEFO de la bodega origen
  *             (descuenta saldo + journal SALIDA), arma el archivo con líneas a
  *             nivel lote (conserva caducidad) y lo guarda. Todo atómico: el
  *             archivo se escribe DENTRO de la transacción, si falla, no descuenta.
+ *             En MATRIZ el destino sale del catálogo de sucursales; en SUCURSAL
+ *             el destino es libre (código + nombre) — otra sucursal o la matriz.
  *
- *   SUCURSAL → pickTraspaso(): valida y previsualiza (incluye anti-duplicado).
- *              aplicarTraspaso(): crea los lotes en la Bodega Principal local
- *              (journal ENTRADA con el folio). Anti-duplicado por folio: si ya
- *              se aplicó (existe un mov_stock con ese folio), se rechaza.
+ *   DESTINO → pickTraspaso(): valida y previsualiza (incluye anti-duplicado).
+ *             aplicarTraspaso(): crea los lotes en la bodega destino (Bodega
+ *             Principal por default; en matriz se elige) con journal ENTRADA.
+ *             Anti-duplicado por folio: si ya se aplicó, se rechaza.
  */
 
 const BODEGA_PRINCIPAL = 'bodega-principal'
@@ -81,7 +82,7 @@ function caducidadToMs(ymd: string): number {
   return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
 }
 
-// ── MATRIZ: crear traspaso ───────────────────────────────────────────────────
+// ── ORIGEN: crear traspaso (matriz o sucursal) ───────────────────────────────
 export async function crearTraspaso(
   viewerUserId: string,
   input: CrearTraspasoInput,
@@ -90,7 +91,6 @@ export async function crearTraspaso(
   try {
     requireAdmin(viewerUserId)
     const instal = getInstalacion()
-    if (instal.tipo !== 'MATRIZ') throw new Error('El traspaso solo se genera desde la MATRIZ')
 
     const sqlite = getSqlite()
     const items = (input.items ?? []).filter((i) => i.codigo && Math.round(Number(i.cantidad)) > 0)
@@ -104,13 +104,28 @@ export async function crearTraspaso(
     if (!bodega) throw new Error('Bodega origen no encontrada')
     if (!bodega.activa) throw new Error('La bodega origen está desactivada')
 
-    const sucursal = sqlite
-      .prepare('SELECT id, codigo, nombre, activa FROM sucursal WHERE id = ?')
-      .get(input.sucursalId) as
-      | { id: string; codigo: string; nombre: string; activa: number }
-      | undefined
-    if (!sucursal) throw new Error('Sucursal destino no encontrada')
-    if (!sucursal.activa) throw new Error('La sucursal destino está desactivada')
+    // Destino: del catálogo (matriz) o libre (sucursal — código/nombre tecleados).
+    let sucursal: { id: string; codigo: string; nombre: string }
+    if (input.sucursalId) {
+      const s = sqlite
+        .prepare('SELECT id, codigo, nombre, activa FROM sucursal WHERE id = ?')
+        .get(input.sucursalId) as
+        | { id: string; codigo: string; nombre: string; activa: number }
+        | undefined
+      if (!s) throw new Error('Sucursal destino no encontrada')
+      if (!s.activa) throw new Error('La sucursal destino está desactivada')
+      sucursal = { id: s.id, codigo: s.codigo, nombre: s.nombre }
+    } else if (input.destino) {
+      const codigo = (input.destino.codigo ?? '').trim()
+      const nombre = (input.destino.nombre ?? '').trim()
+      if (!codigo) throw new Error('Código del destino requerido')
+      if (!nombre) throw new Error('Nombre del destino requerido')
+      // id vacío: el receptor valida por código (sucursalCoincide) o aplica
+      // libremente si es la matriz.
+      sucursal = { id: '', codigo, nombre }
+    } else {
+      throw new Error('Destino del traspaso requerido')
+    }
 
     const selProd = sqlite.prepare('SELECT id, nombre, costo FROM producto WHERE codigo = ?')
     const dispProd = sqlite.prepare(
@@ -221,8 +236,9 @@ export async function crearTraspaso(
         .prepare(
           `INSERT INTO traspaso
              (folio, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
-              sucursal_id, sucursal_codigo, sucursal_nombre, lineas, unidades, items_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              sucursal_id, sucursal_codigo, sucursal_nombre, destino_tipo,
+              lineas, unidades, items_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUCURSAL', ?, ?, ?)`
         )
         .run(
           folio,
@@ -230,7 +246,7 @@ export async function crearTraspaso(
           viewerUserId,
           bodega.id,
           bodega.nombre,
-          sucursal.id,
+          sucursal.id || null,
           sucursal.codigo,
           sucursal.nombre,
           lineas.length,
@@ -250,66 +266,156 @@ export async function crearTraspaso(
   }
 }
 
-// ── Historial de traspasos (matriz) ──────────────────────────────────────────
-interface TraspasoRow {
-  folio: string
-  fecha: number
-  bodegaOrigen: string | null
-  sucursalNombre: string | null
-  lineas: number
-  unidades: number
-  itemsJson?: string
-}
-
-export function listTraspasos(): TraspasoHistItem[] {
-  const rows = getSqlite()
-    .prepare(
-      `SELECT folio, fecha,
-              bodega_origen_nombre AS bodegaOrigen,
-              sucursal_nombre      AS sucursalNombre,
-              lineas, unidades
-         FROM traspaso
-        ORDER BY fecha DESC`
-    )
-    .all() as TraspasoRow[]
-  return rows.map((r) => ({
-    folio: r.folio,
-    fecha: new Date(r.fecha).toISOString(),
-    bodegaOrigen: r.bodegaOrigen ?? '—',
-    sucursalNombre: r.sucursalNombre ?? '—',
-    lineas: Number(r.lineas) || 0,
-    unidades: Number(r.unidades) || 0
-  }))
-}
-
-export function getTraspasoDetalle(folio: string): TraspasoHistDetalle | null {
-  const r = getSqlite()
-    .prepare(
-      `SELECT folio, fecha,
-              bodega_origen_nombre AS bodegaOrigen,
-              sucursal_nombre      AS sucursalNombre,
-              lineas, unidades,
-              items_json           AS itemsJson
-         FROM traspaso WHERE folio = ?`
-    )
-    .get(folio) as TraspasoRow | undefined
-  if (!r) return null
-  let items: TraspasoLineaFile[] = []
+// ── Traspaso INTERNO entre bodegas (mismo equipo, sin archivo) ───────────────
+/**
+ * Mueve stock de una bodega a otra de la MISMA instalación en una sola
+ * transacción: consume FEFO de la origen (journal SALIDA) y crea lotes
+ * equivalentes en la destino conservando caducidades (journal ENTRADA).
+ * No genera archivo ni necesita anti-duplicado: es atómico y local.
+ */
+export function traspasoEntreBodegas(
+  viewerUserId: string,
+  input: TraspasoBodegasInput
+): CrearTraspasoResult {
   try {
-    items = JSON.parse(r.itemsJson ?? '[]')
-  } catch {
-    items = []
-  }
-  return {
-    folio: r.folio,
-    fecha: new Date(r.fecha).toISOString(),
-    bodegaOrigen: r.bodegaOrigen ?? '—',
-    sucursalNombre: r.sucursalNombre ?? '—',
-    lineas: Number(r.lineas) || 0,
-    unidades: Number(r.unidades) || 0,
-    items
+    requireAdmin(viewerUserId)
+
+    const sqlite = getSqlite()
+    const items = (input.items ?? []).filter((i) => i.codigo && Math.round(Number(i.cantidad)) > 0)
+    if (items.length === 0) throw new Error('Sin productos para traspasar')
+    if (input.bodegaOrigenId === input.bodegaDestinoId) {
+      throw new Error('La bodega destino debe ser distinta a la origen')
+    }
+
+    const selBodega = sqlite.prepare('SELECT id, codigo, nombre, activa FROM bodega WHERE id = ?')
+    const origen = selBodega.get(input.bodegaOrigenId) as
+      | { id: string; codigo: string; nombre: string; activa: number }
+      | undefined
+    if (!origen) throw new Error('Bodega origen no encontrada')
+    if (!origen.activa) throw new Error('La bodega origen está desactivada')
+    const destino = selBodega.get(input.bodegaDestinoId) as
+      | { id: string; codigo: string; nombre: string; activa: number }
+      | undefined
+    if (!destino) throw new Error('Bodega destino no encontrada')
+    if (!destino.activa) throw new Error('La bodega destino está desactivada')
+
+    const selProd = sqlite.prepare('SELECT id, nombre, costo FROM producto WHERE codigo = ?')
+    const dispProd = sqlite.prepare(
+      'SELECT COALESCE(SUM(saldo),0) AS disp FROM caducidad_lote WHERE producto_id = ? AND bodega_id = ?'
+    )
+
+    // ── Fase 1: validar disponibilidad (solo lectura) ────────────────────────
+    const faltantes: TraspasoFaltante[] = []
+    const prodByCodigo = new Map<string, { id: string; nombre: string; costo: number }>()
+    for (const it of items) {
+      const codigo = String(it.codigo).trim()
+      const pedido = Math.round(Number(it.cantidad))
+      const prod = selProd.get(codigo) as { id: string; nombre: string; costo: number } | undefined
+      if (!prod) {
+        faltantes.push({ codigo, pedido, disponible: 0 })
+        continue
+      }
+      prodByCodigo.set(codigo, prod)
+      const { disp } = dispProd.get(prod.id, origen.id) as { disp: number }
+      if (Number(disp) < pedido) faltantes.push({ codigo, pedido, disponible: Number(disp) })
+    }
+    if (faltantes.length > 0) return { ok: false, faltantes }
+
+    const folio = randomUUID()
+
+    // ── Fase 2: consumir FEFO en origen + crear lotes en destino, atómico ───
+    const selLotes = sqlite.prepare(
+      `SELECT id, saldo, fecha_caducidad AS fechaCaducidad
+         FROM caducidad_lote
+        WHERE producto_id = ? AND bodega_id = ? AND saldo > 0
+        ORDER BY fecha_caducidad ASC, fecha_entrada ASC`
+    )
+    const updSaldo = sqlite.prepare('UPDATE caducidad_lote SET saldo = ? WHERE id = ?')
+    const insLote = sqlite.prepare(
+      `INSERT INTO caducidad_lote (id, producto_id, bodega_id, total, saldo, fecha_caducidad, fecha_entrada)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    const insMov = sqlite.prepare(
+      `INSERT INTO mov_stock (id, lote_id, venta_item_id, tipo, cantidad, fecha, motivo)
+       VALUES (?, ?, NULL, ?, ?, ?, ?)`
+    )
+    const motivoSalida = `TRASPASO ${folio} → bodega ${destino.nombre}`
+    const motivoEntrada = `TRASPASO ${folio} desde ${origen.nombre}`
+
+    const lineas: TraspasoLineaFile[] = []
+    let unidades = 0
+
+    const run = sqlite.transaction(() => {
+      const now = Date.now()
+      for (const it of items) {
+        const codigo = String(it.codigo).trim()
+        const prod = prodByCodigo.get(codigo)!
+        let remaining = Math.round(Number(it.cantidad))
+        const lotes = selLotes.all(prod.id, origen.id) as Array<{
+          id: string
+          saldo: number
+          fechaCaducidad: number
+        }>
+        for (const lote of lotes) {
+          if (remaining <= 0) break
+          const take = Math.min(lote.saldo, remaining)
+          updSaldo.run(lote.saldo - take, lote.id)
+          insMov.run(randomUUID(), lote.id, 'SALIDA', -take, now, motivoSalida)
+
+          // Lote equivalente en la bodega destino (conserva caducidad).
+          const nuevoLoteId = randomUUID()
+          insLote.run(nuevoLoteId, prod.id, destino.id, take, take, lote.fechaCaducidad, now)
+          insMov.run(randomUUID(), nuevoLoteId, 'ENTRADA', take, now, motivoEntrada)
+
+          lineas.push({
+            codigo,
+            nombre: prod.nombre,
+            cantidad: take,
+            costo: Number(prod.costo) || 0,
+            caducidad: toYmd(Number(lote.fechaCaducidad))
+          })
+          remaining -= take
+          unidades += take
+        }
+        if (remaining > 0) {
+          // El stock cambió entre fase 1 y 2 (concurrencia). Aborta todo.
+          throw new Error(`Stock insuficiente para ${codigo} (cambió durante el traspaso)`)
+        }
+      }
+
+      // Historial: mismo registro que un traspaso a sucursal, con destino BODEGA.
+      sqlite
+        .prepare(
+          `INSERT INTO traspaso
+             (folio, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
+              sucursal_id, sucursal_codigo, sucursal_nombre, destino_tipo,
+              lineas, unidades, items_json)
+           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'BODEGA', ?, ?, ?)`
+        )
+        .run(
+          folio,
+          now,
+          viewerUserId,
+          origen.id,
+          origen.nombre,
+          destino.codigo,
+          destino.nombre,
+          lineas.length,
+          unidades,
+          JSON.stringify(lineas)
+        )
+    })
+
+    run()
+
+    return { ok: true, folio, lineas: lineas.length, unidades }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
+
+// El historial de traspasos se consulta junto con entradas y salidas en
+// services/movimientos.ts (historial unificado de movimientos).
 
 // ── Lectura/validación de un archivo .traspaso ───────────────────────────────
 function leerYValidar(filePath: string): TraspasoFile {
@@ -337,7 +443,9 @@ function leerYValidar(filePath: string): TraspasoFile {
   if (expected !== obj['checksum']) {
     throw new Error('Checksum inválido — el archivo está corrupto o fue modificado')
   }
-  if (!payload.folio || !payload.sucursal?.id || !Array.isArray(payload.items)) {
+  // El id puede venir vacío (destino libre tecleado en la sucursal de origen);
+  // el código siempre viaja y es lo que valida el receptor.
+  if (!payload.folio || !payload.sucursal?.codigo || !Array.isArray(payload.items)) {
     throw new Error('Payload de traspaso incompleto')
   }
   return obj as unknown as TraspasoFile
@@ -366,13 +474,10 @@ function sucursalCoincide(sucursalActivaId: string | null, payloadSuc: { id: str
   return !!row && !!payloadSuc.codigo && row.codigo === payloadSuc.codigo
 }
 
-// ── SUCURSAL: previsualizar traspaso ─────────────────────────────────────────
+// ── DESTINO: previsualizar traspaso (sucursal o matriz) ──────────────────────
 export async function pickTraspaso(window: BrowserWindow | null): Promise<PickTraspasoResult> {
   try {
     const instal = getInstalacion()
-    if (instal.tipo !== 'SUCURSAL') {
-      throw new Error('Recibir traspaso solo está disponible en modo SUCURSAL')
-    }
     const opts = {
       title: 'Seleccionar archivo .traspaso',
       properties: ['openFile' as const],
@@ -409,22 +514,22 @@ export async function pickTraspaso(window: BrowserWindow | null): Promise<PickTr
   }
 }
 
-// ── SUCURSAL: aplicar traspaso (entrada a Bodega Principal) ───────────────────
+// ── DESTINO: aplicar traspaso (entrada a la bodega destino) ──────────────────
 export function aplicarTraspaso(
   viewerUserId: string,
   filePath: string,
-  force = false
+  force = false,
+  bodegaDestinoId?: string | null
 ): AplicarTraspasoResult {
   try {
     requireAdmin(viewerUserId)
     const instal = getInstalacion()
-    if (instal.tipo !== 'SUCURSAL') {
-      throw new Error('Recibir traspaso solo está disponible en modo SUCURSAL')
-    }
 
     const file = leerYValidar(filePath)
     const p = file.payload
 
+    // En sucursal valida que el traspaso sea para ella (por id o código); en
+    // matriz no hay sucursal activa → se puede recibir cualquiera.
     if (!force && !sucursalCoincide(instal.sucursalActivaId, p.sucursal)) {
       throw new Error('Este traspaso es para otra sucursal. Verifica el USB correcto.')
     }
@@ -433,6 +538,13 @@ export function aplicarTraspaso(
     }
 
     const sqlite = getSqlite()
+    const bodegaId = bodegaDestinoId || BODEGA_PRINCIPAL
+    const bodega = sqlite
+      .prepare('SELECT id, nombre, activa FROM bodega WHERE id = ?')
+      .get(bodegaId) as { id: string; nombre: string; activa: number } | undefined
+    if (!bodega) throw new Error('Bodega destino no encontrada')
+    if (!bodega.activa) throw new Error('La bodega destino está desactivada')
+
     const selProd = sqlite.prepare('SELECT id FROM producto WHERE codigo = ?')
     const insLote = sqlite.prepare(
       `INSERT INTO caducidad_lote (id, producto_id, bodega_id, total, saldo, fecha_caducidad, fecha_entrada)
@@ -459,7 +571,7 @@ export function aplicarTraspaso(
           continue
         }
         const loteId = randomUUID()
-        insLote.run(loteId, prod.id, BODEGA_PRINCIPAL, cantidad, cantidad, caducidadToMs(l.caducidad), now)
+        insLote.run(loteId, prod.id, bodega.id, cantidad, cantidad, caducidadToMs(l.caducidad), now)
         insMov.run(randomUUID(), loteId, cantidad, now, motivo)
         lotesCreados++
         unidades += cantidad

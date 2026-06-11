@@ -224,9 +224,9 @@ export function completeWizard(input: CompleteWizardInput): {
       sqlite
         .prepare(
           `INSERT INTO sucursal
-             (id, codigo, nombre, razon_social, rfc, calle, colonia, ciudad, estado,
+             (id, codigo, nombre, razon_social, rfc, calle, colonia, cp, ciudad, estado,
               activa, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
         )
         .run(
           sucursalId,
@@ -236,6 +236,7 @@ export function completeWizard(input: CompleteWizardInput): {
           trimOrNull(input.rfc),
           trimOrNull(input.calle),
           trimOrNull(input.colonia),
+          trimOrNull(input.cp),
           trimOrNull(input.ciudad),
           trimOrNull(input.estado),
           now,
@@ -246,9 +247,9 @@ export function completeWizard(input: CompleteWizardInput): {
       sqlite
         .prepare(
           `INSERT INTO empresa
-             (id, nombre_comercial, razon_social, rfc, calle, colonia, ciudad, estado,
+             (id, nombre_comercial, razon_social, rfc, calle, colonia, cp, ciudad, estado,
               sucursal_nombre, owner_user_id, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           sucursalId,
@@ -257,6 +258,7 @@ export function completeWizard(input: CompleteWizardInput): {
           trimOrNull(input.rfc),
           trimOrNull(input.calle),
           trimOrNull(input.colonia),
+          trimOrNull(input.cp),
           trimOrNull(input.ciudad),
           trimOrNull(input.estado),
           sucursalNombre!,
@@ -286,7 +288,7 @@ export function completeWizard(input: CompleteWizardInput): {
       ? (sqlite
           .prepare(
             `SELECT id, nombre_comercial AS nombreComercial, razon_social AS razonSocial,
-                    rfc, calle, colonia, ciudad, estado, sucursal_nombre AS sucursalNombre
+                    rfc, calle, colonia, cp, ciudad, estado, sucursal_nombre AS sucursalNombre
                FROM empresa WHERE id = ?`
           )
           .get(created.sucursalId) as
@@ -297,6 +299,7 @@ export function completeWizard(input: CompleteWizardInput): {
               rfc: string | null
               calle: string | null
               colonia: string | null
+              cp: string | null
               ciudad: string | null
               estado: string | null
               sucursalNombre: string
@@ -341,6 +344,7 @@ export function completeWizard(input: CompleteWizardInput): {
           rfc: sucursalRow.rfc,
           calle: sucursalRow.calle,
           colonia: sucursalRow.colonia,
+          cp: sucursalRow.cp,
           ciudad: sucursalRow.ciudad,
           estado: sucursalRow.estado,
           sucursalNombre: sucursalRow.sucursalNombre
@@ -434,9 +438,10 @@ export async function pickWizardFarma(
 
 /**
  * Configura una SUCURSAL desde un .farma: crea instalación, sucursal+empresa,
- * usuarios admin (con la contraseña de la matriz), catálogo, precios y stock
- * inicial. No inicia sesión (la contraseña viaja como hash) — al terminar, el
- * usuario entra en la pantalla de login con sus credenciales de la matriz.
+ * catálogo, precios y stock inicial. El archivo solo trae los datos básicos de
+ * la sucursal — el primer admin (SUPERUSUARIO) se crea con las credenciales
+ * capturadas en el wizard. Compatibilidad: si el archivo es de una versión
+ * anterior y trae usuarios (hash de la matriz), se usan esos en su lugar.
  */
 export function completeWizardFromFarma(
   input: CompleteWizardFromFarmaInput
@@ -448,10 +453,18 @@ export function completeWizardFromFarma(
   const file = leerFarma(input.filePath)
   const p = file.payload
   const usuarios = p.usuarios ?? []
+
+  // Sin usuarios en el archivo (los .farma actuales): el admin se crea aquí.
+  let adminNuevo: { login: string; nombre: string; password: string } | null = null
   if (usuarios.length === 0) {
-    throw new Error(
-      'El archivo no incluye usuarios admin. Vuelve a exportarlo desde una matriz actualizada.'
-    )
+    const login = requireField('Login del admin', input.adminLogin).toLowerCase()
+    if (!/^[a-z0-9._-]+$/i.test(login)) {
+      throw new Error('El login solo puede tener letras, números y . _ -')
+    }
+    const nombre = requireField('Nombre del admin', input.adminNombre)
+    const password = input.adminPassword ?? ''
+    if (password.length < 3) throw new Error('Password muy corto (mínimo 3 caracteres)')
+    adminNuevo = { login, nombre, password }
   }
 
   const run = sqlite.transaction(() => {
@@ -468,7 +481,7 @@ export function completeWizardFromFarma(
     const fallbackRol = rolIdByName.get('ADMINISTRADOR') ?? rolIdByName.get('SUPERUSUARIO')
     if (!fallbackRol) throw new Error('Roles base no encontrados (seed roto)')
 
-    // ── Usuarios admin (con hash de la matriz) ────────────────────────────────
+    // ── Primer admin ──────────────────────────────────────────────────────────
     const insUser = sqlite.prepare(
       `INSERT INTO usuario
          (id, login, password_hash, nombre, tipo_usuario_id, activo, puede_cancelar, created_at)
@@ -476,26 +489,46 @@ export function completeWizardFromFarma(
     )
     let ownerId: string | null = null
     let usuariosCreados = 0
-    for (const u of usuarios) {
-      const login = u.login.trim().toLowerCase()
-      if (!login) continue
-      if (sqlite.prepare('SELECT 1 FROM usuario WHERE login = ?').get(login)) continue
-      const id = randomUUID()
-      const tipoId = rolIdByName.get(u.rol) ?? fallbackRol
-      insUser.run(id, login, u.passwordHash, u.nombre, tipoId, u.puedeCancelar ? 1 : 0, now)
-      if (!ownerId) ownerId = id
-      usuariosCreados++
+    if (adminNuevo) {
+      // Caso actual: el archivo no trae usuarios; se crea el SUPERUSUARIO capturado.
+      const superRolId = rolIdByName.get('SUPERUSUARIO') ?? fallbackRol
+      if (sqlite.prepare('SELECT 1 FROM usuario WHERE login = ?').get(adminNuevo.login)) {
+        throw new Error(`El login "${adminNuevo.login}" ya existe en esta base de datos`)
+      }
+      ownerId = randomUUID()
+      insUser.run(
+        ownerId,
+        adminNuevo.login,
+        bcrypt.hashSync(adminNuevo.password, 10),
+        adminNuevo.nombre,
+        superRolId,
+        1,
+        now
+      )
+      usuariosCreados = 1
+    } else {
+      // Legado: archivos viejos con usuarios admin de la matriz (hash bcrypt).
+      for (const u of usuarios) {
+        const login = u.login.trim().toLowerCase()
+        if (!login) continue
+        if (sqlite.prepare('SELECT 1 FROM usuario WHERE login = ?').get(login)) continue
+        const id = randomUUID()
+        const tipoId = rolIdByName.get(u.rol) ?? fallbackRol
+        insUser.run(id, login, u.passwordHash, u.nombre, tipoId, u.puedeCancelar ? 1 : 0, now)
+        if (!ownerId) ownerId = id
+        usuariosCreados++
+      }
+      if (!ownerId) throw new Error('No se pudo crear ningún usuario admin del archivo')
     }
-    if (!ownerId) throw new Error('No se pudo crear ningún usuario admin del archivo')
 
     // ── Sucursal + empresa ────────────────────────────────────────────────────
     const sucursalId = randomUUID()
     sqlite
       .prepare(
         `INSERT INTO sucursal
-           (id, codigo, nombre, razon_social, rfc, calle, colonia, ciudad, estado,
+           (id, codigo, nombre, razon_social, rfc, calle, colonia, cp, ciudad, estado,
             activa, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
       )
       .run(
         sucursalId,
@@ -505,6 +538,7 @@ export function completeWizardFromFarma(
         p.sucursal.rfc ?? null,
         p.sucursal.calle ?? null,
         p.sucursal.colonia ?? null,
+        p.sucursal.cp ?? null,
         p.sucursal.ciudad ?? null,
         p.sucursal.estado ?? null,
         now,
@@ -513,9 +547,9 @@ export function completeWizardFromFarma(
     sqlite
       .prepare(
         `INSERT INTO empresa
-           (id, nombre_comercial, razon_social, rfc, calle, colonia, ciudad, estado,
+           (id, nombre_comercial, razon_social, rfc, calle, colonia, cp, ciudad, estado,
             sucursal_nombre, owner_user_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         sucursalId,
@@ -524,6 +558,7 @@ export function completeWizardFromFarma(
         p.sucursal.rfc ?? null,
         p.sucursal.calle ?? null,
         p.sucursal.colonia ?? null,
+        p.sucursal.cp ?? null,
         p.sucursal.ciudad ?? null,
         p.sucursal.estado ?? null,
         p.sucursal.nombre,
@@ -571,6 +606,7 @@ export function completeWizardFromFarma(
 
     // ── Stock inicial (si el archivo lo trae) ────────────────────────────────
     let stockLotes = 0
+    let stockNoEncontrados = 0
     if (Array.isArray(p.stockInicial) && p.stockInicial.length > 0) {
       const r = cargaInicialInventario({
         usuarioId: ownerId,
@@ -582,9 +618,22 @@ export function completeWizardFromFarma(
         }))
       })
       stockLotes = r.lotesCreados + r.lotesActualizados
+      stockNoEncontrados = r.noEncontrados.length
+      if (r.noEncontrados.length > 0) {
+        console.warn(
+          '[wizard .farma] Stock inicial con códigos sin producto en el catálogo:',
+          r.noEncontrados.slice(0, 100)
+        )
+      }
     }
 
-    return { sucursalNombre: p.sucursal.nombre, productos, stockLotes, usuarios: usuariosCreados }
+    return {
+      sucursalNombre: p.sucursal.nombre,
+      productos,
+      stockLotes,
+      stockNoEncontrados,
+      usuarios: usuariosCreados
+    }
   })
 
   const r = run()

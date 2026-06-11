@@ -1,7 +1,7 @@
 {
   "name": "farmacias-ms-pos",
-  "version": "1.0.0",
-  "description": "Farmacias MS POS v1.0.0",
+  "version": "1.1.0",
+  "description": "Farmacias MS POS v1.1.0",
   "main": "./out/main/index.js",
   "author": "Eddcode <dramirez@eddcode.com>",
   "private": true,

@@ -33,6 +33,7 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
     creados: number
     actualizados: number
     stockLotes: number
+    stockNoEncontrados: number
     sucursalNombre: string
   } | null>(null)
 
@@ -93,6 +94,7 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
         creados: r.productosCreados,
         actualizados: r.productosActualizados,
         stockLotes: r.stockLotes,
+        stockNoEncontrados: r.stockNoEncontrados,
         sucursalNombre: r.sucursal.nombre
       })
       // Refresh session.sucursal con los datos del import
@@ -318,6 +320,12 @@ export default function ImportarFarmaModal({ open, onClose, onApplied }: Props) 
                   <div className="text-xs">
                     Stock inicial:{' '}
                     <span className="font-semibold">{resultStats.stockLotes}</span> lotes cargados
+                  </div>
+                )}
+                {resultStats.stockNoEncontrados > 0 && (
+                  <div className="text-xs text-amber-700">
+                    ⚠ {resultStats.stockNoEncontrados} renglón(es) de stock no cargaron porque su
+                    código no está en el catálogo (producto inactivo o excluido de esta sucursal).
                   </div>
                 )}
               </div>

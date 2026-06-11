@@ -16,6 +16,7 @@ interface FormState {
   sucursalNombre: string
   calle: string
   colonia: string
+  cp: string
   ciudad: string
   estado: string
 }
@@ -27,6 +28,7 @@ const EMPTY: FormState = {
   sucursalNombre: '',
   calle: '',
   colonia: '',
+  cp: '',
   ciudad: '',
   estado: ''
 }
@@ -50,6 +52,7 @@ export default function SucursalModal({ open, onClose }: Props) {
           sucursalNombre: emp.sucursalNombre ?? '',
           calle: emp.calle ?? '',
           colonia: emp.colonia ?? '',
+          cp: emp.cp ?? '',
           ciudad: emp.ciudad ?? '',
           estado: emp.estado ?? ''
         })
@@ -88,6 +91,7 @@ export default function SucursalModal({ open, onClose }: Props) {
           rfc: form.rfc || null,
           calle: form.calle || null,
           colonia: form.colonia || null,
+          cp: form.cp || null,
           ciudad: form.ciudad || null,
           estado: form.estado || null
         })
@@ -177,13 +181,24 @@ export default function SucursalModal({ open, onClose }: Props) {
               />
             </Field>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-[1fr_110px_1fr_1fr] gap-3">
               <Field label="Colonia">
                 <input
                   type="text"
                   className="w-full border border-border rounded px-2 py-1.5"
                   value={form.colonia}
                   onChange={onChange('colonia')}
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="C.P.">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={5}
+                  className="w-full border border-border rounded px-2 py-1.5 font-mono"
+                  value={form.cp}
+                  onChange={onChange('cp')}
                   autoComplete="off"
                 />
               </Field>

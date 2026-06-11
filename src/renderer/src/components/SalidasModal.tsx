@@ -5,7 +5,7 @@ import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
 import Spinner from './Spinner'
-import type { LoteInfo, ProductoDto, SalidaItemInput } from '@shared/dto'
+import type { BodegaDto, LoteInfo, ProductoDto, SalidaItemInput } from '@shared/dto'
 import type { MotivoSalida } from '@shared/types'
 
 interface Row extends SalidaItemInput {
@@ -17,6 +17,7 @@ interface Props {
   onClose: () => void
   userId: string
   userNombre: string
+  onSaved?: () => void
 }
 
 const MOTIVO_OPTIONS: { value: MotivoSalida; label: string; hint: string }[] = [
@@ -32,7 +33,7 @@ function isoToYmd(iso: string): string {
   return iso.slice(0, 10)
 }
 
-export default function SalidasModal({ open, onClose, userId, userNombre }: Props) {
+export default function SalidasModal({ open, onClose, userId, userNombre, onSaved }: Props) {
   const [items, setItems] = useState<Row[]>([])
   const [current, setCurrent] = useState<ProductoDto | null>(null)
   const [lotes, setLotes] = useState<LoteInfo[]>([])
@@ -43,6 +44,8 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
   const [nota, setNota] = useState('')
   const [saving, setSaving] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [bodegas, setBodegas] = useState<BodegaDto[]>([])
+  const [bodegaId, setBodegaId] = useState('')
 
   const codRef = useRef<HTMLInputElement>(null)
   const loteRef = useRef<HTMLSelectElement>(null)
@@ -73,32 +76,45 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
     if (!open) return
     reset()
     setTimeout(() => codRef.current?.focus(), 80)
+    // En matriz puede haber varias bodegas: la salida se captura por bodega.
+    window.api.bodegas
+      .list()
+      .then((bs) => {
+        const activas = bs.filter((b) => b.activa)
+        setBodegas(activas)
+        const principal = activas.find((b) => b.esPrincipal) ?? activas[0]
+        setBodegaId(principal?.id ?? '')
+      })
+      .catch(() => {})
   }, [open, reset])
 
-  const setFromProduct = useCallback(async (p: ProductoDto) => {
-    setCurrent(p)
-    setCodigo(p.codigo)
-    try {
-      const ls = await window.api.productos.getLotes(p.id)
-      // En salidas sólo mostramos lotes con saldo > 0 (no se puede sacar de nada)
-      const activos = ls.filter((l) => l.saldo > 0)
-      setLotes(activos)
-      if (activos.length === 0) {
-        toast.warning(`"${p.nombre}" no tiene lotes con saldo`, {
-          description: 'Los lotes agotados no aparecen porque no hay nada que sacar.'
+  const setFromProduct = useCallback(
+    async (p: ProductoDto) => {
+      setCurrent(p)
+      setCodigo(p.codigo)
+      try {
+        const ls = await window.api.productos.getLotes(p.id, bodegaId || undefined)
+        // En salidas sólo mostramos lotes con saldo > 0 (no se puede sacar de nada)
+        const activos = ls.filter((l) => l.saldo > 0)
+        setLotes(activos)
+        if (activos.length === 0) {
+          toast.warning(`"${p.nombre}" no tiene lotes con saldo en esta bodega`, {
+            description: 'Los lotes agotados no aparecen porque no hay nada que sacar.'
+          })
+          setLoteId('')
+          return
+        }
+        const first = activos[0]!
+        setLoteId(first.id)
+        setTimeout(() => cantRef.current?.focus(), 30)
+      } catch (e) {
+        toast.error('No se pudieron cargar los lotes', {
+          description: e instanceof Error ? e.message : String(e)
         })
-        setLoteId('')
-        return
       }
-      const first = activos[0]!
-      setLoteId(first.id)
-      setTimeout(() => cantRef.current?.focus(), 30)
-    } catch (e) {
-      toast.error('No se pudieron cargar los lotes', {
-        description: e instanceof Error ? e.message : String(e)
-      })
-    }
-  }, [])
+    },
+    [bodegaId]
+  )
 
   const lookupByCode = useCallback(async () => {
     const c = codigo.trim()
@@ -168,12 +184,27 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
     try {
       const r = await window.api.salidas.create({
         cajeroId: userId,
+        bodegaId: bodegaId || null,
         items: items.map(({ fechaCaducidad: _omit, ...rest }) => rest)
       })
       toast.success(
         `Salida registrada: ${r.itemsCreados} ${r.itemsCreados === 1 ? 'línea' : 'líneas'}, ${r.unidadesTotales} unidad${r.unidadesTotales === 1 ? '' : 'es'}`,
-        { description: `Registrada por ${userNombre}` }
+        {
+          description: `Registrada por ${userNombre}`,
+          duration: 10000,
+          action: {
+            label: 'Imprimir PDF',
+            onClick: () => {
+              window.api.movimientos.pdf(r.movimientoId).then((p) => {
+                if (!p.ok && !p.cancelled) {
+                  toast.error('No se pudo generar el PDF', { description: p.error })
+                }
+              })
+            }
+          }
+        }
       )
+      onSaved?.()
       onClose()
     } catch (e) {
       toast.error('Falló el guardado', {
@@ -182,7 +213,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
     } finally {
       setSaving(false)
     }
-  }, [items, userId, userNombre, onClose])
+  }, [items, userId, userNombre, bodegaId, onSaved, onClose])
 
   const onKeyCode = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -207,11 +238,46 @@ export default function SalidasModal({ open, onClose, userId, userNombre }: Prop
     <>
       <Modal
         open={open && !searchOpen}
-        title="Registro de salidas de tienda"
+        title="Registro de salidas de inventario"
         onClose={onClose}
         maxWidth="max-w-4xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
+          {/* Bodega origen (matriz multi-bodega) */}
+          {bodegas.length > 1 && (
+            <section className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                Bodega origen:
+              </label>
+              <select
+                className="border border-border rounded px-2 py-1.5 bg-background text-sm"
+                value={bodegaId}
+                onChange={(e) => {
+                  setBodegaId(e.target.value)
+                  resetRow()
+                }}
+                disabled={items.length > 0}
+                title={
+                  items.length > 0
+                    ? 'Hay salidas capturadas: una salida pertenece a una sola bodega'
+                    : undefined
+                }
+              >
+                {bodegas.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.nombre}
+                    {b.esPrincipal ? ' (principal)' : ''}
+                  </option>
+                ))}
+              </select>
+              {items.length > 0 && (
+                <span className="text-[10px] text-muted-foreground italic">
+                  Bloqueada: ya hay líneas capturadas de esta bodega.
+                </span>
+              )}
+            </section>
+          )}
+
           {/* Formulario de captura */}
           <section className="border border-border rounded p-3 bg-muted/10 space-y-3">
             <div className="grid grid-cols-[1fr_auto] gap-2">

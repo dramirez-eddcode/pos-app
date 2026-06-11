@@ -83,12 +83,13 @@ function metodoLabel(m: MetodoPago): string {
 export function buildReceiptBytes(data: ReceiptData): Uint8Array {
   const p = new Escpos().init()
 
-  // ── Header (centrado) ─────────────────────────────────────────────────────
+  // ── Header (centrado) — las líneas vacías (ocultas por config) se omiten ──
   p.align('center')
   p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
-  p.bold(true).line(data.empresa.nombreComercial.trim())
+  p.bold(true)
+  if (data.empresa.nombreComercial.trim()) p.line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
-  p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
+  if (data.empresa.sucursalNombre.trim()) p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
   p.bold(false)
   if (data.empresa.calle) p.line(data.empresa.calle.trim())
   if (data.empresa.colonia || data.empresa.cp) {
@@ -173,12 +174,13 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
 export function buildCancelReceiptBytes(data: CancelReceiptData): Uint8Array {
   const p = new Escpos().init()
 
-  // Header de la sucursal (centrado)
+  // Header de la sucursal (centrado) — las líneas ocultas por config se omiten
   p.align('center')
   p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
-  p.bold(true).line(data.empresa.nombreComercial.trim())
+  p.bold(true)
+  if (data.empresa.nombreComercial.trim()) p.line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
-  p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
+  if (data.empresa.sucursalNombre.trim()) p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
   p.bold(false)
   if (data.empresa.calle) p.line(data.empresa.calle.trim())
   if (data.empresa.colonia) p.line(data.empresa.colonia.trim())
@@ -237,12 +239,13 @@ const TIPO_TITULO: Record<CorteReceiptData['tipo'], string> = {
 export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
   const p = new Escpos().init()
 
-  // Header sucursal
+  // Header sucursal — las líneas ocultas por config se omiten
   p.align('center')
   p.bold(true).size(2, 2).line('Farmacias MS').size(1, 1)
-  p.bold(true).line(data.empresa.nombreComercial.trim())
+  p.bold(true)
+  if (data.empresa.nombreComercial.trim()) p.line(data.empresa.nombreComercial.trim())
   if (data.empresa.rfc) p.line(data.empresa.rfc.trim())
-  p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
+  if (data.empresa.sucursalNombre.trim()) p.line(`Sucursal: ${data.empresa.sucursalNombre.trim()}`)
   p.bold(false)
   p.feed(1)
 
@@ -311,23 +314,29 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
 
 /**
  * Ticket de prueba — se usa desde el panel de configuración para verificar
- * que la EPSON está bien cableada antes de operar.
+ * que la EPSON está bien cableada antes de operar. Refleja los checkboxes de
+ * encabezado tal como están en el panel (aún sin guardar), para previsualizar.
  */
 export function buildTestReceiptBytes(opts?: {
   showTime?: boolean
   footer?: string | null
+  mostrarRazonSocial?: boolean
+  mostrarRfc?: boolean
+  mostrarSucursal?: boolean
+  mostrarDireccion?: boolean
 }): Uint8Array {
   const now = new Date()
+  const conDireccion = opts?.mostrarDireccion ?? true
   return buildReceiptBytes({
     showTime: opts?.showTime ?? false,
     footer: opts?.footer ?? null,
     empresa: {
-      nombreComercial: 'FARMACIAS MS - TICKET DE PRUEBA',
-      rfc: '----',
-      sucursalNombre: 'PRUEBAS',
-      calle: 'Prueba de impresión',
-      colonia: 'Desarrollo',
-      cp: '00000'
+      nombreComercial: (opts?.mostrarRazonSocial ?? true) ? 'FARMACIAS MS - TICKET DE PRUEBA' : '',
+      rfc: (opts?.mostrarRfc ?? true) ? '----' : null,
+      sucursalNombre: (opts?.mostrarSucursal ?? true) ? 'PRUEBAS' : '',
+      calle: conDireccion ? 'Prueba de impresión' : null,
+      colonia: conDireccion ? 'Desarrollo' : null,
+      cp: conDireccion ? '00000' : null
     },
     folio: 1,
     fecha: now as unknown as Date, // cumple ReceiptData (fecha: Date)

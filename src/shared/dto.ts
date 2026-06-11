@@ -51,6 +51,7 @@ export interface CompleteWizardInput {
   rfc?: string | null
   calle?: string | null
   colonia?: string | null
+  cp?: string | null
   ciudad?: string | null
   estado?: string | null
   // Admin: o crea nuevo (adminLogin/Nombre/Password) o usa existente (useExistingUserId)
@@ -94,6 +95,11 @@ export type PickWizardFarmaResult =
 export interface CompleteWizardFromFarmaInput {
   filePath: string
   propietarioNombre: string
+  // Credenciales del primer admin (SUPERUSUARIO). Requeridas cuando el archivo
+  // no trae usuarios (los .farma actuales ya no los incluyen).
+  adminLogin?: string
+  adminNombre?: string
+  adminPassword?: string
 }
 
 export interface CompleteWizardFromFarmaResult {
@@ -101,6 +107,7 @@ export interface CompleteWizardFromFarmaResult {
   sucursalNombre: string
   productos: number
   stockLotes: number
+  stockNoEncontrados: number // renglones de stock cuyo código no está en el catálogo
   usuarios: number
 }
 
@@ -111,6 +118,7 @@ export interface EmpresaDto {
   rfc: string | null
   calle: string | null
   colonia: string | null
+  cp: string | null
   ciudad: string | null
   estado: string | null
   sucursalNombre: string
@@ -124,6 +132,7 @@ export interface SucursalDto {
   rfc: string | null
   calle: string | null
   colonia: string | null
+  cp: string | null
   ciudad: string | null
   estado: string | null
   activa: boolean
@@ -138,6 +147,7 @@ export interface CreateSucursalInput {
   rfc?: string | null
   calle?: string | null
   colonia?: string | null
+  cp?: string | null
   ciudad?: string | null
   estado?: string | null
 }
@@ -175,6 +185,33 @@ export interface UpdateBodegaInput {
   colonia?: string | null
   ciudad?: string | null
   estado?: string | null
+}
+
+// ── Proveedores (catálogo de la matriz, vinculable a entradas) ─────────────
+export interface ProveedorDto {
+  id: string
+  nombre: string
+  rfc: string | null
+  telefono: string | null
+  email: string | null
+  contacto: string | null // persona de contacto / agente de ventas
+  notas: string | null
+  activo: boolean
+  createdAt: string // ISO
+  updatedAt: string // ISO
+}
+
+export interface CreateProveedorInput {
+  nombre: string
+  rfc?: string | null
+  telefono?: string | null
+  email?: string | null
+  contacto?: string | null
+  notas?: string | null
+}
+
+export interface UpdateProveedorInput extends CreateProveedorInput {
+  id: string
 }
 
 export interface SucursalProductoOverride {
@@ -232,6 +269,7 @@ export interface ExportFarmaPayload {
     rfc: string | null
     calle: string | null
     colonia: string | null
+    cp: string | null
     ciudad: string | null
     estado: string | null
   }
@@ -240,8 +278,10 @@ export interface ExportFarmaPayload {
   // sucursal que se migra del legacy). Se aplica únicamente en la primera
   // importación de la sucursal (no en actualizaciones posteriores).
   stockInicial?: ExportFarmaStockLote[]
-  // Usuarios admin de la matriz, para configurar la sucursal con las mismas
-  // credenciales. Solo se usan en el wizard (primera configuración).
+  // LEGADO: archivos generados por versiones anteriores traían los usuarios
+  // admin (con hash de contraseña). Ya NO se exportan — el .farma solo lleva
+  // los datos básicos de la sucursal + catálogo. El wizard aún los acepta
+  // para que esos archivos viejos sigan funcionando.
   usuarios?: ExportFarmaUsuario[]
 }
 
@@ -303,6 +343,7 @@ export type ApplyFarmaResult =
       productosCreados: number
       productosActualizados: number
       stockLotes: number // lotes de stock inicial aplicados (solo primera importación)
+      stockNoEncontrados: number // renglones de stock cuyo código no está en el catálogo
       generadoEn: string
       primeraImport: boolean
       sucursalCambiada: boolean
@@ -347,6 +388,7 @@ export interface UpdateSucursalInput {
   rfc?: string | null
   calle?: string | null
   colonia?: string | null
+  cp?: string | null
   ciudad?: string | null
   estado?: string | null
 }
@@ -357,6 +399,7 @@ export interface UpdateEmpresaInput {
   rfc?: string | null
   calle?: string | null
   colonia?: string | null
+  cp?: string | null
   ciudad?: string | null
   estado?: string | null
   sucursalNombre: string
@@ -505,6 +548,9 @@ export interface EntradaItemInput {
   cantidad: number
   costo: number
   fechaCaducidad?: string | null // ISO; si omite, default +2 años
+  // Proveedor POR RENGLÓN (opcional): una entrada puede mezclar mercancía de
+  // varios proveedores.
+  proveedorId?: string | null
 }
 
 export interface CreateEntradaInput {
@@ -515,6 +561,7 @@ export interface CreateEntradaInput {
 }
 
 export interface CreateEntradaResult {
+  movimientoId: string // folio del documento en el historial de movimientos
   lotesCreados: number
   unidadesIngresadas: number
   productosActualizados: number
@@ -561,10 +608,14 @@ export interface SalidaItemInput {
 
 export interface CreateSalidaInput {
   cajeroId: string
+  // Bodega de la que sale la mercancía. Si se indica, todos los lotes deben
+  // pertenecer a ella (en sucursal puede omitirse: sólo hay Bodega Principal).
+  bodegaId?: string | null
   items: SalidaItemInput[]
 }
 
 export interface CreateSalidaResult {
+  movimientoId: string // folio del documento en el historial de movimientos
   itemsCreados: number
   unidadesTotales: number
 }
@@ -636,6 +687,29 @@ export interface StockBodegaResult {
   items: StockBodegaItem[]
 }
 
+// ── Reporte imprimible de stock por bodega (PDF / impresión directa) ────────
+// El renderer manda lo que se ve en pantalla (filtros aplicados) + el resumen
+// global de la bodega; el main arma el documento.
+export interface StockBodegaPdfItem {
+  codigo: string
+  nombre: string
+  sustanciaActiva: string | null
+  existencias: number
+  stockMinimo: number
+  bajoMinimo: boolean
+  valorCosto: number
+  proximaCaducidad: string | null // YYYY-MM-DD
+  vencido: boolean // el lote más próximo ya venció
+  porVencer: boolean // el lote más próximo vence en ≤90 días
+}
+
+export interface StockBodegaPdfInput {
+  bodegaNombre: string
+  resumen: StockBodegaResumen
+  filtroDescripcion: string | null // filtros activos en pantalla (se imprimen)
+  items: StockBodegaPdfItem[]
+}
+
 // ── Traspaso bodega (matriz) → sucursal (USB) ───────────────────────────────
 export interface TraspasoLineaFile {
   codigo: string
@@ -668,7 +742,12 @@ export interface CrearTraspasoItemInput {
 
 export interface CrearTraspasoInput {
   bodegaOrigenId: string
-  sucursalId: string
+  // Destino — exactamente uno de los dos:
+  //  - sucursalId: en MATRIZ, del catálogo de sucursales.
+  //  - destino: en SUCURSAL el destino es libre (no hay catálogo local);
+  //    sirve para mandar a cualquier sucursal o de regreso a la matriz.
+  sucursalId?: string
+  destino?: { codigo: string; nombre: string }
   items: CrearTraspasoItemInput[]
 }
 
@@ -676,6 +755,14 @@ export interface TraspasoFaltante {
   codigo: string
   pedido: number
   disponible: number
+}
+
+// Traspaso INTERNO entre bodegas de la misma instalación (sin archivo USB):
+// descuenta FEFO de la bodega origen y crea los lotes en la destino, atómico.
+export interface TraspasoBodegasInput {
+  bodegaOrigenId: string
+  bodegaDestinoId: string
+  items: CrearTraspasoItemInput[]
 }
 
 export interface CrearTraspasoResult {
@@ -717,18 +804,48 @@ export interface AplicarTraspasoResult {
   noEncontrados?: string[]
 }
 
-// Historial de traspasos (matriz)
-export interface TraspasoHistItem {
-  folio: string
-  fecha: string // ISO
-  bodegaOrigen: string
-  sucursalNombre: string
-  lineas: number
-  unidades: number
+// ── Historial unificado de movimientos (entradas / salidas / traspasos) ─────
+export type MovimientoTipo = 'ENTRADA' | 'SALIDA' | 'TRASPASO'
+
+export interface MovimientoLinea {
+  codigo: string
+  nombre: string
+  cantidad: number
+  costo: number
+  caducidad: string | null // YYYY-MM-DD
+  motivo?: string | null // motivo por línea (sólo salidas)
+  // Proveedor por línea (sólo entradas). En documentos viejos no existe la
+  // key (undefined) → el lector usa el proveedor a nivel documento.
+  proveedor?: string | null
+  // Se resuelve del catálogo al leer el detalle (no se guarda en items_json)
+  sustancia?: string | null
 }
 
-export interface TraspasoHistDetalle extends TraspasoHistItem {
-  items: TraspasoLineaFile[]
+export interface MovimientoHistItem {
+  folio: string
+  tipo: MovimientoTipo
+  fecha: string // ISO
+  bodega: string // bodega del movimiento (destino en ENTRADA, origen en SALIDA/TRASPASO)
+  destino: string | null // destino (sólo TRASPASO): sucursal o bodega interna
+  destinoTipo: 'SUCURSAL' | 'BODEGA' | null // qué es el destino (sólo TRASPASO)
+  usuario: string | null
+  proveedor: string | null // sólo ENTRADA (si se vinculó)
+  lineas: number
+  unidades: number
+  valor: number // a costo
+}
+
+export interface MovimientoDetalle extends MovimientoHistItem {
+  motivo: string | null
+  items: MovimientoLinea[]
+}
+
+// Resultado de exportar un movimiento a PDF (para impresora normal)
+export interface PdfMovimientoResult {
+  ok: boolean
+  cancelled?: boolean
+  error?: string
+  path?: string
 }
 
 export interface UpdatePrecioItemInput {
@@ -865,6 +982,48 @@ export interface UpdateUsuarioInput {
 }
 
 export type CorteTipo = 'PARCIAL' | 'FINAL' | 'CAMBIO_TURNO'
+
+// Día anterior a hoy con ventas sin cubrir por ningún corte (corte final olvidado)
+export interface CortePendienteDia {
+  fecha: string // YYYY-MM-DD (día local)
+  folioInicio: number
+  folioFin: number
+  notas: number // folios del día (incluye canceladas)
+  total: number // venta no cancelada
+}
+
+// Corte FINAL ya registrado (para reimpresión por admin)
+export interface CorteFinalHistItem {
+  id: string
+  fecha: string // ISO
+  folioInicio: number
+  folioFin: number
+  total: number
+  cajero: string | null
+}
+
+// Datos para reimprimir el ticket de un corte (todo menos empresa, que la pone
+// el renderer desde la sesión, igual que al imprimir el corte original)
+export interface CorteReimpresionDto {
+  fecha: string // ISO
+  tipo: CorteTipo
+  cajero: string
+  folioInicio: number
+  folioFin: number
+  foliosVendidos: number
+  foliosCancelados: number
+  subtotal: number
+  iva: number
+  total: number
+  efectivo: number
+  tarjeta: number
+  transferencia: number
+  otro: number
+  entradasCaja: number
+  salidasCaja: number
+  cancelaciones: number
+  efectivoEsperado: number
+}
 
 export interface CreateCorteInput {
   cajeroId: string

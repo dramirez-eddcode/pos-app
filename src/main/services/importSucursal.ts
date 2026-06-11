@@ -276,9 +276,9 @@ export function applyFarma(
     sqlite
       .prepare(
         `INSERT INTO sucursal
-           (id, codigo, nombre, razon_social, rfc, calle, colonia, ciudad, estado,
+           (id, codigo, nombre, razon_social, rfc, calle, colonia, cp, ciudad, estado,
             activa, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            codigo = excluded.codigo,
            nombre = excluded.nombre,
@@ -286,6 +286,7 @@ export function applyFarma(
            rfc = excluded.rfc,
            calle = excluded.calle,
            colonia = excluded.colonia,
+           cp = excluded.cp,
            ciudad = excluded.ciudad,
            estado = excluded.estado,
            updated_at = excluded.updated_at`
@@ -298,6 +299,7 @@ export function applyFarma(
         payload.sucursal.rfc ?? null,
         payload.sucursal.calle ?? null,
         payload.sucursal.colonia ?? null,
+        payload.sucursal.cp ?? null,
         payload.sucursal.ciudad ?? null,
         payload.sucursal.estado ?? null,
         now,
@@ -309,9 +311,9 @@ export function applyFarma(
     sqlite
       .prepare(
         `INSERT INTO empresa
-           (id, nombre_comercial, razon_social, rfc, calle, colonia, ciudad, estado,
+           (id, nombre_comercial, razon_social, rfc, calle, colonia, cp, ciudad, estado,
             sucursal_nombre, owner_user_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
       )
       .run(
         payload.sucursal.id,
@@ -320,6 +322,7 @@ export function applyFarma(
         payload.sucursal.rfc ?? null,
         payload.sucursal.calle ?? null,
         payload.sucursal.colonia ?? null,
+        payload.sucursal.cp ?? null,
         payload.sucursal.ciudad ?? null,
         payload.sucursal.estado ?? null,
         payload.sucursal.nombre,
@@ -419,6 +422,7 @@ export function applyFarma(
     // posteriores (actualizaciones de catálogo/precio) NO se vuelve a aplicar,
     // para no pisar el stock ya operado.
     let stockLotes = 0
+    let stockNoEncontrados = 0
     if (isFirstImport && Array.isArray(payload.stockInicial) && payload.stockInicial.length > 0) {
       const r = cargaInicialInventario({
         usuarioId: viewerUserId,
@@ -430,9 +434,16 @@ export function applyFarma(
         }))
       })
       stockLotes = r.lotesCreados + r.lotesActualizados
+      stockNoEncontrados = r.noEncontrados.length
+      if (r.noEncontrados.length > 0) {
+        console.warn(
+          '[import .farma] Stock inicial con códigos sin producto en el catálogo:',
+          r.noEncontrados.slice(0, 100)
+        )
+      }
     }
 
-    return { productosCreados, productosActualizados, stockLotes }
+    return { productosCreados, productosActualizados, stockLotes, stockNoEncontrados }
   })
 
   const stats = run()
@@ -446,6 +457,7 @@ export function applyFarma(
     productosCreados: stats.productosCreados,
     productosActualizados: stats.productosActualizados,
     stockLotes: stats.stockLotes,
+    stockNoEncontrados: stats.stockNoEncontrados,
     generadoEn: file.generadoEn,
     sucursalCambiada: isSucursalSwitch,
     primeraImport: isFirstImport

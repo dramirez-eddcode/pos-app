@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { Printer } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
@@ -8,8 +9,11 @@ import { folio as fmtFolio, money } from '../lib/format'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
 import type {
+  CorteFinalHistItem,
   CorteHoyDto,
+  CortePendienteDia,
   CorteTipo,
+  CreateCorteResult,
   MetodoPagoTotal,
   VentaDetailDto
 } from '@shared/dto'
@@ -38,6 +42,15 @@ const CORTE_TIPO_LABEL: Record<CorteTipo, string> = {
   CAMBIO_TURNO: 'Cambio de turno'
 }
 
+function fmtDia(ymd: string): string {
+  return new Date(`${ymd}T12:00:00`).toLocaleDateString('es-MX', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  })
+}
+
 export default function CorteModal({ open, onClose }: Props) {
   const { user } = useSession()
   const { settings } = useSettings()
@@ -48,8 +61,14 @@ export default function CorteModal({ open, onClose }: Props) {
   const [detail, setDetail] = useState<VentaDetailDto | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [cerrando, setCerrando] = useState<CorteTipo | null>(null)
+  const [pendientesDias, setPendientesDias] = useState<CortePendienteDia[]>([])
+  const [cerrandoPendiente, setCerrandoPendiente] = useState<string | null>(null)
+  const [finales, setFinales] = useState<CorteFinalHistItem[]>([])
+  const [reimprimiendo, setReimprimiendo] = useState<string | null>(null)
   const tableBodyRef = useRef<HTMLTableSectionElement>(null)
   const detailRef = useRef<HTMLDivElement>(null)
+
+  const esAdmin = user?.rol === 'ADMINISTRADOR' || user?.rol === 'SUPERUSUARIO'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,16 +78,67 @@ export default function CorteModal({ open, onClose }: Props) {
       // Reset selección si la lista cambia
       setDetail(null)
       setIdx(r.folios.length > 0 ? 0 : -1)
+      setPendientesDias(await window.api.corte.pendientesDias().catch(() => []))
+      if (user && esAdmin) {
+        setFinales(await window.api.corte.finales(user.id).catch(() => []))
+      }
     } catch (e) {
       toast.error('No pude cargar el corte', { description: String(e) })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [user, esAdmin])
 
   useEffect(() => {
     if (open) load()
   }, [open, load])
+
+  // Imprime el ticket de un corte recién creado (best-effort)
+  const imprimirTicketCorte = useCallback(
+    async (r: CreateCorteResult) => {
+      if (!user) return
+      if (settings?.printerName && user.sucursal) {
+        const pr = await window.api.printer.printCorte(settings.printerName, {
+          empresa: {
+            nombreComercial: user.sucursal.nombreComercial,
+            rfc: user.sucursal.rfc ?? null,
+            sucursalNombre: user.sucursal.sucursalNombre,
+            calle: user.sucursal.calle ?? null,
+            colonia: user.sucursal.colonia ?? null,
+            cp: user.sucursal.cp ?? null
+          },
+          fecha: r.fecha,
+          tipo: r.tipo,
+          cajero: user.nombre,
+          folioInicio: r.folioInicio,
+          folioFin: r.folioFin,
+          foliosVendidos: r.totales.foliosVendidos,
+          foliosCancelados: r.totales.foliosCancelados,
+          subtotal: r.totales.subtotal,
+          iva: r.totales.iva,
+          total: r.totales.total,
+          efectivo: r.totales.efectivo,
+          tarjeta: r.totales.tarjeta,
+          transferencia: r.totales.transferencia,
+          otro: r.totales.otro,
+          entradasCaja: r.totales.entradasCaja,
+          salidasCaja: r.totales.salidasCaja,
+          cancelaciones: r.totales.cancelaciones,
+          efectivoEsperado: r.totales.efectivoEsperado
+        })
+        if (!pr.ok) {
+          toast.warning('Corte registrado pero falló la impresión', {
+            description: (pr.stderr || pr.stdout).trim()
+          })
+        }
+      } else if (!settings?.printerName) {
+        toast.warning('Corte registrado (sin ticket)', {
+          description: 'No hay impresora configurada. El corte está en la DB.'
+        })
+      }
+    },
+    [user, settings?.printerName]
+  )
 
   const cerrarCorte = useCallback(
     async (tipo: CorteTipo) => {
@@ -77,47 +147,7 @@ export default function CorteModal({ open, onClose }: Props) {
       setCerrando(tipo)
       try {
         const r = await window.api.corte.create(user.id, tipo)
-
-        // Imprimir ticket de corte (best-effort)
-        if (settings?.printerName && user.sucursal) {
-          const pr = await window.api.printer.printCorte(settings.printerName, {
-            empresa: {
-              nombreComercial: user.sucursal.nombreComercial,
-              rfc: user.sucursal.rfc ?? null,
-              sucursalNombre: user.sucursal.sucursalNombre,
-              calle: user.sucursal.calle ?? null,
-              colonia: user.sucursal.colonia ?? null
-            },
-            fecha: r.fecha,
-            tipo: r.tipo,
-            cajero: user.nombre,
-            folioInicio: r.folioInicio,
-            folioFin: r.folioFin,
-            foliosVendidos: r.totales.foliosVendidos,
-            foliosCancelados: r.totales.foliosCancelados,
-            subtotal: r.totales.subtotal,
-            iva: r.totales.iva,
-            total: r.totales.total,
-            efectivo: r.totales.efectivo,
-            tarjeta: r.totales.tarjeta,
-            transferencia: r.totales.transferencia,
-            otro: r.totales.otro,
-            entradasCaja: r.totales.entradasCaja,
-            salidasCaja: r.totales.salidasCaja,
-            cancelaciones: r.totales.cancelaciones,
-            efectivoEsperado: r.totales.efectivoEsperado
-          })
-          if (!pr.ok) {
-            toast.warning('Corte registrado pero falló la impresión', {
-              description: (pr.stderr || pr.stdout).trim()
-            })
-          }
-        } else if (!settings?.printerName) {
-          toast.warning('Corte registrado (sin ticket)', {
-            description: 'No hay impresora configurada. El corte está en la DB.'
-          })
-        }
-
+        await imprimirTicketCorte(r)
         toast.success(
           `${TIPO_LABEL[tipo]} registrado · folios ${r.folioInicio}–${r.folioFin}`,
           { description: `Total: $${money(r.totales.total)} · Efectivo en caja: $${money(r.totales.efectivoEsperado)}` }
@@ -132,7 +162,89 @@ export default function CorteModal({ open, onClose }: Props) {
         setCerrando(null)
       }
     },
-    [user, settings?.printerName, cerrando, load]
+    [user, cerrando, imprimirTicketCorte, load]
+  )
+
+  // ── Corte final de un día anterior que quedó pendiente ──────────────────
+  const cerrarCortePendiente = useCallback(
+    async (dia: CortePendienteDia) => {
+      if (!user || cerrandoPendiente || cerrando) return
+      setCerrandoPendiente(dia.fecha)
+      try {
+        const r = await window.api.corte.createFinalPendiente(user.id, dia.fecha)
+        await imprimirTicketCorte(r)
+        toast.success(
+          `Corte final del ${fmtDia(dia.fecha)} registrado · folios ${fmtFolio(r.folioInicio)}–${fmtFolio(r.folioFin)}`,
+          { description: `Total: $${money(r.totales.total)}` }
+        )
+        await load()
+      } catch (e) {
+        toast.error('No se pudo registrar el corte final pendiente', {
+          description: e instanceof Error ? e.message : String(e)
+        })
+      } finally {
+        setCerrandoPendiente(null)
+      }
+    },
+    [user, cerrandoPendiente, cerrando, imprimirTicketCorte, load]
+  )
+
+  const confirmarCortePendiente = useCallback(
+    (dia: CortePendienteDia) => {
+      toast.warning(`¿Hacer el corte final del ${fmtDia(dia.fecha)}?`, {
+        id: 'corte-pendiente-confirm',
+        description: `Cubre folios ${fmtFolio(dia.folioInicio)}–${fmtFolio(dia.folioFin)} · $${money(dia.total)}. Solo puede hacerse una vez.`,
+        duration: 10000,
+        action: { label: 'Sí, cerrar día', onClick: () => cerrarCortePendiente(dia) }
+      })
+    },
+    [cerrarCortePendiente]
+  )
+
+  // ── Reimpresión de cortes finales (sólo admin/superusuario) ─────────────
+  const reimprimirCorte = useCallback(
+    async (c: CorteFinalHistItem) => {
+      if (!user) return
+      if (!settings?.printerName) {
+        toast.error('No hay impresora configurada', {
+          description: 'Configúrala en Ajustes para poder reimprimir el corte.'
+        })
+        return
+      }
+      if (!user.sucursal) {
+        toast.error('Sin datos de la sucursal para el encabezado del ticket')
+        return
+      }
+      setReimprimiendo(c.id)
+      try {
+        const d = await window.api.corte.reimpresion(user.id, c.id)
+        const pr = await window.api.printer.printCorte(settings.printerName, {
+          empresa: {
+            nombreComercial: user.sucursal.nombreComercial,
+            rfc: user.sucursal.rfc ?? null,
+            sucursalNombre: user.sucursal.sucursalNombre,
+            calle: user.sucursal.calle ?? null,
+            colonia: user.sucursal.colonia ?? null,
+            cp: user.sucursal.cp ?? null
+          },
+          ...d
+        })
+        if (!pr.ok) {
+          toast.error('Falló la impresión', { description: (pr.stderr || pr.stdout).trim() })
+        } else {
+          toast.success(
+            `Corte final del ${new Date(d.fecha).toLocaleDateString('es-MX')} reimpreso`
+          )
+        }
+      } catch (e) {
+        toast.error('No se pudo reimprimir el corte', {
+          description: e instanceof Error ? e.message : String(e)
+        })
+      } finally {
+        setReimprimiendo(null)
+      }
+    },
+    [user, settings?.printerName]
   )
 
   const confirmarCorte = useCallback(
@@ -235,7 +347,14 @@ export default function CorteModal({ open, onClose }: Props) {
       maxWidth="max-w-5xl"
     >
       <div className="relative p-4 text-sm max-h-[75vh] overflow-y-auto">
-        <BusyOverlay show={cerrando !== null} text={`Registrando ${TIPO_LABEL[cerrando ?? 'PARCIAL'].toLowerCase()}…`} />
+        <BusyOverlay
+          show={cerrando !== null || cerrandoPendiente !== null}
+          text={
+            cerrandoPendiente !== null
+              ? 'Registrando corte final pendiente…'
+              : `Registrando ${TIPO_LABEL[cerrando ?? 'PARCIAL'].toLowerCase()}…`
+          }
+        />
         {loading && !data && (
           <div className="flex justify-center py-8">
             <Spinner label="Cargando…" />
@@ -380,12 +499,70 @@ export default function CorteModal({ open, onClose }: Props) {
               </div>
             </section>
 
+            {/* Cortes finales pendientes de días anteriores */}
+            {pendientesDias.length > 0 && (
+              <section className="border border-amber-300 rounded">
+                <header className="px-3 py-2 border-b border-amber-300 bg-amber-50 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                  Cortes finales pendientes de días anteriores
+                </header>
+                <div className="p-3 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Estos días tienen ventas sin corte final. Cualquier usuario puede cerrarlos —
+                    en orden, del más antiguo al más reciente, y <strong>una sola vez</strong> cada
+                    uno. Mientras haya pendientes, los cortes de hoy quedan bloqueados para no
+                    mezclar días.
+                  </p>
+                  {pendientesDias.map((d, i) => (
+                    <div
+                      key={d.fecha}
+                      className="flex items-center justify-between gap-3 border border-border rounded px-3 py-2 text-xs"
+                    >
+                      <div>
+                        <span className="font-semibold capitalize">{fmtDia(d.fecha)}</span>
+                        <span className="font-mono text-muted-foreground">
+                          {' '}· folios {fmtFolio(d.folioInicio)}–{fmtFolio(d.folioFin)} · {d.notas}{' '}
+                          nota{d.notas === 1 ? '' : 's'} · ${money(d.total)}
+                        </span>
+                      </div>
+                      {i === 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => confirmarCortePendiente(d)}
+                          disabled={cerrandoPendiente !== null || cerrando !== null}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-xs font-semibold shrink-0"
+                        >
+                          {cerrandoPendiente === d.fecha ? (
+                            <>
+                              <Spinner size={13} /> Procesando…
+                            </>
+                          ) : (
+                            'Hacer corte final'
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground italic shrink-0">
+                          cierra primero el día anterior
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {/* Cierre de corte */}
             <section className="border border-border rounded">
               <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide">
                 Cerrar corte
               </header>
               <div className="p-3 space-y-2">
+                {pendientesDias.length > 0 && (
+                  <div className="text-xs border border-amber-300 bg-amber-50 text-amber-900 rounded px-3 py-2">
+                    Hay {pendientesDias.length} día{pendientesDias.length === 1 ? '' : 's'} con
+                    corte final pendiente — ciérralo{pendientesDias.length === 1 ? '' : 's'} arriba
+                    antes de hacer cortes de hoy.
+                  </div>
+                )}
                 {data.pendiente ? (
                   <div className="text-xs border border-border rounded bg-muted/20 px-3 py-2">
                     <span className="text-muted-foreground">Próximo corte cubrirá: </span>
@@ -416,7 +593,7 @@ export default function CorteModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => confirmarCorte('PARCIAL')}
-                    disabled={cerrando !== null || !data.pendiente}
+                    disabled={cerrando !== null || !data.pendiente || pendientesDias.length > 0}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   >
                     {cerrando === 'PARCIAL' ? (
@@ -439,7 +616,7 @@ export default function CorteModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => confirmarCorte('CAMBIO_TURNO')}
-                    disabled={cerrando !== null || !data.pendiente}
+                    disabled={cerrando !== null || !data.pendiente || pendientesDias.length > 0}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   >
                     {cerrando === 'CAMBIO_TURNO' ? (
@@ -463,7 +640,7 @@ export default function CorteModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => confirmarCorte('FINAL')}
-                    disabled={cerrando !== null || !data.pendiente}
+                    disabled={cerrando !== null || !data.pendiente || pendientesDias.length > 0}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
                   >
                     {cerrando === 'FINAL' ? (
@@ -485,6 +662,60 @@ export default function CorteModal({ open, onClose }: Props) {
                 </div>
               </div>
             </section>
+
+            {/* Reimpresión de cortes finales — sólo admin/superusuario */}
+            {esAdmin && finales.length > 0 && (
+              <section className="border border-border rounded">
+                <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center">
+                  <span>Reimprimir corte final</span>
+                  <span className="text-[10px] text-muted-foreground normal-case">
+                    últimos {finales.length} · sólo administradores
+                  </span>
+                </header>
+                <div className="overflow-auto max-h-[220px]">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-background border-b border-border z-10">
+                      <tr className="text-left">
+                        <th className="px-2 py-1">Fecha</th>
+                        <th className="px-2 py-1">Folios</th>
+                        <th className="px-2 py-1 text-right">Total</th>
+                        <th className="px-2 py-1">Cajero</th>
+                        <th className="px-2 py-1 w-28 text-center">Reimprimir</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {finales.map((c) => (
+                        <tr key={c.id} className="border-b border-border/60">
+                          <td className="px-2 py-1 font-mono">
+                            {new Date(c.fecha).toLocaleString('es-MX')}
+                          </td>
+                          <td className="px-2 py-1 font-mono">
+                            {fmtFolio(c.folioInicio)}–{fmtFolio(c.folioFin)}
+                          </td>
+                          <td className="px-2 py-1 text-right font-mono">${money(c.total)}</td>
+                          <td className="px-2 py-1">{c.cajero ?? '—'}</td>
+                          <td className="px-2 py-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() => reimprimirCorte(c)}
+                              disabled={reimprimiendo !== null}
+                              className="inline-flex items-center gap-1 px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 text-[11px]"
+                            >
+                              {reimprimiendo === c.id ? (
+                                <Spinner size={11} />
+                              ) : (
+                                <Printer className="size-3" />
+                              )}
+                              Imprimir
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
 
             {/* Detalle de venta seleccionada */}
             <section ref={detailRef} className="border border-border rounded">

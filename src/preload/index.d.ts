@@ -9,15 +9,21 @@ import type {
   PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
+  CortePendienteDia,
+  CorteFinalHistItem,
+  CorteReimpresionDto,
   CargaInicialInput,
   CargaInicialResult,
   StockBodegaResult,
+  StockBodegaPdfInput,
   CrearTraspasoInput,
   CrearTraspasoResult,
+  TraspasoBodegasInput,
   PickTraspasoResult,
   AplicarTraspasoResult,
-  TraspasoHistItem,
-  TraspasoHistDetalle,
+  MovimientoHistItem,
+  MovimientoDetalle,
+  PdfMovimientoResult,
   CreateAjustesInput,
   CreateAjustesResult,
   CreateCorteResult,
@@ -49,6 +55,9 @@ import type {
   ProductoCatalogoItem,
   ProductoDto,
   ProductoSearchQuery,
+  ProveedorDto,
+  CreateProveedorInput,
+  UpdateProveedorInput,
   SetSucursalProductoInput,
   UpdateEmpresaInput,
   UpdateIvaInput,
@@ -169,7 +178,7 @@ declare global {
       productos: {
         search: (query: ProductoSearchQuery) => Promise<ProductoDto[]>
         byCodigo: (codigo: string) => Promise<ProductoDto | null>
-        getLotes: (productoId: string) => Promise<LoteInfo[]>
+        getLotes: (productoId: string, bodegaId?: string | null) => Promise<LoteInfo[]>
         getAllActivos: () => Promise<
           Array<{
             id: string
@@ -216,9 +225,23 @@ declare global {
       corte: {
         hoy: () => Promise<CorteHoyDto>
         create: (cajeroId: string, tipo: CorteTipo) => Promise<CreateCorteResult>
+        pendientesDias: () => Promise<CortePendienteDia[]>
+        createFinalPendiente: (cajeroId: string, fechaYmd: string) => Promise<CreateCorteResult>
+        finales: (viewerUserId: string) => Promise<CorteFinalHistItem[]>
+        reimpresion: (viewerUserId: string, corteId: string) => Promise<CorteReimpresionDto>
       }
       entradas: {
         create: (input: CreateEntradaInput) => Promise<CreateEntradaResult>
+      }
+      proveedores: {
+        list: () => Promise<ProveedorDto[]>
+        create: (viewerUserId: string, input: CreateProveedorInput) => Promise<{ id: string }>
+        update: (viewerUserId: string, input: UpdateProveedorInput) => Promise<{ ok: true }>
+        toggleActivo: (
+          viewerUserId: string,
+          proveedorId: string,
+          activo: boolean
+        ) => Promise<{ ok: true }>
       }
       ajustes: {
         create: (input: CreateAjustesInput) => Promise<CreateAjustesResult>
@@ -229,17 +252,28 @@ declare global {
       inventario: {
         cargaInicial: (input: CargaInicialInput) => Promise<CargaInicialResult>
         stockBodega: (bodegaId: string) => Promise<StockBodegaResult>
+        stockPdf: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
+        stockImprimir: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
       }
       traspaso: {
         crear: (viewerUserId: string, input: CrearTraspasoInput) => Promise<CrearTraspasoResult>
+        entreBodegas: (
+          viewerUserId: string,
+          input: TraspasoBodegasInput
+        ) => Promise<CrearTraspasoResult>
         pick: () => Promise<PickTraspasoResult>
         aplicar: (
           viewerUserId: string,
           filePath: string,
-          force?: boolean
+          force?: boolean,
+          bodegaDestinoId?: string | null
         ) => Promise<AplicarTraspasoResult>
-        list: () => Promise<TraspasoHistItem[]>
-        detalle: (folio: string) => Promise<TraspasoHistDetalle | null>
+      }
+      movimientos: {
+        list: () => Promise<MovimientoHistItem[]>
+        detalle: (folio: string) => Promise<MovimientoDetalle | null>
+        pdf: (folio: string) => Promise<PdfMovimientoResult>
+        imprimir: (folio: string) => Promise<PdfMovimientoResult>
       }
       precios: {
         update: (input: UpdatePreciosInput) => Promise<UpdatePreciosResult>
@@ -263,7 +297,14 @@ declare global {
         list: () => Promise<string[]>
         printTest: (
           printer: string,
-          opts?: { showTime?: boolean; footer?: string | null }
+          opts?: {
+            showTime?: boolean
+            footer?: string | null
+            mostrarRazonSocial?: boolean
+            mostrarRfc?: boolean
+            mostrarSucursal?: boolean
+            mostrarDireccion?: boolean
+          }
         ) => Promise<PrintResultLike>
         openDrawer: (printer: string) => Promise<PrintResultLike>
         printReceipt: (printer: string, data: ReceiptData) => Promise<PrintResultLike>

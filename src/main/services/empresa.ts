@@ -52,7 +52,7 @@ export function getEmpresa(): EmpresaDto | null {
       `SELECT id,
               nombre_comercial AS nombreComercial,
               razon_social     AS razonSocial,
-              rfc, calle, colonia, ciudad, estado,
+              rfc, calle, colonia, cp, ciudad, estado,
               sucursal_nombre  AS sucursalNombre
          FROM empresa
         LIMIT 1`
@@ -65,6 +65,7 @@ export function getEmpresa(): EmpresaDto | null {
         rfc: string | null
         calle: string | null
         colonia: string | null
+        cp: string | null
         ciudad: string | null
         estado: string | null
         sucursalNombre: string
@@ -79,6 +80,7 @@ export function getEmpresa(): EmpresaDto | null {
     rfc: row.rfc ?? null,
     calle: row.calle ?? null,
     colonia: row.colonia ?? null,
+    cp: row.cp ?? null,
     ciudad: row.ciudad ?? null,
     estado: row.estado ?? null,
     sucursalNombre: row.sucursalNombre
@@ -94,6 +96,7 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
   const rfc = nullableTrim(input.rfc)
   const calle = nullableTrim(input.calle)
   const colonia = nullableTrim(input.colonia)
+  const cp = nullableTrim(input.cp)
   const ciudad = nullableTrim(input.ciudad)
   const estado = nullableTrim(input.estado)
 
@@ -112,6 +115,7 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
                 rfc = ?,
                 calle = ?,
                 colonia = ?,
+                cp = ?,
                 ciudad = ?,
                 estado = ?,
                 sucursal_nombre = ?,
@@ -124,6 +128,7 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
         rfc,
         calle,
         colonia,
+        cp,
         ciudad,
         estado,
         sucursalNombre,
@@ -134,9 +139,9 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
     sqlite
       .prepare(
         `INSERT INTO empresa
-           (id, nombre_comercial, razon_social, rfc, calle, colonia, ciudad,
+           (id, nombre_comercial, razon_social, rfc, calle, colonia, cp, ciudad,
             estado, sucursal_nombre, owner_user_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         randomUUID(),
@@ -145,6 +150,7 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
         rfc,
         calle,
         colonia,
+        cp,
         ciudad,
         estado,
         sucursalNombre,

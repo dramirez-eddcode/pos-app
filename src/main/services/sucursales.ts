@@ -67,6 +67,7 @@ function rowToDto(r: {
   rfc: string | null
   calle: string | null
   colonia: string | null
+  cp: string | null
   ciudad: string | null
   estado: string | null
   activa: number
@@ -81,6 +82,7 @@ function rowToDto(r: {
     rfc: r.rfc,
     calle: r.calle,
     colonia: r.colonia,
+    cp: r.cp,
     ciudad: r.ciudad,
     estado: r.estado,
     activa: Boolean(r.activa),
@@ -97,7 +99,7 @@ export function listSucursales(viewerUserId: string): SucursalDto[] {
     .prepare(
       `SELECT id, codigo, nombre,
               razon_social AS razonSocial,
-              rfc, calle, colonia, ciudad, estado, activa,
+              rfc, calle, colonia, cp, ciudad, estado, activa,
               created_at   AS createdAt,
               updated_at   AS updatedAt
          FROM sucursal
@@ -111,6 +113,7 @@ export function listSucursales(viewerUserId: string): SucursalDto[] {
     rfc: string | null
     calle: string | null
     colonia: string | null
+    cp: string | null
     ciudad: string | null
     estado: string | null
     activa: number
@@ -139,9 +142,9 @@ export function createSucursal(
   sqlite
     .prepare(
       `INSERT INTO sucursal
-         (id, codigo, nombre, razon_social, rfc, calle, colonia, ciudad, estado,
+         (id, codigo, nombre, razon_social, rfc, calle, colonia, cp, ciudad, estado,
           activa, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
     )
     .run(
       id,
@@ -151,6 +154,7 @@ export function createSucursal(
       trimOrNull(input.rfc),
       trimOrNull(input.calle),
       trimOrNull(input.colonia),
+      trimOrNull(input.cp),
       trimOrNull(input.ciudad),
       trimOrNull(input.estado),
       now,
@@ -183,7 +187,7 @@ export function updateSucursal(viewerUserId: string, input: UpdateSucursalInput)
     .prepare(
       `UPDATE sucursal
           SET codigo = ?, nombre = ?, razon_social = ?, rfc = ?,
-              calle = ?, colonia = ?, ciudad = ?, estado = ?,
+              calle = ?, colonia = ?, cp = ?, ciudad = ?, estado = ?,
               updated_at = ?
         WHERE id = ?`
     )
@@ -194,6 +198,7 @@ export function updateSucursal(viewerUserId: string, input: UpdateSucursalInput)
       trimOrNull(input.rfc),
       trimOrNull(input.calle),
       trimOrNull(input.colonia),
+      trimOrNull(input.cp),
       trimOrNull(input.ciudad),
       trimOrNull(input.estado),
       now,

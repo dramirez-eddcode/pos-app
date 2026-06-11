@@ -48,4 +48,10 @@ export interface AppSettings {
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
   receiptFooter: string | null
+  // Qué líneas del encabezado se imprimen en los tickets (venta, cancelación,
+  // corte). Permite ocultar p. ej. la razón social. Default: todo visible.
+  ticketMostrarRazonSocial: boolean
+  ticketMostrarRfc: boolean
+  ticketMostrarSucursal: boolean
+  ticketMostrarDireccion: boolean
 }
