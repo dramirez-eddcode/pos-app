@@ -49,7 +49,7 @@ export default function Modal({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-40 flex items-start justify-center pt-20 bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-20 pb-10 bg-black/40 backdrop-blur-sm overflow-y-auto"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}

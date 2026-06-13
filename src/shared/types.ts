@@ -54,4 +54,6 @@ export interface AppSettings {
   ticketMostrarRfc: boolean
   ticketMostrarSucursal: boolean
   ticketMostrarDireccion: boolean
+  // Imprimir el folio ("Nota de mostrador") en el ticket de venta. Default: sí.
+  ticketMostrarFolio: boolean
 }

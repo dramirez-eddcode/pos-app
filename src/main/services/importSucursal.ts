@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { getSqlite } from '../db/connection'
 import { cargaInicialInventario } from './cargaInicial'
+import { requireAdminOrSupervisor } from './permisos'
 import type {
   ApplyFarmaResult,
   ExportFarmaPayload,
@@ -38,27 +39,6 @@ const VALID_IVA_MODOS: readonly IvaModo[] = ['exento', 'sumar', 'incluido'] as c
 
 function normalizeIvaModo(raw: unknown): IvaModo {
   return VALID_IVA_MODOS.includes(raw as IvaModo) ? (raw as IvaModo) : 'exento'
-}
-
-function rolOf(userId: string): string | null {
-  const sqlite = getSqlite()
-  const row = sqlite
-    .prepare(
-      `SELECT t.nombre
-         FROM usuario u
-         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
-        WHERE u.id = ?`
-    )
-    .get(userId) as { nombre: string } | undefined
-  return row?.nombre ?? null
-}
-
-function requireAdmin(viewerUserId: string): void {
-  const rol = rolOf(viewerUserId)
-  if (!rol) throw new Error('Usuario no identificado')
-  if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO') {
-    throw new Error('Requiere permisos de administrador')
-  }
 }
 
 interface InstalacionRow {
@@ -234,7 +214,7 @@ export function applyFarma(
   filePath: string,
   options: { force?: boolean } = {}
 ): ApplyFarmaResult {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
   const local = requireSucursal()
 
   let file: FarmaFile

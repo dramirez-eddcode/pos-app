@@ -11,6 +11,7 @@ import FunctionsModal from '../components/FunctionsModal'
 import CancelVentaModal from '../components/CancelVentaModal'
 import CorteModal from '../components/CorteModal'
 import ProcesosEspecialesModal from '../components/ProcesosEspecialesModal'
+import ImportarDatModal from '../components/ImportarDatModal'
 import EntradaModal from '../components/EntradaModal'
 import CargaInicialModal from '../components/CargaInicialModal'
 import RecibirTraspasoModal from '../components/RecibirTraspasoModal'
@@ -28,7 +29,7 @@ import Logo from '../components/Logo'
 import Spinner from '../components/Spinner'
 import { calcTotals, makeCartItem, precioConIva, type CartItem } from '../lib/cart'
 import { fechaTicket, folio as fmtFolio, horaTicket, money } from '../lib/format'
-import { formatRol, isAdminLike } from '../lib/roles'
+import { formatRol, isAdminLike, isFullAdmin } from '../lib/roles'
 import type { ProductoDto } from '@shared/dto'
 import type { MetodoPago } from '@shared/types'
 import type { ReceiptData, ReceiptPago } from '@shared/receipt'
@@ -65,6 +66,7 @@ export default function POSPage() {
   const [sucursalOpen, setSucursalOpen] = useState(false)
   const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [importarOpen, setImportarOpen] = useState(false)
+  const [importarDatOpen, setImportarDatOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
   const [totalesRec, setTotalesRec] = useState<{
     antier: number
@@ -97,6 +99,7 @@ export default function POSPage() {
     sucursalOpen ||
     catalogoOpen ||
     importarOpen ||
+    importarDatOpen ||
     respaldoOpen
   const isAdmin = isAdminLike(user)
 
@@ -620,6 +623,7 @@ export default function POSPage() {
       <FunctionsModal
         open={functionsOpen}
         onClose={() => setFunctionsOpen(false)}
+        mostrarRespaldo={isFullAdmin(user)}
         onCancelaciones={() => setCancelOpen(true)}
         onCorte={() => setCorteOpen(true)}
         onRespaldo={() => setRespaldoOpen(true)}
@@ -648,16 +652,17 @@ export default function POSPage() {
       <CorteModal open={corteOpen} onClose={() => setCorteOpen(false)} />
 
       {totalesRec && (
-        <div className="fixed bottom-12 right-4 z-20 text-[11px] font-mono text-muted-foreground bg-background/90 backdrop-blur-sm border border-border rounded px-3 py-1.5 shadow-sm select-none">
+        <div className="fixed bottom-12 right-4 z-20 text-[22px] leading-tight font-mono text-muted-foreground bg-background/90 backdrop-blur-sm border border-border rounded px-5 py-3 shadow-sm select-none">
           <span className="font-semibold text-foreground">MS</span>
-          <span className="mx-3">An- {money(totalesRec.antier)}</span>
-          <span className="mr-3">A- {money(totalesRec.ayer)}</span>
+          <span className="mx-5">An- {money(totalesRec.antier)}</span>
+          <span className="mr-5">A- {money(totalesRec.ayer)}</span>
           <span>H- {money(totalesRec.hoy)}</span>
         </div>
       )}
       <ProcesosEspecialesModal
         open={procesosOpen}
         onClose={() => setProcesosOpen(false)}
+        rol={user.rol}
         onEntrada={() => setEntradaOpen(true)}
         onCargaInicial={() => setCargaInicialOpen(true)}
         onRecibirTraspaso={() => setRecibirTraspasoOpen(true)}
@@ -669,6 +674,7 @@ export default function POSPage() {
         onSucursal={() => setSucursalOpen(true)}
         onCatalogo={() => setCatalogoOpen(true)}
         onImportar={() => setImportarOpen(true)}
+        onImportarDat={() => setImportarDatOpen(true)}
       />
       <EntradaModal
         open={entradaOpen}
@@ -723,6 +729,7 @@ export default function POSPage() {
         onClose={() => setImportarOpen(false)}
         onApplied={reloadFolio}
       />
+      <ImportarDatModal open={importarDatOpen} onClose={() => setImportarDatOpen(false)} />
       <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
     </div>
   )

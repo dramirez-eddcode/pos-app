@@ -34,6 +34,7 @@ import {
 } from './services/sucursalProducto'
 import { exportarSucursalAFarma } from './services/exportSucursal'
 import { applyFarma, pickFarma } from './services/importSucursal'
+import { applyDat, pickDat } from './services/importLegacyDat'
 import {
   bulkUpsertProductos,
   createProducto,
@@ -386,6 +387,15 @@ export function registerIpcHandlers(): void {
     'import:apply-farma',
     async (_e, viewerUserId: string, filePath: string, force?: boolean) =>
       applyFarma(viewerUserId, filePath, { force: Boolean(force) })
+  )
+
+  // ── import .dat (actualización del sistema legacy) ──────────────────────
+  ipcMain.handle('import:pick-dat', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pickDat(win)
+  })
+  ipcMain.handle('import:apply-dat', async (_e, viewerUserId: string, filePath: string) =>
+    applyDat(viewerUserId, filePath)
   )
 
   // ── empresa / sucursal ──────────────────────────────────────────────────

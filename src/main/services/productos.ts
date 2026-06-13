@@ -12,27 +12,7 @@ import type {
   UpdateProductoInput
 } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
-
-function rolOf(userId: string): string | null {
-  const sqlite = getSqlite()
-  const row = sqlite
-    .prepare(
-      `SELECT t.nombre
-         FROM usuario u
-         JOIN tipo_usuario t ON t.id = u.tipo_usuario_id
-        WHERE u.id = ?`
-    )
-    .get(userId) as { nombre: string } | undefined
-  return row?.nombre ?? null
-}
-
-function requireAdmin(viewerUserId: string): void {
-  const rol = rolOf(viewerUserId)
-  if (!rol) throw new Error('Usuario no identificado')
-  if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO') {
-    throw new Error('Requiere permisos de administrador')
-  }
-}
+import { requireAdminOrSupervisor } from './permisos'
 
 function nullableTrim(value: string | null | undefined): string | null {
   if (value == null) return null
@@ -290,6 +270,7 @@ export function getLotesByProducto(
  * configuración fiscal, no un cambio con motivos comerciales.
  */
 export function updateIvaProductos(input: UpdateIvaInput): UpdateIvaResult {
+  requireAdminOrSupervisor(input.cajeroId)
   const sqlite = getSqlite()
   if (input.items.length === 0) throw new Error('Sin productos a actualizar')
 
@@ -345,7 +326,7 @@ export function updateIvaProductos(input: UpdateIvaInput): UpdateIvaResult {
  * Incluye stock min/max y existencias totales para visibilidad de gestión.
  */
 export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
   const db = getSqlite()
   const rows = db
     .prepare(
@@ -401,7 +382,7 @@ export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
 }
 
 export function createProducto(viewerUserId: string, input: CreateProductoInput): { id: string } {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
 
   const codigo = (input.codigo ?? '').trim()
   const nombre = (input.nombre ?? '').trim()
@@ -463,7 +444,7 @@ export function updateProductoBasico(
   viewerUserId: string,
   input: UpdateProductoInput
 ): { ok: true } {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
   if (!input.id) throw new Error('ID requerido')
 
   const codigo = (input.codigo ?? '').trim()
@@ -528,7 +509,7 @@ export function bulkUpsertProductos(
   viewerUserId: string,
   input: BulkUpsertProductosInput
 ): BulkUpsertProductosResult {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
   if (!input.items || input.items.length === 0) throw new Error('Sin productos a importar')
 
   const sqlite = getSqlite()
@@ -630,7 +611,7 @@ export function toggleActivoProducto(
   productoId: string,
   activo: boolean
 ): { ok: true } {
-  requireAdmin(viewerUserId)
+  requireAdminOrSupervisor(viewerUserId)
   const sqlite = getSqlite()
   const target = sqlite.prepare('SELECT id FROM producto WHERE id = ?').get(productoId) as
     | { id: string }

@@ -2,6 +2,7 @@ import { BrowserWindow, dialog } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { getSqlite } from '../db/connection'
+import { requireAdminOrSupervisor } from './permisos'
 import type {
   AplicarTraspasoResult,
   CrearTraspasoInput,
@@ -522,7 +523,7 @@ export function aplicarTraspaso(
   bodegaDestinoId?: string | null
 ): AplicarTraspasoResult {
   try {
-    requireAdmin(viewerUserId)
+    requireAdminOrSupervisor(viewerUserId)
     const instal = getInstalacion()
 
     const file = leerYValidar(filePath)

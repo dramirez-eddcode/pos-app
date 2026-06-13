@@ -65,6 +65,9 @@ export default function CorteModal({ open, onClose }: Props) {
   const [cerrandoPendiente, setCerrandoPendiente] = useState<string | null>(null)
   const [finales, setFinales] = useState<CorteFinalHistItem[]>([])
   const [reimprimiendo, setReimprimiendo] = useState<string | null>(null)
+  // Corte parcial mostrado en pantalla (sin imprimir): el usuario lo cierra cuando quiere.
+  const [corteEnPantalla, setCorteEnPantalla] = useState<CreateCorteResult | null>(null)
+  const [imprimiendoPantalla, setImprimiendoPantalla] = useState(false)
   const tableBodyRef = useRef<HTMLTableSectionElement>(null)
   const detailRef = useRef<HTMLDivElement>(null)
 
@@ -124,7 +127,8 @@ export default function CorteModal({ open, onClose }: Props) {
           entradasCaja: r.totales.entradasCaja,
           salidasCaja: r.totales.salidasCaja,
           cancelaciones: r.totales.cancelaciones,
-          efectivoEsperado: r.totales.efectivoEsperado
+          efectivoEsperado: r.totales.efectivoEsperado,
+          parcialesDelDia: r.parcialesDelDia
         })
         if (!pr.ok) {
           toast.warning('Corte registrado pero falló la impresión', {
@@ -147,7 +151,14 @@ export default function CorteModal({ open, onClose }: Props) {
       setCerrando(tipo)
       try {
         const r = await window.api.corte.create(user.id, tipo)
-        await imprimirTicketCorte(r)
+        // Corte parcial: NO se imprime de una; se muestra en pantalla para que
+        // lo lean (p.ej. por teléfono) y decidan imprimirlo o sólo cerrarlo.
+        // El corte final SÍ se imprime siempre.
+        if (tipo === 'PARCIAL') {
+          setCorteEnPantalla(r)
+        } else {
+          await imprimirTicketCorte(r)
+        }
         toast.success(
           `${TIPO_LABEL[tipo]} registrado · folios ${r.folioInicio}–${r.folioFin}`,
           { description: `Total: $${money(r.totales.total)} · Efectivo en caja: $${money(r.totales.efectivoEsperado)}` }
@@ -164,6 +175,18 @@ export default function CorteModal({ open, onClose }: Props) {
     },
     [user, cerrando, imprimirTicketCorte, load]
   )
+
+  // Imprimir el corte parcial que está en pantalla y cerrarlo.
+  const imprimirCorteEnPantalla = useCallback(async () => {
+    if (!corteEnPantalla) return
+    setImprimiendoPantalla(true)
+    try {
+      await imprimirTicketCorte(corteEnPantalla)
+    } finally {
+      setImprimiendoPantalla(false)
+      setCorteEnPantalla(null)
+    }
+  }, [corteEnPantalla, imprimirTicketCorte])
 
   // ── Corte final de un día anterior que quedó pendiente ──────────────────
   const cerrarCortePendiente = useCallback(
@@ -249,17 +272,24 @@ export default function CorteModal({ open, onClose }: Props) {
 
   const confirmarCorte = useCallback(
     (tipo: CorteTipo) => {
+      const esFinal = tipo === 'FINAL'
       toast.warning(`¿Confirmar ${TIPO_LABEL[tipo].toLowerCase()}?`, {
         id: `corte-confirm-${tipo}`,
         description:
-          tipo === 'FINAL'
-            ? 'Cierra el rango de folios actual. Se imprimirá el ticket de corte.'
-            : 'Cierra el rango de folios actual y abre uno nuevo.',
-        duration: 8000,
+          esFinal
+            ? 'Cierra TODO el día completo (desde las 00:00), incluyendo lo ya cubierto por parciales o cambios de turno. Se imprimirá el ticket de corte.'
+            : tipo === 'PARCIAL'
+              ? 'Cierra el rango de folios actual y abre uno nuevo. Verás el corte en pantalla; desde ahí podrás imprimirlo o sólo cerrarlo.'
+              : 'Cierra el rango de folios actual y abre uno nuevo.',
+        // El corte final NO se auto-cierra: hay que confirmar o cancelar a propósito.
+        duration: esFinal ? Infinity : 8000,
         action: {
-          label: 'Sí, cerrar',
+          label: esFinal ? 'Sí, hacer corte final' : 'Sí, cerrar',
           onClick: () => cerrarCorte(tipo)
-        }
+        },
+        ...(esFinal
+          ? { cancel: { label: 'Cancelar', onClick: () => {} } }
+          : {})
       })
     },
     [cerrarCorte]
@@ -340,6 +370,7 @@ export default function CorteModal({ open, onClose }: Props) {
   const finTxt = data ? new Date(data.fechaHasta).toLocaleString('es-MX') : ''
 
   return (
+    <>
     <Modal
       open={open}
       title={`Corte en pantalla — ${fechaCabecera.toLocaleDateString('es-MX')}`}
@@ -640,7 +671,7 @@ export default function CorteModal({ open, onClose }: Props) {
                   <button
                     type="button"
                     onClick={() => confirmarCorte('FINAL')}
-                    disabled={cerrando !== null || !data.pendiente || pendientesDias.length > 0}
+                    disabled={cerrando !== null || data.folios.length === 0 || pendientesDias.length > 0}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold"
                   >
                     {cerrando === 'FINAL' ? (
@@ -651,11 +682,12 @@ export default function CorteModal({ open, onClose }: Props) {
                       'Corte final'
                     )}
                     <InfoTooltip title="Corte final" align="end">
-                      El <strong>cierre del día</strong>. Marca el fin contable de la jornada.
-                      Todo el efectivo y totales quedan congelados como registro histórico.
+                      El <strong>cierre del día COMPLETO</strong>: cubre todas las ventas y caja
+                      desde las 00:00 hasta ahora, <strong>incluyendo</strong> lo que ya hayan
+                      cubierto parciales o cambios de turno. Su ticket cuadra con las cifras del
+                      día en pantalla.
                       <div className="mt-1.5 pt-1.5 border-t border-primary-foreground/20 italic">
-                        Ej: al apagar la tienda. Normalmente sólo se hace uno por día; dos
-                        cortes finales el mismo día es raro.
+                        Ej: al apagar la tienda. Normalmente sólo se hace uno por día.
                       </div>
                     </InfoTooltip>
                   </button>
@@ -838,6 +870,62 @@ export default function CorteModal({ open, onClose }: Props) {
         </div>
       </footer>
     </Modal>
+
+    {corteEnPantalla && (
+      <Modal
+        open
+        title={`Corte parcial — folios ${corteEnPantalla.folioInicio}–${corteEnPantalla.folioFin}`}
+        onClose={() => (imprimiendoPantalla ? undefined : setCorteEnPantalla(null))}
+        maxWidth="max-w-sm"
+      >
+        <div className="p-4 space-y-3 text-sm">
+          <p className="text-xs text-muted-foreground">
+            Corte parcial registrado. Lee las cifras (por ejemplo para pasarlas por teléfono) y
+            luego imprime el ticket o sólo ciérralo.
+          </p>
+          <div className="space-y-1.5 font-mono">
+            <Row label="Notas vendidas" value={String(corteEnPantalla.totales.foliosVendidos)} />
+            <Row label="Canceladas" value={String(corteEnPantalla.totales.foliosCancelados)} />
+            <div className="border-t border-border my-1.5" />
+            <Row label="Efectivo" value={`$${money(corteEnPantalla.totales.efectivo)}`} />
+            <Row label="Tarjeta" value={`$${money(corteEnPantalla.totales.tarjeta)}`} />
+            <Row label="Transferencia" value={`$${money(corteEnPantalla.totales.transferencia)}`} />
+            {corteEnPantalla.totales.otro > 0 && (
+              <Row label="Otros" value={`$${money(corteEnPantalla.totales.otro)}`} />
+            )}
+            <Row label="Total vendido" value={`$${money(corteEnPantalla.totales.total)}`} bold />
+            <div className="border-t border-border my-1.5" />
+            <Row label="Entradas caja" value={`$${money(corteEnPantalla.totales.entradasCaja)}`} />
+            <Row label="Salidas caja" value={`$${money(corteEnPantalla.totales.salidasCaja)}`} />
+            <Row
+              label="Efectivo en caja"
+              value={`$${money(corteEnPantalla.totales.efectivoEsperado)}`}
+              bold
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            <button
+              type="button"
+              onClick={imprimirCorteEnPantalla}
+              disabled={imprimiendoPantalla}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              {imprimiendoPantalla ? <Spinner size={14} /> : <Printer className="size-3.5" />}
+              {imprimiendoPantalla ? 'Imprimiendo…' : 'Imprimir ticket'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCorteEnPantalla(null)}
+              disabled={imprimiendoPantalla}
+              className="px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 font-semibold"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )}
+    </>
   )
 }
 

@@ -20,6 +20,8 @@ export interface AppSettings {
   ticketMostrarRfc: boolean
   ticketMostrarSucursal: boolean
   ticketMostrarDireccion: boolean
+  // Imprimir el folio ("Nota de mostrador") en el ticket de venta. Default: sí.
+  ticketMostrarFolio: boolean
 }
 
 const DEFAULTS: AppSettings = {
@@ -30,7 +32,8 @@ const DEFAULTS: AppSettings = {
   ticketMostrarRazonSocial: true,
   ticketMostrarRfc: true,
   ticketMostrarSucursal: true,
-  ticketMostrarDireccion: true
+  ticketMostrarDireccion: true,
+  ticketMostrarFolio: true
 }
 
 function settingsPath(): string {

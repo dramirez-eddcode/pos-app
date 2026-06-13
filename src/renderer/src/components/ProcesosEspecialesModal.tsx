@@ -4,6 +4,7 @@ import {
   Boxes,
   Building2,
   Download,
+  FileUp,
   PackageCheck,
   PackageMinus,
   PackagePlus,
@@ -21,12 +22,16 @@ interface Option {
   icon: ReactNode
   disabled?: boolean
   disabledReason?: string
+  /** Acento de color para destacar la opción (ej. el .dat legacy en morado). */
+  accent?: 'purple'
   handler: () => void
 }
 
 interface Props {
   open: boolean
   onClose: () => void
+  /** Rol del usuario (en mayúsculas en BD). El SUPERVISOR ve un subconjunto. */
+  rol: string
   onEntrada: () => void
   onCargaInicial: () => void
   onRecibirTraspaso: () => void
@@ -38,15 +43,27 @@ interface Props {
   onSucursal: () => void
   onCatalogo: () => void
   onImportar: () => void
+  onImportarDat: () => void
 }
 
+// El SUPERVISOR (de sucursal) sólo puede recibir traspasos y actualizar datos:
+// catálogo, precios/IVA, aplicar la actualización de la matriz (.farma) y el
+// archivo legacy (.dat). El resto es exclusivo de admins.
+const SUPERVISOR_PROCESOS = new Set([
+  'recibir-traspaso',
+  'precios',
+  'catalogo',
+  'importar',
+  'importar-dat'
+])
+
 /**
- * Menú "Procesos Especiales" (F10 en el legacy). Por ahora sólo "Entrada de
- * mercancía" está activa; el resto son stubs que muestran su roadmap.
+ * Menú "Procesos Especiales" (F10 en el legacy).
  */
 export default function ProcesosEspecialesModal({
   open,
   onClose,
+  rol,
   onEntrada,
   onCargaInicial,
   onRecibirTraspaso,
@@ -57,9 +74,10 @@ export default function ProcesosEspecialesModal({
   onUsuarios,
   onSucursal,
   onCatalogo,
-  onImportar
+  onImportar,
+  onImportarDat
 }: Props) {
-  const options: Option[] = [
+  const allOptions: Option[] = [
     {
       id: 'entrada',
       label: 'Entrada de mercancía',
@@ -169,8 +187,24 @@ export default function ProcesosEspecialesModal({
         onClose()
         onImportar()
       }
+    },
+    {
+      id: 'importar-dat',
+      label: 'Importar archivo legacy (.dat)',
+      hint: 'Carga el .dat del sistema viejo: catálogo, descripciones y precios',
+      icon: <FileUp className="size-5 text-purple-600" />,
+      accent: 'purple',
+      handler: () => {
+        onClose()
+        onImportarDat()
+      }
     }
   ]
+
+  const options =
+    rol?.toUpperCase() === 'SUPERVISOR'
+      ? allOptions.filter((o) => SUPERVISOR_PROCESOS.has(o.id))
+      : allOptions
 
   const firstEnabledIdx = options.findIndex((o) => !o.disabled)
   const [idx, setIdx] = useState(Math.max(0, firstEnabledIdx))
@@ -243,7 +277,9 @@ export default function ProcesosEspecialesModal({
               ${
                 opt.disabled
                   ? 'border-border bg-muted/30 opacity-60 cursor-not-allowed'
-                  : 'border-border hover:bg-muted focus:bg-muted focus:border-primary focus:ring-2 focus:ring-primary/40'
+                  : opt.accent === 'purple'
+                    ? 'border-purple-400 bg-purple-50 hover:bg-purple-100 focus:bg-purple-100 focus:border-purple-500 focus:ring-2 focus:ring-purple-300'
+                    : 'border-border hover:bg-muted focus:bg-muted focus:border-primary focus:ring-2 focus:ring-primary/40'
               }`}
           >
             {opt.icon}

@@ -14,6 +14,8 @@ interface Option {
 interface Props {
   open: boolean
   onClose: () => void
+  /** El respaldo de datos es exclusivo de admins (no supervisor/cajero). */
+  mostrarRespaldo: boolean
   onCancelaciones: () => void
   onCorte: () => void
   onRespaldo: () => void
@@ -27,12 +29,13 @@ interface Props {
 export default function FunctionsModal({
   open,
   onClose,
+  mostrarRespaldo,
   onCancelaciones,
   onCorte,
   onRespaldo,
   onSalir
 }: Props) {
-  const options: Option[] = [
+  const allOptions: Option[] = [
     {
       id: 'corte',
       label: 'Corte en pantalla',
@@ -72,6 +75,8 @@ export default function FunctionsModal({
       handler: onSalir
     }
   ]
+
+  const options = allOptions.filter((o) => o.id !== 'respaldo' || mostrarRespaldo)
 
   const [idx, setIdx] = useState(0)
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([])

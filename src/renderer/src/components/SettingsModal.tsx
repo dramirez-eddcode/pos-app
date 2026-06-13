@@ -27,6 +27,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [mostrarRfc, setMostrarRfc] = useState<boolean>(true)
   const [mostrarSucursal, setMostrarSucursal] = useState<boolean>(true)
   const [mostrarDireccion, setMostrarDireccion] = useState<boolean>(true)
+  const [mostrarFolio, setMostrarFolio] = useState<boolean>(true)
   const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save'>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
@@ -52,6 +53,7 @@ export default function SettingsModal({ open, onClose }: Props) {
     setMostrarRfc(settings?.ticketMostrarRfc ?? true)
     setMostrarSucursal(settings?.ticketMostrarSucursal ?? true)
     setMostrarDireccion(settings?.ticketMostrarDireccion ?? true)
+    setMostrarFolio(settings?.ticketMostrarFolio ?? true)
   }, [open, loadPrinters, settings])
 
   const printTest = async () => {
@@ -68,7 +70,8 @@ export default function SettingsModal({ open, onClose }: Props) {
       mostrarRazonSocial,
       mostrarRfc,
       mostrarSucursal,
-      mostrarDireccion
+      mostrarDireccion,
+      mostrarFolio
     })
     setBusy(null)
     if (r.ok) toast.success('Ticket de prueba enviado', { description: `${r.bytesSent} bytes → ${selected}` })
@@ -98,7 +101,8 @@ export default function SettingsModal({ open, onClose }: Props) {
         ticketMostrarRazonSocial: mostrarRazonSocial,
         ticketMostrarRfc: mostrarRfc,
         ticketMostrarSucursal: mostrarSucursal,
-        ticketMostrarDireccion: mostrarDireccion
+        ticketMostrarDireccion: mostrarDireccion,
+        ticketMostrarFolio: mostrarFolio
       })
       toast.success('Configuración guardada')
       onClose()
@@ -198,10 +202,19 @@ export default function SettingsModal({ open, onClose }: Props) {
               />
               Dirección
             </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarFolio}
+                onChange={(e) => setMostrarFolio(e.target.checked)}
+              />
+              Folio (nota de mostrador)
+            </label>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Lo desmarcado no se imprime en ningún ticket (venta, cancelación y corte). Usa
-            "Ticket de prueba" para previsualizar antes de guardar.
+            Lo desmarcado no se imprime. Razón social, RFC, sucursal y dirección aplican a todos los
+            tickets (venta, cancelación y corte); el folio aplica al ticket de venta. Usa "Ticket de
+            prueba" para previsualizar antes de guardar.
           </p>
         </section>
 

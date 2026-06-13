@@ -49,6 +49,8 @@ export async function printReceipt(printer: string, data: ReceiptDataDto): Promi
   const internal: ReceiptData = {
     ...data,
     empresa: empresaSegunSettings(data.empresa),
+    // El folio se imprime según la config local (igual que el encabezado).
+    showFolio: getSettings().ticketMostrarFolio,
     fecha: new Date(data.fecha)
   }
   const bytes = buildReceiptBytes(internal)
@@ -90,6 +92,7 @@ export interface PrintTestOpts {
   mostrarRfc?: boolean
   mostrarSucursal?: boolean
   mostrarDireccion?: boolean
+  mostrarFolio?: boolean
 }
 
 export async function printTest(printer: string, opts?: PrintTestOpts): Promise<PrintResult> {

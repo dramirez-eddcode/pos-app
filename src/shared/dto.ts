@@ -4,6 +4,7 @@
  */
 
 import type { IvaModo, MetodoPago } from './types'
+import type { CorteParcialResumen } from './receipt'
 
 export type InstalacionTipo = 'MATRIZ' | 'SUCURSAL'
 
@@ -956,6 +957,35 @@ export interface BulkUpsertProductosResult {
   errores: { fila: number; codigo: string; error: string }[]
 }
 
+// ── Importación de archivo legacy (.dat del sistema viejo) ──────────────────
+// El .dat (texto Windows-1252, campos separados por «æ») trae catálogo +
+// precios. Se importa con un upsert SUAVE: crea nuevos y, en los existentes,
+// sólo toca nombre/sustancia/precio/estatus — preserva costo, stock mín/máx,
+// laboratorio, descripción e IVA ya configurados en este equipo.
+
+/** Preview que devuelve `pick` para confirmar antes de aplicar. */
+export interface ImportDatPreview {
+  filePath: string
+  fileName: string
+  totalRegistros: number // registros leídos de la sección PRODUCTOS
+  aCrear: number // códigos que no existen en el catálogo local
+  aActualizar: number // códigos que ya existen
+  aDesactivar: number // existentes que vienen con estatus 'D' (subconjunto de aActualizar)
+  invalidos: number // registros con código/nombre/precio inválido (se omiten)
+}
+
+export type PickDatResult =
+  | { ok: true; preview: ImportDatPreview }
+  | { ok: false; cancelled?: boolean; error?: string }
+
+export interface ApplyDatResult {
+  creados: number
+  actualizados: number
+  desactivados: number // productos puestos en activo=0 por estatus 'D'
+  sinCambio: number // existentes idénticos (no se tocaron)
+  invalidos: string[] // códigos/renglones omitidos por datos inválidos
+}
+
 export interface UsuarioListItem {
   id: string
   login: string
@@ -1023,6 +1053,8 @@ export interface CorteReimpresionDto {
   salidasCaja: number
   cancelaciones: number
   efectivoEsperado: number
+  // Sólo cortes FINAL: parciales / cambios de turno del mismo día.
+  parcialesDelDia?: CorteParcialResumen[]
 }
 
 export interface CreateCorteInput {
@@ -1053,4 +1085,6 @@ export interface CreateCorteResult {
   fecha: string // ISO
   tipo: CorteTipo
   totales: CorteTotales
+  // Sólo cortes FINAL: parciales / cambios de turno del mismo día (para el ticket).
+  parcialesDelDia?: CorteParcialResumen[]
 }

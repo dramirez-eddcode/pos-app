@@ -38,6 +38,8 @@ import type {
   CreateVentaInput,
   CreateVentaResult,
   ApplyFarmaResult,
+  ApplyDatResult,
+  PickDatResult,
   BodegaDto,
   BootstrapStateDto,
   BulkUpsertProductosInput,
@@ -200,6 +202,12 @@ const api = {
       force?: boolean
     ): Promise<ApplyFarmaResult> =>
       ipcRenderer.invoke('import:apply-farma', viewerUserId, filePath, Boolean(force))
+  },
+
+  importDat: {
+    pick: (): Promise<PickDatResult> => ipcRenderer.invoke('import:pick-dat'),
+    apply: (viewerUserId: string, filePath: string): Promise<ApplyDatResult> =>
+      ipcRenderer.invoke('import:apply-dat', viewerUserId, filePath)
   },
 
   productos: {
@@ -383,6 +391,7 @@ const api = {
         mostrarRfc?: boolean
         mostrarSucursal?: boolean
         mostrarDireccion?: boolean
+        mostrarFolio?: boolean
       }
     ): Promise<PrintResultLike> => ipcRenderer.invoke('printer:print-test', printer, opts),
     openDrawer: (printer: string): Promise<PrintResultLike> =>

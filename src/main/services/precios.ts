@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getSqlite } from '../db/connection'
+import { requireAdminOrSupervisor } from './permisos'
 import type { UpdatePreciosInput, UpdatePreciosResult } from '@shared/dto'
 
 /**
@@ -11,6 +12,7 @@ import type { UpdatePreciosInput, UpdatePreciosResult } from '@shared/dto'
  * como actualización ni genera historia).
  */
 export function updatePrecios(input: UpdatePreciosInput): UpdatePreciosResult {
+  requireAdminOrSupervisor(input.cajeroId)
   const sqlite = getSqlite()
   if (input.items.length === 0) throw new Error('Sin precios a actualizar')
 

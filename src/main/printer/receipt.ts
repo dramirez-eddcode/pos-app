@@ -100,7 +100,7 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
 
   // ── Folio + fecha (izquierda, con ": " alineado como en legacy) ───────────
   p.align('left')
-  p.line(`Nota de mostrador : ${formatFolio(data.folio)}`)
+  if (data.showFolio !== false) p.line(`Nota de mostrador : ${formatFolio(data.folio)}`)
   p.line(`Fecha de Venta    : ${formatFecha(data.fecha)}`)
   if (data.showTime) p.line(`Hora de Venta     : ${formatHora(data.fecha)}`)
   if (data.cajero) p.line(`Cajero            : ${data.cajero}`)
@@ -262,6 +262,25 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
   p.line(`Canceladas   : ${data.foliosCancelados}`)
   p.feed(1)
 
+  // Corte final: desglose de los cortes parciales / cambios de turno del día,
+  // antes del total del día completo.
+  if (data.tipo === 'FINAL' && data.parcialesDelDia && data.parcialesDelDia.length > 0) {
+    p.align('center').line('--- CORTES PARCIALES DEL DIA ---')
+    p.align('left')
+    let sumaParciales = 0
+    for (const c of data.parcialesDelDia) {
+      const etiqueta = c.tipo === 'CAMBIO_TURNO' ? 'Cambio turno' : 'Parcial'
+      sumaParciales += c.total
+      p.line(`${etiqueta} ${formatHora(new Date(c.fecha))}  (folios ${c.folioInicio}-${c.folioFin})`)
+      p.line(labelValue('  Total', c.total.toFixed(2)))
+    }
+    p.line(padRight('', COLS_DEFAULT - 10) + '----------')
+    p.bold(true).line(labelValue('Suma parciales', sumaParciales.toFixed(2))).bold(false)
+    p.feed(1)
+    p.align('center').line('=== TOTAL DEL DIA ===')
+    p.feed(1)
+  }
+
   // Ventas por método
   p.align('center').line('--- VENTAS POR METODO ---')
   p.align('left')
@@ -324,11 +343,13 @@ export function buildTestReceiptBytes(opts?: {
   mostrarRfc?: boolean
   mostrarSucursal?: boolean
   mostrarDireccion?: boolean
+  mostrarFolio?: boolean
 }): Uint8Array {
   const now = new Date()
   const conDireccion = opts?.mostrarDireccion ?? true
   return buildReceiptBytes({
     showTime: opts?.showTime ?? false,
+    showFolio: opts?.mostrarFolio ?? true,
     footer: opts?.footer ?? null,
     empresa: {
       nombreComercial: (opts?.mostrarRazonSocial ?? true) ? 'FARMACIAS MS - TICKET DE PRUEBA' : '',

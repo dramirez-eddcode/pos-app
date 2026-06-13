@@ -18,6 +18,7 @@ import {
   Search,
   Download,
   Upload,
+  FileUp,
   FileDown
 } from 'lucide-react'
 import Papa from 'papaparse'
@@ -31,6 +32,7 @@ import type {
   BulkProductoRow,
   CargaInicialItemInput,
   CreateProductoInput,
+  ImportDatPreview,
   ProductoCatalogoItem,
   UpdateProductoInput
 } from '@shared/dto'
@@ -76,6 +78,9 @@ export default function CatalogoProductosModal({
     null
   )
   const reempFileRef = useRef<HTMLInputElement>(null)
+  // Importación del .dat legacy: preview pendiente de confirmar + flag de aplicación.
+  const [datPreview, setDatPreview] = useState<ImportDatPreview | null>(null)
+  const [datApplying, setDatApplying] = useState(false)
   const esSuper = user?.rol === 'SUPERUSUARIO'
 
   const load = useCallback(async () => {
@@ -352,10 +357,47 @@ export default function CatalogoProductosModal({
     [user, load]
   )
 
+  // ── Importar .dat legacy: abre diálogo (main), muestra preview, confirma ──
+  const onImportDat = useCallback(async () => {
+    if (!user) return
+    const r = await window.api.importDat.pick()
+    if (!r.ok) {
+      if (!r.cancelled) {
+        toast.error('No pude leer el archivo .dat', { description: r.error })
+      }
+      return
+    }
+    setDatPreview(r.preview)
+  }, [user])
+
+  const onApplyDat = useCallback(async () => {
+    if (!user || !datPreview) return
+    setDatApplying(true)
+    try {
+      const res = await window.api.importDat.apply(user.id, datPreview.filePath)
+      const parts = [`${res.creados} creados`, `${res.actualizados} actualizados`]
+      if (res.desactivados > 0) parts.push(`${res.desactivados} desactivados`)
+      if (res.sinCambio > 0) parts.push(`${res.sinCambio} sin cambio`)
+      if (res.invalidos.length > 0) {
+        parts.push(`${res.invalidos.length} omitidos`)
+        console.warn('[import .dat] registros omitidos:', res.invalidos.slice(0, 100))
+      }
+      toast.success('Archivo .dat importado', { description: parts.join(' · ') })
+      setDatPreview(null)
+      await load()
+    } catch (e) {
+      toast.error('Falló la importación del .dat', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setDatApplying(false)
+    }
+  }, [user, datPreview, load])
+
   return (
     <>
       <Modal
-        open={open && !sub && !reemp}
+        open={open && !sub && !reemp && !datPreview}
         title="Catálogo de productos"
         onClose={onClose}
         maxWidth="max-w-6xl"
@@ -473,6 +515,16 @@ export default function CatalogoProductosModal({
               className="hidden"
               onChange={onFileSelected}
             />
+            <button
+              type="button"
+              onClick={onImportDat}
+              disabled={importing || datApplying}
+              title="Importa el archivo .dat que genera el sistema legacy (catálogo, descripciones y precios). Crea nuevos y actualiza existentes; conserva costo, stock e IVA."
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 border border-purple-400 bg-purple-50 text-purple-700 font-medium rounded hover:bg-purple-100 disabled:opacity-50"
+            >
+              <FileUp className="size-3.5 text-purple-600" />
+              Importar .dat (legacy)
+            </button>
             {permitirReemplazoExistencias && esSuper && (
               <>
                 <button
@@ -703,6 +755,71 @@ export default function CatalogoProductosModal({
             await load()
           }}
         />
+      )}
+
+      {datPreview && (
+        <Modal
+          open
+          title="Importar archivo legacy (.dat)"
+          onClose={() => (datApplying ? undefined : setDatPreview(null))}
+          maxWidth="max-w-lg"
+        >
+          <div className="space-y-4 text-sm">
+            <p className="text-muted-foreground">
+              Archivo: <span className="font-mono text-foreground">{datPreview.fileName}</span> ·{' '}
+              {datPreview.totalRegistros.toLocaleString('es-MX')} registros leídos.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded border border-border px-3 py-2">
+                <div className="text-xl font-semibold text-emerald-600">
+                  {datPreview.aCrear.toLocaleString('es-MX')}
+                </div>
+                <div className="text-xs text-muted-foreground">productos nuevos (IVA exento)</div>
+              </div>
+              <div className="rounded border border-border px-3 py-2">
+                <div className="text-xl font-semibold text-blue-600">
+                  {datPreview.aActualizar.toLocaleString('es-MX')}
+                </div>
+                <div className="text-xs text-muted-foreground">existentes a actualizar</div>
+              </div>
+              <div className="rounded border border-border px-3 py-2">
+                <div className="text-xl font-semibold text-amber-600">
+                  {datPreview.aDesactivar.toLocaleString('es-MX')}
+                </div>
+                <div className="text-xs text-muted-foreground">se marcarán inactivos (baja)</div>
+              </div>
+              <div className="rounded border border-border px-3 py-2">
+                <div className="text-xl font-semibold text-muted-foreground">
+                  {datPreview.invalidos.toLocaleString('es-MX')}
+                </div>
+                <div className="text-xs text-muted-foreground">omitidos (datos inválidos)</div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Se actualizan nombre, sustancia y precio. Se conservan costo, stock mín/máx,
+              laboratorio, descripción e IVA de los productos existentes.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDatPreview(null)}
+                disabled={datApplying}
+                className="px-3 py-1.5 border border-border rounded hover:bg-muted disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={onApplyDat}
+                disabled={datApplying}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+              >
+                {datApplying ? <Spinner size={14} /> : <FileUp className="size-3.5" />}
+                {datApplying ? 'Importando…' : 'Aplicar importación'}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </>
   )

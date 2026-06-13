@@ -40,6 +40,8 @@ export interface ReceiptData {
   cajero?: string
   openDrawer?: boolean
   showTime?: boolean
+  // Imprimir el folio ("Nota de mostrador"). Si es false, se omite. Default: sí.
+  showFolio?: boolean
   footer?: string | null
 }
 
@@ -55,6 +57,15 @@ export interface CancelReceiptData {
 }
 
 export type CorteReceiptTipo = 'PARCIAL' | 'FINAL' | 'CAMBIO_TURNO'
+
+/** Resumen de un corte parcial / cambio de turno del día (para el ticket del corte final). */
+export interface CorteParcialResumen {
+  tipo: CorteReceiptTipo
+  fecha: string // ISO
+  folioInicio: number
+  folioFin: number
+  total: number
+}
 
 export interface CorteReceiptData {
   empresa: ReceiptEmpresa
@@ -76,4 +87,7 @@ export interface CorteReceiptData {
   salidasCaja: number
   cancelaciones: number
   efectivoEsperado: number
+  // Sólo en el corte FINAL: desglose de los cortes parciales / cambios de turno
+  // hechos ese mismo día, para que el ticket final muestre parciales + total del día.
+  parcialesDelDia?: CorteParcialResumen[]
 }

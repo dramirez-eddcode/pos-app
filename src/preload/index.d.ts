@@ -37,6 +37,8 @@ import type {
   CreateVentaInput,
   CreateVentaResult,
   ApplyFarmaResult,
+  ApplyDatResult,
+  PickDatResult,
   BodegaDto,
   BootstrapStateDto,
   BulkUpsertProductosInput,
@@ -175,6 +177,10 @@ declare global {
           force?: boolean
         ) => Promise<ApplyFarmaResult>
       }
+      importDat: {
+        pick: () => Promise<PickDatResult>
+        apply: (viewerUserId: string, filePath: string) => Promise<ApplyDatResult>
+      }
       productos: {
         search: (query: ProductoSearchQuery) => Promise<ProductoDto[]>
         byCodigo: (codigo: string) => Promise<ProductoDto | null>
@@ -304,6 +310,7 @@ declare global {
             mostrarRfc?: boolean
             mostrarSucursal?: boolean
             mostrarDireccion?: boolean
+            mostrarFolio?: boolean
           }
         ) => Promise<PrintResultLike>
         openDrawer: (printer: string) => Promise<PrintResultLike>

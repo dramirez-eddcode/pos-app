@@ -68,8 +68,11 @@ export async function exportMovimientoPdf(
       const pdf = await win.webContents.printToPDF({
         pageSize: 'Letter',
         printBackground: true,
-        preferCSSPageSize: true,
-        // Pie de página por hoja (se dibuja en el margen inferior del @page).
+        // Márgenes explícitos (pulgadas). NO usamos preferCSSPageSize: con él,
+        // Chromium ignora las plantillas de encabezado/pie y el paginado no sale.
+        // El margen inferior reserva el espacio donde se dibuja "Página X de Y".
+        margins: { marginType: 'custom', top: 0.5, bottom: 0.6, left: 0.5, right: 0.5 },
+        // Pie de página por hoja (se dibuja en el margen inferior).
         displayHeaderFooter: true,
         headerTemplate: '<span></span>',
         footerTemplate: `
@@ -304,23 +307,23 @@ export async function imprimirMovimiento(folio: string): Promise<PdfMovimientoRe
 const ESTILOS_DOC = `
   @page { size: letter; margin: 14mm 12mm 16mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #111; margin: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; color: #111; margin: 0; }
   header { display: flex; justify-content: space-between; align-items: flex-start;
-           border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 10px; }
-  .negocio { font-size: 16px; font-weight: 700; }
-  .negocio-sub { color: #555; margin-top: 2px; }
-  .doc-titulo { text-align: right; font-size: 14px; font-weight: 700; text-transform: uppercase; }
-  .doc-tipo { display: inline-block; margin-top: 4px; padding: 2px 8px; border: 1px solid #111;
-              border-radius: 3px; font-size: 10px; letter-spacing: 1px; }
-  .datos { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-  .datos td { padding: 2px 6px; vertical-align: top; }
+           border-bottom: 2px solid #111; padding-bottom: 5px; margin-bottom: 6px; }
+  .negocio { font-size: 14px; font-weight: 700; }
+  .negocio-sub { color: #555; margin-top: 1px; }
+  .doc-titulo { text-align: right; font-size: 13px; font-weight: 700; text-transform: uppercase; }
+  .doc-tipo { display: inline-block; margin-top: 3px; padding: 1px 7px; border: 1px solid #111;
+              border-radius: 3px; font-size: 9px; letter-spacing: 1px; }
+  .datos { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  .datos td { padding: 1px 6px; vertical-align: top; }
   .datos .k { color: #555; white-space: nowrap; width: 110px; }
   .datos .v { font-weight: 600; }
   .mono { font-family: Consolas, 'Courier New', monospace; }
   table.items { width: 100%; border-collapse: collapse; }
-  table.items th { background: #f0f0f0; border: 1px solid #999; padding: 4px 6px;
-                   font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; text-align: left; }
-  table.items td { border: 1px solid #bbb; padding: 3px 6px; }
+  table.items th { background: #f0f0f0; border: 1px solid #999; padding: 2px 5px;
+                   font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; }
+  table.items td { border: 1px solid #bbb; padding: 2px 5px; }
   table.items tr { page-break-inside: avoid; }
   .num { text-align: right; font-family: Consolas, 'Courier New', monospace; white-space: nowrap; }
   .center { text-align: center; }
@@ -332,17 +335,17 @@ const ESTILOS_DOC = `
   .kpi { border: 1px solid #ccc; border-radius: 4px; padding: 5px 8px; background: #f8f8f8; }
   .kpi .label { color: #555; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
   .kpi .value { font-size: 12px; font-weight: 700; font-family: Consolas, monospace; }
-  .totales { display: flex; justify-content: flex-end; gap: 24px; margin-top: 10px;
-             padding: 8px 10px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px; }
+  .totales { display: flex; justify-content: flex-end; gap: 24px; margin-top: 6px;
+             padding: 5px 8px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px; }
   .totales div { text-align: right; }
   .totales .label { color: #555; font-size: 10px; text-transform: uppercase; }
   .totales .value { font-size: 13px; font-weight: 700; font-family: Consolas, monospace; }
-  .firmas { display: flex; justify-content: space-around; gap: 40px; margin-top: 56px;
+  .firmas { display: flex; justify-content: space-around; gap: 40px; margin-top: 30px;
             page-break-inside: avoid; }
   .firma { flex: 1; max-width: 220px; text-align: center; }
   .firma .linea { border-top: 1px solid #111; margin-bottom: 4px; }
   .firma .rol { font-size: 10px; color: #555; }
-  footer { margin-top: 28px; text-align: center; color: #888; font-size: 9px; }
+  footer { margin-top: 14px; text-align: center; color: #888; font-size: 9px; }
 `
 
 const TITULOS: Record<MovimientoDetalle['tipo'], string> = {
@@ -440,7 +443,6 @@ function buildHtml(det: MovimientoDetalle): string {
 
   const filas = det.items
     .map((l, i) => {
-      const importe = (Number(l.cantidad) || 0) * (Number(l.costo) || 0)
       return `<tr>
         <td class="num">${i + 1}</td>
         <td class="mono">${esc(l.codigo)}</td>
@@ -450,13 +452,12 @@ function buildHtml(det: MovimientoDetalle): string {
         ${conProveedorLinea ? `<td class="sec">${esc(provDeLinea(l))}</td>` : ''}
         ${conMotivoLinea ? `<td>${esc(l.motivo ?? '—')}</td>` : ''}
         <td class="num">${entero(l.cantidad)}</td>
-        <td class="num">$${money(l.costo)}</td>
-        <td class="num">$${money(importe)}</td>
       </tr>`
     })
     .join('\n')
 
-  const cols = 8 + (conMotivoLinea ? 1 : 0) + (conProveedorLinea ? 1 : 0)
+  // Columnas base: #, Código, Producto, Sustancia, Caducidad, Cant.
+  const cols = 6 + (conMotivoLinea ? 1 : 0) + (conProveedorLinea ? 1 : 0)
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -490,15 +491,13 @@ function buildHtml(det: MovimientoDetalle): string {
     <thead>
       <tr>
         <th style="width:28px">#</th>
-        <th style="width:110px">Código</th>
+        <th style="width:120px">Código</th>
         <th>Producto</th>
-        <th style="width:120px">Sustancia</th>
+        <th style="width:150px">Sustancia</th>
         <th style="width:80px">Caducidad</th>
-        ${conProveedorLinea ? '<th style="width:110px">Proveedor</th>' : ''}
-        ${conMotivoLinea ? '<th style="width:130px">Motivo</th>' : ''}
+        ${conProveedorLinea ? '<th style="width:130px">Proveedor</th>' : ''}
+        ${conMotivoLinea ? '<th style="width:150px">Motivo</th>' : ''}
         <th style="width:60px">Cant.</th>
-        <th style="width:75px">Costo</th>
-        <th style="width:85px">Importe</th>
       </tr>
     </thead>
     <tbody>
@@ -509,7 +508,6 @@ function buildHtml(det: MovimientoDetalle): string {
   <div class="totales">
     <div><div class="label">Líneas</div><div class="value">${entero(det.lineas)}</div></div>
     <div><div class="label">Unidades</div><div class="value">${entero(det.unidades)}</div></div>
-    <div><div class="label">Valor (costo)</div><div class="value">$${money(det.valor)}</div></div>
   </div>
 
   <div class="firmas">
