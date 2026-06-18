@@ -5,6 +5,7 @@ import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
 import Spinner from './Spinner'
+import ConfirmMovimientoModal from './ConfirmMovimientoModal'
 import type { BodegaDto, LoteInfo, ProductoDto, SalidaItemInput } from '@shared/dto'
 import type { MotivoSalida } from '@shared/types'
 
@@ -43,6 +44,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   const [motivo, setMotivo] = useState<MotivoSalida>('CADUCIDAD')
   const [nota, setNota] = useState('')
   const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [bodegaId, setBodegaId] = useState('')
@@ -60,6 +62,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     setCantidad('')
     setMotivo('CADUCIDAD')
     setNota('')
+    setPreview(false)
   }, [])
 
   const resetRow = useCallback(() => {
@@ -230,6 +233,15 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
       addItem()
     }
   }
+
+  // Abre el preview de confirmación (no registra todavía).
+  const pedirConfirmacion = useCallback(() => {
+    if (items.length === 0) {
+      toast.error('No hay salidas que registrar')
+      return
+    }
+    setPreview(true)
+  }, [items])
 
   // Totales
   const totalUnidades = items.reduce((s, i) => s + i.cantidad, 0)
@@ -514,7 +526,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
             </button>
             <button
               type="button"
-              onClick={save}
+              onClick={pedirConfirmacion}
               disabled={saving || items.length === 0}
               className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
@@ -536,6 +548,23 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
       />
+
+      {open && preview && (
+        <ConfirmMovimientoModal
+          title="Confirmar salida de inventario"
+          detalleHeader="Motivo"
+          lineas={items.map((it) => ({
+            codigo: it.codigo,
+            nombre: it.productoNombre,
+            cantidad: it.cantidad,
+            detalle: MOTIVO_OPTIONS.find((m) => m.value === it.motivo)?.label ?? it.motivo
+          }))}
+          confirmLabel="Sí, registrar salida"
+          procesando={saving}
+          onConfirm={save}
+          onCancel={() => setPreview(false)}
+        />
+      )}
     </>
   )
 }

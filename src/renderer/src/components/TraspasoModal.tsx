@@ -5,6 +5,7 @@ import Papa from 'papaparse'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
+import ConfirmMovimientoModal from './ConfirmMovimientoModal'
 import { money } from '../lib/format'
 import type { BodegaDto, CrearTraspasoResult, StockBodegaItem, SucursalDto } from '@shared/dto'
 
@@ -33,6 +34,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
   const [stock, setStock] = useState<StockBodegaItem[]>([])
   const [loading, setLoading] = useState(false)
   const [generando, setGenerando] = useState(false)
+  const [preview, setPreview] = useState(false)
   // cantidad a traspasar por código
   const [cant, setCant] = useState<Record<string, string>>({})
   const [filtro, setFiltro] = useState('')
@@ -46,6 +48,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
     setFiltro('')
     setDestinoCodigo('')
     setDestinoNombre('')
+    setPreview(false)
     const cargas: Promise<void>[] = [
       window.api.bodegas.list().then((bs) => {
         const bodActivas = bs.filter((b) => b.activa)
@@ -229,7 +232,21 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
     }
   }, [bodegaId, destinoKey, destinoLibre, destinoCodigo, destinoNombre, seleccion.items, userId, onClose])
 
+  // Valida y abre el preview de confirmación (no genera todavía).
+  const pedirConfirmacion = useCallback(() => {
+    if (!bodegaId) return toast.error('Selecciona la bodega origen')
+    if (destinoLibre) {
+      if (!destinoCodigo.trim()) return toast.error('Captura el código del destino')
+      if (!destinoNombre.trim()) return toast.error('Captura el nombre del destino')
+    } else if (!destinoKey) {
+      return toast.error('Selecciona el destino')
+    }
+    if (seleccion.items.length === 0) return toast.error('Indica cantidades a traspasar')
+    setPreview(true)
+  }, [bodegaId, destinoLibre, destinoCodigo, destinoNombre, destinoKey, seleccion.items])
+
   return (
+    <>
     <Modal
       open={open}
       title={destinoLibre ? 'Generar traspaso' : 'Traspaso de inventario'}
@@ -273,29 +290,43 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
               <ArrowRightLeft className="size-4" />
             </div>
             {destinoLibre ? (
-              <div className="grid grid-cols-[110px_1fr] gap-2">
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">Código destino</label>
-                  <input
-                    type="text"
-                    value={destinoCodigo}
-                    onChange={(e) => setDestinoCodigo(e.target.value)}
-                    placeholder="S02 / MATRIZ"
-                    className="w-full border border-border rounded px-2 py-1.5 font-mono"
-                    autoComplete="off"
-                  />
+              <div>
+                <div className="grid grid-cols-[110px_1fr] gap-2">
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">
+                      Código destino <span className="text-red-600 font-semibold">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={destinoCodigo}
+                      onChange={(e) => setDestinoCodigo(e.target.value)}
+                      placeholder="S02 / MATRIZ"
+                      className={`w-full border rounded px-2 py-1.5 font-mono ${
+                        destinoCodigo.trim() ? 'border-border' : 'border-red-400 bg-red-50'
+                      }`}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-muted-foreground mb-1">
+                      Nombre destino <span className="text-red-600 font-semibold">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={destinoNombre}
+                      onChange={(e) => setDestinoNombre(e.target.value)}
+                      placeholder="Sucursal Centro / Bodega Matriz"
+                      className={`w-full border rounded px-2 py-1.5 ${
+                        destinoNombre.trim() ? 'border-border' : 'border-red-400 bg-red-50'
+                      }`}
+                      autoComplete="off"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs text-muted-foreground mb-1">Nombre destino</label>
-                  <input
-                    type="text"
-                    value={destinoNombre}
-                    onChange={(e) => setDestinoNombre(e.target.value)}
-                    placeholder="Sucursal Centro / Bodega Matriz"
-                    className="w-full border border-border rounded px-2 py-1.5"
-                    autoComplete="off"
-                  />
-                </div>
+                <p className="text-[11px] text-red-600 mt-1">
+                  <span className="font-semibold">*</span> Código y nombre del destino son
+                  obligatorios para crear el traspaso.
+                </p>
               </div>
             ) : (
               <div>
@@ -408,7 +439,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
           <button type="button" onClick={onClose} disabled={generando} className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm">Cancelar</button>
           <button
             type="button"
-            onClick={generar}
+            onClick={pedirConfirmacion}
             disabled={
               generando ||
               loading ||
@@ -425,5 +456,38 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
         <BusyOverlay show={generando} text="Generando traspaso…" />
       </div>
     </Modal>
+
+    {open && preview && (() => {
+      const byCodigo = new Map(stock.map((s) => [s.codigo, s]))
+      const lineas = seleccion.items.map((it) => ({
+        codigo: it.codigo,
+        nombre: byCodigo.get(it.codigo)?.nombre ?? it.codigo,
+        cantidad: it.cantidad
+      }))
+      const bodegaNombre = bodegas.find((b) => b.id === bodegaId)?.nombre ?? '—'
+      const destinoLabel = destinoLibre
+        ? `${destinoCodigo.trim()} ${destinoNombre.trim()}`.trim()
+        : destinoKey.startsWith('suc:')
+          ? (sucursales.find((s) => `suc:${s.id}` === destinoKey)?.nombre ?? 'sucursal')
+          : destinoKey.startsWith('bod:')
+            ? (bodegas.find((b) => `bod:${b.id}` === destinoKey)?.nombre ?? 'bodega')
+            : '—'
+      return (
+        <ConfirmMovimientoModal
+          title="Confirmar traspaso"
+          encabezado={
+            <span>
+              Origen: <strong>{bodegaNombre}</strong> → Destino: <strong>{destinoLabel}</strong>
+            </span>
+          }
+          lineas={lineas}
+          confirmLabel="Sí, generar traspaso"
+          procesando={generando}
+          onConfirm={generar}
+          onCancel={() => setPreview(false)}
+        />
+      )
+    })()}
+    </>
   )
 }

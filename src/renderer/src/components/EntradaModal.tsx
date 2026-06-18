@@ -6,6 +6,7 @@ import Modal from './Modal'
 import SearchModal from './SearchModal'
 import InfoTooltip from './InfoTooltip'
 import Spinner from './Spinner'
+import ConfirmMovimientoModal from './ConfirmMovimientoModal'
 import { ProveedorSubModal } from './ProveedoresModal'
 import { money } from '../lib/format'
 import type { BodegaDto, ProductoDto, ProveedorDto } from '@shared/dto'
@@ -46,6 +47,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const [costo, setCosto] = useState('')
   const [caducidad, setCaducidad] = useState(defaultCaducidad())
   const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
 
   const codRef = useRef<HTMLInputElement>(null)
@@ -79,6 +81,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     setCosto('')
     setCaducidad(defaultCaducidad())
     setNuevoProvPara(null)
+    setPreview(false)
     setTimeout(() => codRef.current?.focus(), 80)
     window.api.bodegas
       .list()
@@ -396,6 +399,19 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       setSaving(false)
     }
   }, [items, userId, bodegaId, onClose, onSaved])
+
+  // Valida y abre el preview de confirmación (no registra todavía).
+  const pedirConfirmacion = useCallback(() => {
+    if (items.length === 0) {
+      toast.error('No hay ítems que registrar')
+      return
+    }
+    if (!bodegaId) {
+      toast.error('Selecciona una bodega destino')
+      return
+    }
+    setPreview(true)
+  }, [items, bodegaId])
 
   // Enter en cada campo avanza al siguiente / agrega
   const onKeyCode = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -771,7 +787,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
             </button>
             <button
               type="button"
-              onClick={save}
+              onClick={pedirConfirmacion}
               disabled={saving || items.length === 0}
               className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
             >
@@ -812,6 +828,29 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
               )
             }
           }}
+        />
+      )}
+
+      {open && preview && (
+        <ConfirmMovimientoModal
+          title="Confirmar entrada de mercancía"
+          detalleHeader="Caducidad"
+          encabezado={
+            <span>
+              Bodega destino:{' '}
+              <strong>{bodegas.find((b) => b.id === bodegaId)?.nombre ?? '—'}</strong>
+            </span>
+          }
+          lineas={items.map((it) => ({
+            codigo: it.codigo,
+            nombre: it.nombre,
+            cantidad: it.cantidad,
+            detalle: it.fechaCaducidad || 'sin caducidad'
+          }))}
+          confirmLabel="Sí, guardar entrada"
+          procesando={saving}
+          onConfirm={save}
+          onCancel={() => setPreview(false)}
         />
       )}
     </>
