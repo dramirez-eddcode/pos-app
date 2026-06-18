@@ -257,7 +257,7 @@ declare global {
       }
       inventario: {
         cargaInicial: (input: CargaInicialInput) => Promise<CargaInicialResult>
-        stockBodega: (bodegaId: string) => Promise<StockBodegaResult>
+        stockBodega: (bodegaId: string, incluirCero?: boolean) => Promise<StockBodegaResult>
         stockPdf: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
         stockImprimir: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
       }

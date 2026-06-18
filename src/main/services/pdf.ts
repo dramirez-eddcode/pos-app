@@ -130,7 +130,7 @@ function buildStockHtml(input: StockBodegaPdfInput): string {
 <head>
 <meta charset="utf-8">
 <title>Stock por bodega — ${esc(input.bodegaNombre)}</title>
-<style>${ESTILOS_DOC}</style>
+<style>${ESTILOS_DOC}${ESTILOS_STOCK_COMPACTO}</style>
 </head>
 <body>
   <header>
@@ -346,6 +346,24 @@ const ESTILOS_DOC = `
   .firma .linea { border-top: 1px solid #111; margin-bottom: 4px; }
   .firma .rol { font-size: 10px; color: #555; }
   footer { margin-top: 14px; text-align: center; color: #888; font-size: 9px; }
+`
+
+// Compactación EXTRA para el reporte de stock (suele tener cientos de filas).
+// Reduce alto de fila al máximo razonable para usar menos hojas.
+const ESTILOS_STOCK_COMPACTO = `
+  table.items td { padding: 0.5px 4px; font-size: 8px; line-height: 1.12; }
+  table.items th { padding: 1.5px 4px; font-size: 7.5px; }
+  table.items .sec { font-size: 7.5px; }
+  .kpis { gap: 4px; margin-bottom: 5px; }
+  .kpi { padding: 3px 6px; }
+  .kpi .label { font-size: 7px; }
+  .kpi .value { font-size: 11px; }
+  header { margin-bottom: 5px; padding-bottom: 4px; }
+  .negocio { font-size: 13px; }
+  .datos { margin-bottom: 5px; }
+  .datos td { padding: 0.5px 6px; }
+  .totales { margin-top: 6px; padding: 4px 8px; }
+  footer { margin-top: 8px; }
 `
 
 const TITULOS: Record<MovimientoDetalle['tipo'], string> = {

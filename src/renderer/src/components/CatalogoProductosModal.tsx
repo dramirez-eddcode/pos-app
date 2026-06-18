@@ -70,6 +70,7 @@ export default function CatalogoProductosModal({
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [ivaDefault, setIvaDefault] = useState<number | null>(null)
+  const [multiBodega, setMultiBodega] = useState(false)
   const [normalizandoIva, setNormalizandoIva] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   // Reemplazo total de existencias (sucursal, sólo SUPERUSUARIO): CSV parseado
@@ -104,6 +105,11 @@ export default function CatalogoProductosModal({
       window.api.config
         .get()
         .then((c) => setIvaDefault(c.ivaPorcentajeDefault))
+        .catch(() => {})
+      // ¿Hay más de una bodega? (matriz) → mostramos el stock desglosado por bodega.
+      window.api.bodegas
+        .list()
+        .then((bs) => setMultiBodega(bs.filter((b) => b.activa).length > 1))
         .catch(() => {})
     }
   }, [open, load])
@@ -560,7 +566,7 @@ export default function CatalogoProductosModal({
                   <th className="px-2 py-1.5 w-32">Laboratorio</th>
                   <th className="px-2 py-1.5 w-24 text-right">Precio</th>
                   <th className="px-2 py-1.5 w-28 text-center">IVA</th>
-                  <th className="px-2 py-1.5 w-20 text-right">Stock</th>
+                  <th className={`px-2 py-1.5 text-right ${multiBodega ? 'w-40' : 'w-20'}`}>Stock</th>
                   <th className="px-2 py-1.5 w-16 text-center">Activo</th>
                   <th className="px-2 py-1.5 w-44 text-right">Acciones</th>
                 </tr>
@@ -601,7 +607,18 @@ export default function CatalogoProductosModal({
                     <td className="px-2 py-1 text-center">
                       <IvaBadge modo={p.ivaModo} porcentaje={p.ivaPorcentaje} />
                     </td>
-                    <td className="px-2 py-1 text-right font-mono">{p.existenciasTotal}</td>
+                    <td className="px-2 py-1 text-right font-mono align-top">
+                      <div>{p.existenciasTotal}</div>
+                      {multiBodega && p.existenciasPorBodega.length > 0 && (
+                        <div className="text-[9px] text-muted-foreground font-sans leading-tight mt-0.5 space-y-0.5">
+                          {p.existenciasPorBodega.map((b) => (
+                            <div key={b.bodega}>
+                              {b.bodega}: <span className="font-mono">{b.cantidad}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-center">
                       {p.activo ? (
                         <span className="text-[11px] text-green-700">Sí</span>

@@ -40,6 +40,7 @@ export default function StockBodegaModal({ open, onClose }: Props) {
   const [filtro, setFiltro] = useState('')
   const [soloBajoMinimo, setSoloBajoMinimo] = useState(false)
   const [soloPorVencer, setSoloPorVencer] = useState(false)
+  const [incluirCero, setIncluirCero] = useState(false)
   const [expandido, setExpandido] = useState<Set<string>>(new Set())
 
   const [page, setPage] = useState(1)
@@ -66,11 +67,11 @@ export default function StockBodegaModal({ open, onClose }: Props) {
       .catch(() => {})
   }, [open])
 
-  const cargarStock = useCallback(async (id: string) => {
+  const cargarStock = useCallback(async (id: string, conCero: boolean) => {
     if (!id) return
     setLoading(true)
     try {
-      const r = await window.api.inventario.stockBodega(id)
+      const r = await window.api.inventario.stockBodega(id, conCero)
       setData(r)
     } catch (e) {
       toast.error('No se pudo cargar el stock', {
@@ -82,10 +83,10 @@ export default function StockBodegaModal({ open, onClose }: Props) {
     }
   }, [])
 
-  // Cargar stock cuando cambia la bodega seleccionada
+  // Cargar stock cuando cambia la bodega o el toggle de "incluir 0"
   useEffect(() => {
-    if (open && bodegaId) cargarStock(bodegaId)
-  }, [open, bodegaId, cargarStock])
+    if (open && bodegaId) cargarStock(bodegaId, incluirCero)
+  }, [open, bodegaId, incluirCero, cargarStock])
 
   const items = data?.items ?? []
 
@@ -320,6 +321,13 @@ export default function StockBodegaModal({ open, onClose }: Props) {
           <label className="flex items-center gap-1.5 text-xs whitespace-nowrap">
             <input type="checkbox" checked={soloPorVencer} onChange={(e) => setSoloPorVencer(e.target.checked)} />
             Solo por vencer / vencidos
+          </label>
+          <label
+            className="flex items-center gap-1.5 text-xs whitespace-nowrap"
+            title="Muestra también los productos del catálogo que tienen existencia 0 en esta bodega"
+          >
+            <input type="checkbox" checked={incluirCero} onChange={(e) => setIncluirCero(e.target.checked)} />
+            Incluir existencia 0
           </label>
         </div>
 

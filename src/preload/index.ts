@@ -318,8 +318,8 @@ const api = {
   inventario: {
     cargaInicial: (input: CargaInicialInput): Promise<CargaInicialResult> =>
       ipcRenderer.invoke('inventario:carga-inicial', input),
-    stockBodega: (bodegaId: string): Promise<StockBodegaResult> =>
-      ipcRenderer.invoke('inventario:stock-bodega', bodegaId),
+    stockBodega: (bodegaId: string, incluirCero?: boolean): Promise<StockBodegaResult> =>
+      ipcRenderer.invoke('inventario:stock-bodega', bodegaId, Boolean(incluirCero)),
     stockPdf: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
       ipcRenderer.invoke('inventario:stock-pdf', input),
     stockImprimir: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>

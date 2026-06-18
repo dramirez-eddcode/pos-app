@@ -24,7 +24,7 @@ interface Row {
   fechaCaducidad: number
 }
 
-export function getStockPorBodega(bodegaId: string): StockBodegaResult {
+export function getStockPorBodega(bodegaId: string, incluirCero = false): StockBodegaResult {
   const sqlite = getSqlite()
   if (!bodegaId) throw new Error('Bodega requerida')
 
@@ -105,9 +105,56 @@ export function getStockPorBodega(bodegaId: string): StockBodegaResult {
     if (it.bajoMinimo) bajoMinimo++
   }
 
+  // Los KPIs se calculan SOLO con lo que tiene stock (no cambian al incluir 0).
+  const skusConStock = items.length
+
+  // Opcional: agrega los productos activos que NO tienen existencia en esta
+  // bodega (existencia 0). Útil para confirmar que el producto SÍ está en el
+  // catálogo aunque su stock sea 0.
+  if (incluirCero) {
+    const conStock = new Set(items.map((it) => it.productoId))
+    const activos = sqlite
+      .prepare(
+        `SELECT p.id AS productoId, p.codigo, p.nombre,
+                p.sustancia_activa AS sustanciaActiva,
+                p.costo, p.precio, p.stock_minimo AS stockMinimo
+           FROM producto p
+          WHERE p.activo = 1
+          ORDER BY p.nombre ASC`
+      )
+      .all() as Array<{
+      productoId: string
+      codigo: string
+      nombre: string
+      sustanciaActiva: string | null
+      costo: number
+      precio: number
+      stockMinimo: number
+    }>
+    for (const r of activos) {
+      if (conStock.has(r.productoId)) continue
+      items.push({
+        productoId: r.productoId,
+        codigo: r.codigo,
+        nombre: r.nombre,
+        sustanciaActiva: r.sustanciaActiva ?? null,
+        activo: true,
+        costo: Number(r.costo) || 0,
+        precio: Number(r.precio) || 0,
+        stockMinimo: Number(r.stockMinimo) || 0,
+        existencias: 0,
+        valorCosto: 0,
+        bajoMinimo: false,
+        proximaCaducidad: null,
+        lotes: []
+      })
+    }
+    items.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+  }
+
   return {
     resumen: {
-      skusConStock: items.length,
+      skusConStock,
       unidades,
       valorCosto: +valorCosto.toFixed(2),
       lotes: lotesCount,

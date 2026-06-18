@@ -363,6 +363,26 @@ export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
     existenciasTotal: number
   }>
 
+  // Desglose de existencias por bodega (solo bodegas con saldo > 0).
+  const porBodegaRows = db
+    .prepare(
+      `SELECT cl.producto_id AS productoId, b.nombre AS bodega,
+              SUM(cl.saldo) AS cantidad
+         FROM caducidad_lote cl
+         JOIN bodega b ON b.id = cl.bodega_id
+        WHERE cl.saldo > 0
+        GROUP BY cl.producto_id, b.id
+        ORDER BY b.nombre`
+    )
+    .all() as Array<{ productoId: string; bodega: string; cantidad: number }>
+
+  const porBodega = new Map<string, { bodega: string; cantidad: number }[]>()
+  for (const r of porBodegaRows) {
+    const arr = porBodega.get(r.productoId) ?? []
+    arr.push({ bodega: r.bodega, cantidad: Number(r.cantidad) || 0 })
+    porBodega.set(r.productoId, arr)
+  }
+
   return rows.map((r) => ({
     id: r.id,
     codigo: r.codigo,
@@ -377,7 +397,8 @@ export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
     stockMaximo: r.stockMaximo == null ? null : Number(r.stockMaximo),
     stockMinimo: r.stockMinimo == null ? null : Number(r.stockMinimo),
     activo: Boolean(r.activo),
-    existenciasTotal: Number(r.existenciasTotal) || 0
+    existenciasTotal: Number(r.existenciasTotal) || 0,
+    existenciasPorBodega: porBodega.get(r.id) ?? []
   }))
 }
 

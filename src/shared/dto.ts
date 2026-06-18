@@ -902,6 +902,9 @@ export interface ProductoCatalogoItem {
   stockMinimo: number | null
   activo: boolean
   existenciasTotal: number
+  // Desglose de existencias por bodega (solo bodegas con saldo > 0). En matriz
+  // permite ver de qué bodega es el stock; en sucursal suele ser una sola.
+  existenciasPorBodega: { bodega: string; cantidad: number }[]
 }
 
 export interface CreateProductoInput {

@@ -274,8 +274,8 @@ export function registerIpcHandlers(): void {
   )
 
   // ── consulta de stock por bodega (inventario) ───────────────────────────
-  ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string) =>
-    getStockPorBodega(bodegaId)
+  ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string, incluirCero?: boolean) =>
+    getStockPorBodega(bodegaId, Boolean(incluirCero))
   )
   // Reporte imprimible del stock (PDF / impresora normal)
   ipcMain.handle('inventario:stock-pdf', async (e, input: StockBodegaPdfInput) => {
