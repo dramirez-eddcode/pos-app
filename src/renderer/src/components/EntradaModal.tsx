@@ -375,7 +375,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       toast.success(
         `Entrada registrada: ${r.lotesCreados} lote(s), ${r.unidadesIngresadas} unidades`,
         {
-          description: `Costo total: $${r.totalCosto.toFixed(2)}`,
+          description: `Folio E-${r.numero} · Costo total: $${r.totalCosto.toFixed(2)}`,
           duration: 10000,
           action: {
             label: 'Imprimir PDF',

@@ -258,6 +258,11 @@ declare global {
       inventario: {
         cargaInicial: (input: CargaInicialInput) => Promise<CargaInicialResult>
         stockBodega: (bodegaId: string, incluirCero?: boolean) => Promise<StockBodegaResult>
+        updateLoteCaducidad: (
+          viewerUserId: string,
+          loteId: string,
+          fechaYmd: string
+        ) => Promise<{ ok: true; caducidad: string }>
         stockPdf: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
         stockImprimir: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
       }

@@ -562,7 +562,8 @@ export interface CreateEntradaInput {
 }
 
 export interface CreateEntradaResult {
-  movimientoId: string // folio del documento en el historial de movimientos
+  movimientoId: string // folio UUID del documento en el historial de movimientos
+  numero: number // folio numérico (mostrar como E-<numero>)
   lotesCreados: number
   unidadesIngresadas: number
   productosActualizados: number
@@ -616,7 +617,8 @@ export interface CreateSalidaInput {
 }
 
 export interface CreateSalidaResult {
-  movimientoId: string // folio del documento en el historial de movimientos
+  movimientoId: string // folio UUID del documento en el historial de movimientos
+  numero: number // folio numérico (mostrar como S-<numero>)
   itemsCreados: number
   unidadesTotales: number
 }
@@ -651,6 +653,7 @@ export interface CargaInicialResult {
 
 // ── Consulta de stock por bodega (inventario) ───────────────────────────────
 export interface StockBodegaLote {
+  loteId: string
   caducidad: string // YYYY-MM-DD
   saldo: number
   vencido: boolean
@@ -771,7 +774,8 @@ export interface CrearTraspasoResult {
   cancelled?: boolean
   error?: string
   path?: string
-  folio?: string
+  folio?: string // UUID interno
+  numero?: number // folio numérico (mostrar como T-<numero>)
   lineas?: number
   unidades?: number
   faltantes?: TraspasoFaltante[]
@@ -823,7 +827,8 @@ export interface MovimientoLinea {
 }
 
 export interface MovimientoHistItem {
-  folio: string
+  folio: string // UUID interno (sync por USB / anti-duplicado)
+  numero: number // folio numérico consecutivo por tipo (mostrar como E-1/S-1/T-1)
   tipo: MovimientoTipo
   fecha: string // ISO
   bodega: string // bodega del movimiento (destino en ENTRADA, origen en SALIDA/TRASPASO)
@@ -839,6 +844,12 @@ export interface MovimientoHistItem {
 export interface MovimientoDetalle extends MovimientoHistItem {
   motivo: string | null
   items: MovimientoLinea[]
+}
+
+/** Folio corto para mostrar: E-1 (entrada), S-1 (salida), T-1 (traspaso). */
+export function folioMovimiento(tipo: MovimientoTipo, numero: number): string {
+  const p = tipo === 'ENTRADA' ? 'E' : tipo === 'SALIDA' ? 'S' : 'T'
+  return `${p}-${numero}`
 }
 
 // Resultado de exportar un movimiento a PDF (para impresora normal)

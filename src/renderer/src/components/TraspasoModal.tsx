@@ -203,12 +203,13 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
         return
       }
       const folio = r.folio
+      const folioCorto = `T-${r.numero}`
       toast.success(
         `${esInterno ? 'Traspaso entre bodegas realizado' : 'Traspaso generado'} · ${r.unidades?.toLocaleString('es-MX')} unidades`,
         {
           description: esInterno
-            ? `Folio ${folio?.slice(0, 8)}… · ${r.lineas} líneas · el stock ya está en la bodega destino`
-            : `Folio ${folio?.slice(0, 8)}… · ${r.lineas} líneas · guardado en ${r.path}`,
+            ? `Folio ${folioCorto} · ${r.lineas} líneas · el stock ya está en la bodega destino`
+            : `Folio ${folioCorto} · ${r.lineas} líneas · guardado en ${r.path}`,
           duration: 10000,
           action: folio
             ? {

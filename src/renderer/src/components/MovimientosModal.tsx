@@ -4,6 +4,7 @@ import { ArrowRight, ChevronLeft, FileText, Printer } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import { money } from '../lib/format'
+import { folioMovimiento } from '@shared/dto'
 import type { MovimientoDetalle, MovimientoHistItem, MovimientoTipo } from '@shared/dto'
 
 interface Props {
@@ -212,7 +213,7 @@ export default function MovimientosModal({ open, onClose }: Props) {
                               </>
                             )}
                             <div className="text-[10px] text-muted-foreground font-mono">
-                              folio {m.folio.slice(0, 8)}…
+                              folio {folioMovimiento(m.tipo, m.numero)}
                               {m.usuario ? ` · ${m.usuario}` : ''}
                               {m.proveedor ? ` · Prov: ${m.proveedor}` : ''}
                             </div>
@@ -311,7 +312,7 @@ export default function MovimientosModal({ open, onClose }: Props) {
                     {TIPO_LABEL[detalle.tipo]}
                   </span>
                 </div>
-                <div><span className="text-muted-foreground">Folio: </span><span className="font-mono">{detalle.folio}</span></div>
+                <div><span className="text-muted-foreground">Folio: </span><span className="font-mono">{folioMovimiento(detalle.tipo, detalle.numero)}</span></div>
                 <div><span className="text-muted-foreground">Fecha: </span>{new Date(detalle.fecha).toLocaleString('es-MX')}</div>
                 <div>
                   <span className="text-muted-foreground">

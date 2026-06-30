@@ -320,6 +320,12 @@ const api = {
       ipcRenderer.invoke('inventario:carga-inicial', input),
     stockBodega: (bodegaId: string, incluirCero?: boolean): Promise<StockBodegaResult> =>
       ipcRenderer.invoke('inventario:stock-bodega', bodegaId, Boolean(incluirCero)),
+    updateLoteCaducidad: (
+      viewerUserId: string,
+      loteId: string,
+      fechaYmd: string
+    ): Promise<{ ok: true; caducidad: string }> =>
+      ipcRenderer.invoke('inventario:update-lote-caducidad', viewerUserId, loteId, fechaYmd),
     stockPdf: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
       ipcRenderer.invoke('inventario:stock-pdf', input),
     stockImprimir: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>

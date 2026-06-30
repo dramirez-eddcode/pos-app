@@ -2,16 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
   Clock,
   FileDown,
   FileText,
+  Pencil,
   Printer,
-  Search
+  Search,
+  X
 } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
+import { useSession } from '../stores/session'
 import { money } from '../lib/format'
 import type {
   BodegaDto,
@@ -32,6 +36,7 @@ function escapeCsv(v: string): string {
 }
 
 export default function StockBodegaModal({ open, onClose }: Props) {
+  const { user } = useSession()
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [bodegaId, setBodegaId] = useState('')
   const [data, setData] = useState<StockBodegaResult | null>(null)
@@ -369,6 +374,8 @@ export default function StockBodegaModal({ open, onClose }: Props) {
                     it={it}
                     expandido={expandido.has(it.productoId)}
                     onToggle={() => toggleExpand(it.productoId)}
+                    userId={user?.id ?? ''}
+                    onSaved={() => cargarStock(bodegaId, incluirCero)}
                   />
                 ))}
             </tbody>
@@ -422,12 +429,41 @@ export default function StockBodegaModal({ open, onClose }: Props) {
 function Fila({
   it,
   expandido,
-  onToggle
+  onToggle,
+  userId,
+  onSaved
 }: {
   it: StockBodegaItem
   expandido: boolean
   onToggle: () => void
+  userId: string
+  onSaved: () => void
 }) {
+  const [editLoteId, setEditLoteId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [savingLote, setSavingLote] = useState(false)
+
+  const guardarCaducidad = async () => {
+    if (!editLoteId) return
+    if (!editValue) {
+      toast.error('Captura una fecha de caducidad')
+      return
+    }
+    setSavingLote(true)
+    try {
+      await window.api.inventario.updateLoteCaducidad(userId, editLoteId, editValue)
+      toast.success('Caducidad actualizada')
+      setEditLoteId(null)
+      onSaved()
+    } catch (e) {
+      toast.error('No se pudo actualizar la caducidad', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setSavingLote(false)
+    }
+  }
+
   return (
     <>
       <tr className={`border-b border-border/60 ${!it.activo ? 'opacity-60' : ''}`}>
@@ -462,22 +498,78 @@ function Fila({
           <td colSpan={6} className="px-2 py-2">
             <div className="text-[10px] uppercase text-muted-foreground mb-1">Lotes (FEFO)</div>
             <div className="flex flex-wrap gap-1.5">
-              {it.lotes.map((l, i) => (
-                <span
-                  key={i}
-                  className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] ${
-                    l.vencido
-                      ? 'border-red-300 bg-red-50 text-red-700'
-                      : l.porVencer
-                        ? 'border-amber-300 bg-amber-50 text-amber-700'
-                        : 'border-border bg-background'
-                  }`}
-                  title={l.vencido ? 'Vencido' : l.porVencer ? 'Por vencer (≤90 días)' : ''}
-                >
-                  {(l.vencido || l.porVencer) && <Clock className="size-3" />}
-                  {l.caducidad} · {l.saldo.toLocaleString('es-MX')}
-                </span>
-              ))}
+              {it.lotes.map((l) => {
+                const editing = editLoteId === l.loteId
+                return (
+                  <span
+                    key={l.loteId}
+                    className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] ${
+                      editing
+                        ? 'border-primary bg-background'
+                        : l.vencido
+                          ? 'border-red-300 bg-red-50 text-red-700'
+                          : l.porVencer
+                            ? 'border-amber-300 bg-amber-50 text-amber-700'
+                            : 'border-border bg-background'
+                    }`}
+                    title={
+                      editing ? '' : l.vencido ? 'Vencido' : l.porVencer ? 'Por vencer (≤90 días)' : ''
+                    }
+                  >
+                    {editing ? (
+                      <>
+                        <input
+                          type="date"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          disabled={savingLote}
+                          autoFocus
+                          className="border border-border rounded px-1 py-0 text-[11px] font-mono"
+                        />
+                        <span className="text-muted-foreground">
+                          · {l.saldo.toLocaleString('es-MX')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={guardarCaducidad}
+                          disabled={savingLote}
+                          title="Guardar"
+                          className="text-green-600 hover:text-green-700 disabled:opacity-50"
+                        >
+                          {savingLote ? <Spinner size={12} /> : <Check className="size-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditLoteId(null)}
+                          disabled={savingLote}
+                          title="Cancelar"
+                          className="text-red-600 hover:text-red-700 disabled:opacity-50"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {(l.vencido || l.porVencer) && <Clock className="size-3" />}
+                        {l.caducidad} · {l.saldo.toLocaleString('es-MX')}
+                        {userId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditLoteId(l.loteId)
+                              setEditValue(l.caducidad)
+                            }}
+                            title="Editar fecha de caducidad"
+                            className="ml-0.5 text-muted-foreground hover:text-foreground"
+                          >
+                            <Pencil className="size-3" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </span>
+                )
+              })}
             </div>
           </td>
         </tr>

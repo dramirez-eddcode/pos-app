@@ -52,9 +52,12 @@ export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
 
   const insMovimiento = sqlite.prepare(
     `INSERT INTO movimiento
-       (folio, tipo, fecha, usuario_id, usuario_nombre, bodega_id, bodega_nombre,
+       (folio, numero, tipo, fecha, usuario_id, usuario_nombre, bodega_id, bodega_nombre,
         proveedor_id, proveedor_nombre, motivo, lineas, unidades, valor, items_json)
-     VALUES (?, 'ENTRADA', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, 'ENTRADA', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+  const nextNumEntrada = sqlite.prepare(
+    "SELECT COALESCE(MAX(numero), 0) + 1 AS n FROM movimiento WHERE tipo = 'ENTRADA'"
   )
 
   return db.transaction((tx) => {
@@ -136,8 +139,10 @@ export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
 
     // Documento del historial — misma transacción (misma conexión SQLite).
     const movimientoId = randomUUID()
+    const numero = (nextNumEntrada.get() as { n: number }).n
     insMovimiento.run(
       movimientoId,
+      numero,
       now,
       input.usuarioId,
       usuario?.nombre ?? null,
@@ -154,6 +159,7 @@ export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
 
     return {
       movimientoId,
+      numero,
       lotesCreados,
       unidadesIngresadas,
       productosActualizados,

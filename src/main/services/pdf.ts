@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { getSqlite } from '../db/connection'
 import { getMovimientoDetalle } from './movimientos'
 import { getEmpresa } from './empresa'
+import { folioMovimiento } from '@shared/dto'
 import type { MovimientoDetalle, PdfMovimientoResult, StockBodegaPdfInput } from '@shared/dto'
 
 /**
@@ -51,7 +52,7 @@ export async function exportMovimientoPdf(
     if (!det) return { ok: false, error: 'Movimiento no encontrado en el historial' }
 
     const stamp = det.fecha.slice(0, 10).replace(/-/g, '')
-    const defaultName = `${det.tipo.toLowerCase()}-${stamp}-${det.folio.slice(0, 8)}.pdf`
+    const defaultName = `${det.tipo.toLowerCase()}-${stamp}-${folioMovimiento(det.tipo, det.numero)}.pdf`
     const opts = {
       title: `Guardar PDF de ${TITULOS[det.tipo].toLowerCase()}`,
       defaultPath: join(app.getPath('documents'), defaultName),
@@ -78,7 +79,7 @@ export async function exportMovimientoPdf(
         footerTemplate: `
           <div style="width:100%; padding:0 12mm; display:flex; justify-content:space-between;
                       font-family:'Segoe UI', Arial, sans-serif; font-size:8px; color:#888;">
-            <span>${esc(TITULOS[det.tipo])} · folio ${esc(det.folio.slice(0, 8))}</span>
+            <span>${esc(TITULOS[det.tipo])} · folio ${esc(folioMovimiento(det.tipo, det.numero))}</span>
             <span>Página <span class="pageNumber"></span> de <span class="totalPages"></span></span>
           </div>`
       })
@@ -285,7 +286,7 @@ export async function imprimirMovimiento(folio: string): Promise<PdfMovimientoRe
             silent: false,
             printBackground: true,
             header: TITULOS[det.tipo],
-            footer: `Folio ${det.folio.slice(0, 8)}`
+            footer: `Folio ${folioMovimiento(det.tipo, det.numero)}`
           },
           (success, failureReason) => resolve({ success, reason: failureReason })
         )
@@ -448,7 +449,7 @@ function buildHtml(det: MovimientoDetalle): string {
   const firma2 = esTraspasoInterno ? 'Recibió (bodega)' : firma2Base
 
   const datos: Array<[string, string]> = [
-    ['Folio', det.folio],
+    ['Folio', folioMovimiento(det.tipo, det.numero)],
     ['Fecha', fecha],
     [det.tipo === 'ENTRADA' ? 'Bodega destino' : 'Bodega origen', det.bodega]
   ]
@@ -481,7 +482,7 @@ function buildHtml(det: MovimientoDetalle): string {
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>${esc(TITULOS[det.tipo])} ${esc(det.folio.slice(0, 8))}</title>
+<title>${esc(TITULOS[det.tipo])} ${esc(folioMovimiento(det.tipo, det.numero))}</title>
 <style>${ESTILOS_DOC}</style>
 </head>
 <body>

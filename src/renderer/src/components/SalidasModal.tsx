@@ -193,7 +193,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
       toast.success(
         `Salida registrada: ${r.itemsCreados} ${r.itemsCreados === 1 ? 'línea' : 'líneas'}, ${r.unidadesTotales} unidad${r.unidadesTotales === 1 ? '' : 'es'}`,
         {
-          description: `Registrada por ${userNombre}`,
+          description: `Folio S-${r.numero} · Registrada por ${userNombre}`,
           duration: 10000,
           action: {
             label: 'Imprimir PDF',

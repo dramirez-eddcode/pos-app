@@ -62,7 +62,7 @@ import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
 import { createSalida } from './services/salidas'
 import { cargaInicialInventario } from './services/cargaInicial'
-import { getStockPorBodega } from './services/stock'
+import { getStockPorBodega, updateLoteCaducidad } from './services/stock'
 import {
   aplicarTraspaso,
   crearTraspaso,
@@ -274,6 +274,11 @@ export function registerIpcHandlers(): void {
   )
 
   // ── consulta de stock por bodega (inventario) ───────────────────────────
+  ipcMain.handle(
+    'inventario:update-lote-caducidad',
+    async (_e, viewerUserId: string, loteId: string, fechaYmd: string) =>
+      updateLoteCaducidad(viewerUserId, loteId, fechaYmd)
+  )
   ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string, incluirCero?: boolean) =>
     getStockPorBodega(bodegaId, Boolean(incluirCero))
   )

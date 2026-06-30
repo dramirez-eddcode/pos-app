@@ -418,6 +418,23 @@ function ensureSchema(sqlite: Database.Database): void {
     sqlite.exec(`ALTER TABLE traspaso ADD COLUMN destino_tipo TEXT`)
   }
 
+  // traspaso.numero — folio numérico consecutivo (T-1, T-2…) para mostrar en
+  // reportes. El folio UUID se conserva como llave (sync por USB / anti-dup).
+  const hasNumeroTr = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('traspaso') WHERE name = 'numero'`)
+    .get() as { v: number } | undefined
+  if (!hasNumeroTr) {
+    sqlite.exec(`ALTER TABLE traspaso ADD COLUMN numero INTEGER`)
+    const pend = sqlite
+      .prepare('SELECT folio FROM traspaso ORDER BY fecha ASC, rowid ASC')
+      .all() as { folio: string }[]
+    const upd = sqlite.prepare('UPDATE traspaso SET numero = ? WHERE folio = ?')
+    let n = 0
+    sqlite.transaction(() => {
+      for (const r of pend) upd.run(++n, r.folio)
+    })()
+  }
+
   // Historial de movimientos de inventario (entradas y salidas) como documentos
   // con folio: encabezado + líneas en JSON, igual que `traspaso`. Permite
   // consultarlos y reimprimirlos en PDF. Vive en la BD → se respalda.
@@ -448,6 +465,26 @@ function ensureSchema(sqlite: Database.Database): void {
   if (!hasProveedorMov) {
     sqlite.exec(`ALTER TABLE movimiento ADD COLUMN proveedor_id TEXT;
                  ALTER TABLE movimiento ADD COLUMN proveedor_nombre TEXT;`)
+  }
+
+  // movimiento.numero — folio numérico consecutivo POR TIPO (entradas E-1,
+  // salidas S-1…) para mostrar en reportes. El folio UUID se conserva como llave.
+  const hasNumeroMov = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('movimiento') WHERE name = 'numero'`)
+    .get() as { v: number } | undefined
+  if (!hasNumeroMov) {
+    sqlite.exec(`ALTER TABLE movimiento ADD COLUMN numero INTEGER`)
+    const pend = sqlite
+      .prepare('SELECT folio, tipo FROM movimiento ORDER BY tipo ASC, fecha ASC, rowid ASC')
+      .all() as { folio: string; tipo: string }[]
+    const upd = sqlite.prepare('UPDATE movimiento SET numero = ? WHERE folio = ?')
+    const counters: Record<string, number> = {}
+    sqlite.transaction(() => {
+      for (const r of pend) {
+        counters[r.tipo] = (counters[r.tipo] ?? 0) + 1
+        upd.run(counters[r.tipo], r.folio)
+      }
+    })()
   }
 
   // Catálogo de proveedores (matriz). Vinculable de forma opcional a las

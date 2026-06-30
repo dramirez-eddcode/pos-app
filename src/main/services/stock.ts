@@ -1,4 +1,5 @@
 import { getSqlite } from '../db/connection'
+import { requireAdminOrSupervisor } from './permisos'
 import type { StockBodegaItem, StockBodegaResult } from '@shared/dto'
 
 /**
@@ -12,6 +13,7 @@ const DIA_MS = 86_400_000
 const VENTANA_POR_VENCER_DIAS = 90
 
 interface Row {
+  loteId: string
   productoId: string
   codigo: string
   nombre: string
@@ -30,7 +32,8 @@ export function getStockPorBodega(bodegaId: string, incluirCero = false): StockB
 
   const rows = sqlite
     .prepare(
-      `SELECT p.id              AS productoId,
+      `SELECT cl.id             AS loteId,
+              p.id              AS productoId,
               p.codigo          AS codigo,
               p.nombre          AS nombre,
               p.sustancia_activa AS sustanciaActiva,
@@ -85,6 +88,7 @@ export function getStockPorBodega(bodegaId: string, incluirCero = false): StockB
     const saldo = Number(r.saldo) || 0
     item.existencias += saldo
     item.lotes.push({
+      loteId: r.loteId,
       caducidad: new Date(ms).toISOString().slice(0, 10),
       saldo,
       vencido,
@@ -164,4 +168,29 @@ export function getStockPorBodega(bodegaId: string, incluirCero = false): StockB
     },
     items
   }
+}
+
+/**
+ * Corrige la fecha de caducidad de un lote SIN tocar el saldo. Útil para
+ * arreglar lotes capturados con fecha equivocada (p. ej. en la migración).
+ */
+export function updateLoteCaducidad(
+  viewerUserId: string,
+  loteId: string,
+  fechaYmd: string
+): { ok: true; caducidad: string } {
+  requireAdminOrSupervisor(viewerUserId)
+  const m = (fechaYmd ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (!m) throw new Error('Fecha inválida (formato esperado: AAAA-MM-DD)')
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  if (!Number.isFinite(ms)) throw new Error('Fecha inválida')
+
+  const sqlite = getSqlite()
+  const lote = sqlite.prepare('SELECT id FROM caducidad_lote WHERE id = ?').get(loteId) as
+    | { id: string }
+    | undefined
+  if (!lote) throw new Error('Lote no encontrado')
+
+  sqlite.prepare('UPDATE caducidad_lote SET fecha_caducidad = ? WHERE id = ?').run(ms, loteId)
+  return { ok: true, caducidad: new Date(ms).toISOString().slice(0, 10) }
 }

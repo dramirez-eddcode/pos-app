@@ -233,16 +233,22 @@ export async function crearTraspaso(
         payload
       }
       // Historial (se respalda con el SQLite): encabezado + líneas como JSON.
+      const numeroTraspaso = (
+        sqlite.prepare('SELECT COALESCE(MAX(numero), 0) + 1 AS n FROM traspaso').get() as {
+          n: number
+        }
+      ).n
       sqlite
         .prepare(
           `INSERT INTO traspaso
-             (folio, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
+             (folio, numero, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
               sucursal_id, sucursal_codigo, sucursal_nombre, destino_tipo,
               lineas, unidades, items_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUCURSAL', ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCURSAL', ?, ?, ?)`
         )
         .run(
           folio,
+          numeroTraspaso,
           now,
           viewerUserId,
           bodega.id,
@@ -261,7 +267,12 @@ export async function crearTraspaso(
 
     run()
 
-    return { ok: true, path: filePath, folio, lineas: lineas.length, unidades }
+    const numero = (
+      sqlite.prepare('SELECT numero FROM traspaso WHERE folio = ?').get(folio) as {
+        numero: number
+      }
+    ).numero
+    return { ok: true, path: filePath, folio, numero, lineas: lineas.length, unidades }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -385,16 +396,22 @@ export function traspasoEntreBodegas(
       }
 
       // Historial: mismo registro que un traspaso a sucursal, con destino BODEGA.
+      const numeroTraspaso = (
+        sqlite.prepare('SELECT COALESCE(MAX(numero), 0) + 1 AS n FROM traspaso').get() as {
+          n: number
+        }
+      ).n
       sqlite
         .prepare(
           `INSERT INTO traspaso
-             (folio, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
+             (folio, numero, fecha, usuario_id, bodega_origen_id, bodega_origen_nombre,
               sucursal_id, sucursal_codigo, sucursal_nombre, destino_tipo,
               lineas, unidades, items_json)
-           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'BODEGA', ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'BODEGA', ?, ?, ?)`
         )
         .run(
           folio,
+          numeroTraspaso,
           now,
           viewerUserId,
           origen.id,
@@ -409,7 +426,12 @@ export function traspasoEntreBodegas(
 
     run()
 
-    return { ok: true, folio, lineas: lineas.length, unidades }
+    const numero = (
+      sqlite.prepare('SELECT numero FROM traspaso WHERE folio = ?').get(folio) as {
+        numero: number
+      }
+    ).numero
+    return { ok: true, folio, numero, lineas: lineas.length, unidades }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }

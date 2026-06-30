@@ -46,6 +46,7 @@ function valorDeLineas(items: MovimientoLinea[]): number {
 
 interface MovRow {
   folio: string
+  numero: number
   tipo: string
   fecha: number
   bodega: string | null
@@ -60,6 +61,7 @@ interface MovRow {
 
 interface TraspasoRow {
   folio: string
+  numero: number
   fecha: number
   bodega: string | null
   destino: string | null
@@ -80,7 +82,7 @@ export function listMovimientos(): MovimientoHistItem[] {
 
   const movs = sqlite
     .prepare(
-      `SELECT m.folio, m.tipo, m.fecha,
+      `SELECT m.folio, m.numero, m.tipo, m.fecha,
               m.bodega_nombre    AS bodega,
               m.usuario_nombre   AS usuario,
               m.proveedor_nombre AS proveedor,
@@ -92,7 +94,7 @@ export function listMovimientos(): MovimientoHistItem[] {
 
   const traspasos = sqlite
     .prepare(
-      `SELECT t.folio, t.fecha,
+      `SELECT t.folio, t.numero, t.fecha,
               t.bodega_origen_nombre AS bodega,
               t.sucursal_nombre      AS destino,
               t.destino_tipo         AS destinoTipo,
@@ -107,6 +109,7 @@ export function listMovimientos(): MovimientoHistItem[] {
   const items: MovimientoHistItem[] = [
     ...movs.map((r) => ({
       folio: r.folio,
+      numero: Number(r.numero) || 0,
       tipo: (r.tipo === 'SALIDA' ? 'SALIDA' : 'ENTRADA') as MovimientoHistItem['tipo'],
       fecha: new Date(r.fecha).toISOString(),
       bodega: r.bodega ?? '—',
@@ -120,6 +123,7 @@ export function listMovimientos(): MovimientoHistItem[] {
     })),
     ...traspasos.map((r) => ({
       folio: r.folio,
+      numero: Number(r.numero) || 0,
       tipo: 'TRASPASO' as const,
       fecha: new Date(r.fecha).toISOString(),
       bodega: r.bodega ?? '—',
@@ -142,7 +146,7 @@ export function getMovimientoDetalle(folio: string): MovimientoDetalle | null {
 
   const mov = sqlite
     .prepare(
-      `SELECT m.folio, m.tipo, m.fecha,
+      `SELECT m.folio, m.numero, m.tipo, m.fecha,
               m.bodega_nombre    AS bodega,
               m.usuario_nombre   AS usuario,
               m.proveedor_nombre AS proveedor,
@@ -154,6 +158,7 @@ export function getMovimientoDetalle(folio: string): MovimientoDetalle | null {
   if (mov) {
     return {
       folio: mov.folio,
+      numero: Number(mov.numero) || 0,
       tipo: mov.tipo === 'SALIDA' ? 'SALIDA' : 'ENTRADA',
       fecha: new Date(mov.fecha).toISOString(),
       bodega: mov.bodega ?? '—',
@@ -171,7 +176,7 @@ export function getMovimientoDetalle(folio: string): MovimientoDetalle | null {
 
   const t = sqlite
     .prepare(
-      `SELECT t.folio, t.fecha,
+      `SELECT t.folio, t.numero, t.fecha,
               t.bodega_origen_nombre AS bodega,
               t.sucursal_nombre      AS destino,
               t.destino_tipo         AS destinoTipo,
@@ -188,6 +193,7 @@ export function getMovimientoDetalle(folio: string): MovimientoDetalle | null {
   const items = conSustancia(parseLineas(t.itemsJson))
   return {
     folio: t.folio,
+    numero: Number(t.numero) || 0,
     tipo: 'TRASPASO',
     fecha: new Date(t.fecha).toISOString(),
     bodega: t.bodega ?? '—',

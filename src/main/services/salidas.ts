@@ -111,15 +111,21 @@ export function createSalida(input: CreateSalidaInput): CreateSalidaResult {
 
     // Documento del historial (misma transacción).
     const movimientoId = randomUUID()
+    const numero = (
+      sqlite
+        .prepare("SELECT COALESCE(MAX(numero), 0) + 1 AS n FROM movimiento WHERE tipo = 'SALIDA'")
+        .get() as { n: number }
+    ).n
     sqlite
       .prepare(
         `INSERT INTO movimiento
-           (folio, tipo, fecha, usuario_id, usuario_nombre, bodega_id, bodega_nombre,
+           (folio, numero, tipo, fecha, usuario_id, usuario_nombre, bodega_id, bodega_nombre,
             motivo, lineas, unidades, valor, items_json)
-         VALUES (?, 'SALIDA', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, 'SALIDA', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         movimientoId,
+        numero,
         now,
         input.cajeroId,
         usuario?.nombre ?? null,
@@ -132,7 +138,7 @@ export function createSalida(input: CreateSalidaInput): CreateSalidaResult {
         JSON.stringify(lineas)
       )
 
-    return { movimientoId, itemsCreados, unidadesTotales }
+    return { movimientoId, numero, itemsCreados, unidadesTotales }
   })
 
   return run()
