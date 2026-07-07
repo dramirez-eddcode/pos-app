@@ -6,7 +6,7 @@ import Spinner from './Spinner'
 import RespaldoModal from './RespaldoModal'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
-import { isAdminLike } from '../lib/roles'
+import { isSuperusuario } from '../lib/roles'
 
 const DEFAULT_PRINTER_HINT = 'EPSON TM-T20III Receipt'
 
@@ -31,7 +31,9 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save'>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
-  const userIsAdmin = isAdminLike(user)
+  // La zona peligrosa (reset de modo) es exclusiva del SUPERUSUARIO; el backend
+  // (instalacion.resetInstalacion) lo exige también.
+  const userIsSuper = isSuperusuario(user)
 
   const loadPrinters = useCallback(async () => {
     try {
@@ -285,8 +287,8 @@ export default function SettingsModal({ open, onClose }: Props) {
           </button>
         </section>
 
-        {/* Zona peligrosa: reset de modo ──────────────────────────────── */}
-        {userIsAdmin && (
+        {/* Zona peligrosa: reset de modo — sólo SUPERUSUARIO ───────────── */}
+        {userIsSuper && (
           <section className="pt-3 border-t border-red-200">
             <div className="flex items-start gap-2 mb-2">
               <AlertTriangle className="size-4 text-red-600 mt-0.5" />

@@ -40,6 +40,11 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
   const [lotes, setLotes] = useState<LoteInfo[]>([])
   const [codigo, setCodigo] = useState('')
   const [loteId, setLoteId] = useState('')
+  // 'auto' (default: es el uso común) = captura la existencia total del producto
+  // y el reparto entre lotes es automático (FEFO: descuenta primero del más
+  // próximo a caducar; los aumentos van al lote más lejano); 'lote' = ajusta un
+  // lote específico.
+  const [modo, setModo] = useState<'lote' | 'auto'>('auto')
   const [nuevoSaldo, setNuevoSaldo] = useState('')
   const [motivo, setMotivo] = useState<MotivoAjuste>('MERMA')
   const [nota, setNota] = useState('')
@@ -61,6 +66,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
     setNuevoSaldo('')
     setMotivo('MERMA')
     setNota('')
+    setModo('auto')
   }, [])
 
   const resetRow = useCallback(() => {
@@ -79,32 +85,41 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
     setTimeout(() => codRef.current?.focus(), 80)
   }, [open, reset])
 
-  const setFromProduct = useCallback(async (p: ProductoDto) => {
-    setCurrent(p)
-    setCodigo(p.codigo)
-    try {
-      const ls = await window.api.productos.getLotes(p.id)
-      setLotes(ls)
-      if (ls.length === 0) {
-        toast.warning(`"${p.nombre}" no tiene lotes`, {
-          description:
-            'Necesitas registrar primero una entrada de mercancía para este producto.'
+  const setFromProduct = useCallback(
+    async (p: ProductoDto) => {
+      setCurrent(p)
+      setCodigo(p.codigo)
+      try {
+        const ls = await window.api.productos.getLotes(p.id)
+        setLotes(ls)
+        if (ls.length === 0) {
+          toast.warning(`"${p.nombre}" no tiene lotes con existencia`, {
+            description:
+              'Los lotes agotados no se listan. Para darle stock registra una Entrada de mercancía.'
+          })
+          setLoteId('')
+          setNuevoSaldo('')
+          return
+        }
+        if (modo === 'auto') {
+          // Prefill con la existencia total del producto (suma de saldos)
+          setLoteId('')
+          setNuevoSaldo(String(ls.reduce((s, l) => s + l.saldo, 0)))
+        } else {
+          // Prefill con el primer lote (más próximo a caducar)
+          const first = ls[0]!
+          setLoteId(first.id)
+          setNuevoSaldo(String(first.saldo))
+        }
+        setTimeout(() => saldoRef.current?.focus(), 30)
+      } catch (e) {
+        toast.error('No se pudieron cargar los lotes', {
+          description: e instanceof Error ? e.message : String(e)
         })
-        setLoteId('')
-        setNuevoSaldo('')
-        return
       }
-      // Prefill con el primer lote (más próximo a caducar)
-      const first = ls[0]!
-      setLoteId(first.id)
-      setNuevoSaldo(String(first.saldo))
-      setTimeout(() => saldoRef.current?.focus(), 30)
-    } catch (e) {
-      toast.error('No se pudieron cargar los lotes', {
-        description: e instanceof Error ? e.message : String(e)
-      })
-    }
-  }, [])
+    },
+    [modo]
+  )
 
   const lookupByCode = useCallback(async () => {
     const c = codigo.trim()
@@ -124,14 +139,24 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
     if (l) setNuevoSaldo(String(l.saldo))
   }
 
+  // Al cambiar de modo con un producto ya cargado, repopula el prefill
+  const onModoChange = (m: 'lote' | 'auto'): void => {
+    setModo(m)
+    if (lotes.length === 0) return
+    if (m === 'auto') {
+      setLoteId('')
+      setNuevoSaldo(String(lotes.reduce((s, l) => s + l.saldo, 0)))
+    } else {
+      const first = lotes[0]!
+      setLoteId(first.id)
+      setNuevoSaldo(String(first.saldo))
+    }
+    setTimeout(() => saldoRef.current?.focus(), 30)
+  }
+
   const addItem = useCallback(() => {
     if (!current) {
       toast.error('Busca un producto primero')
-      return
-    }
-    const l = lotes.find((x) => x.id === loteId)
-    if (!l) {
-      toast.error('Selecciona un lote')
       return
     }
     const nuevo = Math.round(parseFloat(nuevoSaldo))
@@ -139,26 +164,70 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
       toast.error('Nuevo saldo inválido (debe ser 0 o mayor)')
       return
     }
-    const delta = nuevo - l.saldo
-    if (delta === 0) {
-      toast.warning('El nuevo saldo es igual al actual — no hay ajuste')
-      return
-    }
-    setItems((prev) => [
-      ...prev,
-      {
-        loteId: l.id,
-        productoNombre: current.nombre,
-        codigo: current.codigo,
-        saldoActual: l.saldo,
-        nuevoSaldo: nuevo,
-        motivo,
-        nota: nota.trim() || null,
-        fechaCaducidad: l.fechaCaducidad
+    const notaLimpia = nota.trim() || null
+    const rowDe = (l: LoteInfo, nuevoSaldoLote: number): Row => ({
+      loteId: l.id,
+      productoNombre: current.nombre,
+      codigo: current.codigo,
+      saldoActual: l.saldo,
+      nuevoSaldo: nuevoSaldoLote,
+      motivo,
+      nota: notaLimpia,
+      fechaCaducidad: l.fechaCaducidad
+    })
+
+    if (modo === 'auto') {
+      // Reparto automático del nuevo total entre lotes: si baja, se descuenta
+      // FEFO (primero el lote más próximo a caducar; getLotes ya viene en ese
+      // orden); si sube, el excedente entra al lote de caducidad más lejana.
+      if (lotes.length === 0) {
+        toast.error('El producto no tiene lotes')
+        return
       }
-    ])
+      const totalActual = lotes.reduce((s, l) => s + l.saldo, 0)
+      const delta = nuevo - totalActual
+      if (delta === 0) {
+        toast.warning('La nueva existencia es igual a la actual — no hay ajuste')
+        return
+      }
+      const nuevos: Row[] = []
+      if (delta < 0) {
+        let porQuitar = -delta
+        for (const l of lotes) {
+          if (porQuitar === 0) break
+          if (l.saldo <= 0) continue
+          const quita = Math.min(l.saldo, porQuitar)
+          porQuitar -= quita
+          nuevos.push(rowDe(l, l.saldo - quita))
+        }
+      } else {
+        const ultimo = lotes[lotes.length - 1]!
+        nuevos.push(rowDe(ultimo, ultimo.saldo + delta))
+      }
+      // Un ajuste nuevo del mismo lote reemplaza la línea pendiente previa
+      // (igual que el CSV) — evita líneas contradictorias sobre un lote.
+      setItems((prev) => [
+        ...prev.filter((p) => !nuevos.some((n) => n.loteId === p.loteId)),
+        ...nuevos
+      ])
+      toast.success(
+        `Ajuste de ${totalActual} → ${nuevo} repartido en ${nuevos.length} lote${nuevos.length === 1 ? '' : 's'}`
+      )
+    } else {
+      const l = lotes.find((x) => x.id === loteId)
+      if (!l) {
+        toast.error('Selecciona un lote')
+        return
+      }
+      const delta = nuevo - l.saldo
+      if (delta === 0) {
+        toast.warning('El nuevo saldo es igual al actual — no hay ajuste')
+        return
+      }
+      setItems((prev) => [...prev, rowDe(l, nuevo)])
+    }
     resetRow()
-  }, [current, lotes, loteId, nuevoSaldo, motivo, nota, resetRow])
+  }, [current, lotes, loteId, nuevoSaldo, motivo, nota, modo, resetRow])
 
   const removeItem = useCallback((i: number) => {
     setItems((prev) => prev.filter((_, idx) => idx !== i))
@@ -369,6 +438,10 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
     }
   }, [items, userId, onClose])
 
+  // Habilita la captura: en modo lote requiere lote elegido; en automático
+  // basta tener el producto con lotes cargados.
+  const capturable = modo === 'auto' ? current !== null && lotes.length > 0 : loteId !== ''
+
   const onKeyCode = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -482,44 +555,114 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
               </div>
             )}
 
+            {/* Modo de ajuste */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Ajustar:</span>
+              <div className="inline-flex border border-border rounded overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => onModoChange('auto')}
+                  className={`px-3 py-1 ${
+                    modo === 'auto'
+                      ? 'bg-primary text-primary-foreground font-medium'
+                      : 'bg-background hover:bg-muted'
+                  }`}
+                >
+                  Automático (producto completo)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onModoChange('lote')}
+                  className={`px-3 py-1 border-l border-border ${
+                    modo === 'lote'
+                      ? 'bg-primary text-primary-foreground font-medium'
+                      : 'bg-background hover:bg-muted'
+                  }`}
+                >
+                  Por lote
+                </button>
+              </div>
+              <InfoTooltip title="Modo de ajuste" align="start">
+                <strong>Por lote:</strong> eliges el lote y capturas su nuevo saldo.
+                <div className="mt-1">
+                  <strong>Automático:</strong> capturas la <strong>existencia total</strong> del
+                  producto y el sistema reparte el ajuste: si baja, descuenta primero del lote{' '}
+                  <strong>más próximo a caducar</strong>; si sube, el excedente entra al lote más
+                  lejano.
+                </div>
+              </InfoTooltip>
+            </div>
+
             {/* Lote + nuevo saldo + motivo */}
             <div className="grid grid-cols-[1fr_140px_1fr] gap-2">
+              {modo === 'lote' ? (
+                <div>
+                  <label className="flex items-center text-xs text-muted-foreground mb-1">
+                    Lote
+                    <InfoTooltip title="Lote a ajustar" align="start">
+                      Los ajustes se aplican a un <strong>lote específico</strong>. Sólo se
+                      listan lotes <strong>con existencia</strong>, ordenados por caducidad (el
+                      más próximo primero). Los agotados se consultan en Stock por bodega; para
+                      revivir stock usa Entrada de mercancía.
+                    </InfoTooltip>
+                  </label>
+                  <select
+                    ref={loteRef}
+                    value={loteId}
+                    onChange={(e) => onLoteChange(e.target.value)}
+                    disabled={!current || lotes.length === 0}
+                    className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs font-mono"
+                  >
+                    <option value="">— elige lote —</option>
+                    {lotes.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        Cad. {isoToYmd(l.fechaCaducidad)} · saldo {l.saldo} / total {l.total}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Lotes</label>
+                  <div className="border border-dashed border-border rounded px-2 py-1.5 bg-muted/20 text-xs text-muted-foreground">
+                    {current && lotes.length > 0 ? (
+                      <>
+                        {lotes.length} lote{lotes.length === 1 ? '' : 's'} · saldo total{' '}
+                        <span className="font-mono font-semibold text-foreground">
+                          {lotes.reduce((s, l) => s + l.saldo, 0)}
+                        </span>{' '}
+                        — reparto automático (caducidad más próxima primero)
+                      </>
+                    ) : (
+                      'Busca un producto — el reparto entre lotes es automático'
+                    )}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="flex items-center text-xs text-muted-foreground mb-1">
-                  Lote
-                  <InfoTooltip title="Lote a ajustar" align="start">
-                    Los ajustes se aplican a un <strong>lote específico</strong>. Los lotes se
-                    listan ordenados por caducidad, el más próximo primero. Si el producto no
-                    tiene lotes, regístralo primero con Entrada de mercancía.
-                  </InfoTooltip>
-                </label>
-                <select
-                  ref={loteRef}
-                  value={loteId}
-                  onChange={(e) => onLoteChange(e.target.value)}
-                  disabled={!current || lotes.length === 0}
-                  className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs font-mono"
-                >
-                  <option value="">— elige lote —</option>
-                  {lotes.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      Cad. {isoToYmd(l.fechaCaducidad)} · saldo {l.saldo} / total {l.total}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="flex items-center text-xs text-muted-foreground mb-1">
-                  Nuevo saldo
-                  <InfoTooltip title="Nuevo saldo del lote" align="center">
-                    La cantidad real que debería tener el lote <strong>después</strong> del
-                    ajuste. El sistema calcula el delta (diferencia) con el saldo actual y lo
-                    registra en el journal.
-                    <div className="mt-1.5 pt-1.5 border-t border-primary-foreground/20 italic">
-                      Ej: saldo actual 10, se cayeron 3 al piso y no sirven → nuevo saldo{' '}
-                      <strong>7</strong>.
-                    </div>
-                  </InfoTooltip>
+                  {modo === 'auto' ? 'Nueva existencia' : 'Nuevo saldo'}
+                  {modo === 'auto' ? (
+                    <InfoTooltip title="Nueva existencia total" align="center">
+                      La cantidad real del producto (todos los lotes) <strong>después</strong>{' '}
+                      del ajuste. Si baja, se descuenta empezando por el lote más próximo a
+                      caducar; si sube, el excedente entra al lote más lejano.
+                      <div className="mt-1.5 pt-1.5 border-t border-primary-foreground/20 italic">
+                        Ej: lotes con 2, 3 y 5 (total 10), conteo real <strong>6</strong> → quita
+                        los 2 del primero y 2 del segundo; el tercero queda intacto.
+                      </div>
+                    </InfoTooltip>
+                  ) : (
+                    <InfoTooltip title="Nuevo saldo del lote" align="center">
+                      La cantidad real que debería tener el lote <strong>después</strong> del
+                      ajuste. El sistema calcula el delta (diferencia) con el saldo actual y lo
+                      registra en el journal.
+                      <div className="mt-1.5 pt-1.5 border-t border-primary-foreground/20 italic">
+                        Ej: saldo actual 10, se cayeron 3 al piso y no sirven → nuevo saldo{' '}
+                        <strong>7</strong>.
+                      </div>
+                    </InfoTooltip>
+                  )}
                 </label>
                 <input
                   ref={saldoRef}
@@ -530,7 +673,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                   value={nuevoSaldo}
                   onChange={(e) => setNuevoSaldo(e.target.value)}
                   onKeyDown={onKeySaldo}
-                  disabled={!loteId}
+                  disabled={!capturable}
                 />
               </div>
               <div>
@@ -545,7 +688,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                 <select
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value as MotivoAjuste)}
-                  disabled={!loteId}
+                  disabled={!capturable}
                   className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
                 >
                   {MOTIVO_OPTIONS.map((m) => (
@@ -568,18 +711,19 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                 value={nota}
                 onChange={(e) => setNota(e.target.value)}
                 placeholder='Ej: "Se cayó la caja al descargar", "Cambio por mal embalaje"…'
-                disabled={!loteId}
+                disabled={!capturable}
               />
             </div>
 
             <div className="flex justify-between items-center">
               <div className="text-xs text-muted-foreground">
-                Tip: Enter en &quot;Nuevo saldo&quot; agrega el ajuste y resetea el formulario.
+                Tip: Enter en &quot;{modo === 'auto' ? 'Nueva existencia' : 'Nuevo saldo'}&quot;
+                agrega el ajuste y resetea el formulario.
               </div>
               <button
                 type="button"
                 onClick={addItem}
-                disabled={!loteId || !nuevoSaldo}
+                disabled={!capturable || !nuevoSaldo}
                 className="px-4 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-medium"
               >
                 Agregar ajuste

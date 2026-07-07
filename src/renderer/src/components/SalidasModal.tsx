@@ -96,18 +96,17 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
       setCurrent(p)
       setCodigo(p.codigo)
       try {
+        // getLotes ya regresa sólo lotes con saldo > 0 (no se puede sacar de nada)
         const ls = await window.api.productos.getLotes(p.id, bodegaId || undefined)
-        // En salidas sólo mostramos lotes con saldo > 0 (no se puede sacar de nada)
-        const activos = ls.filter((l) => l.saldo > 0)
-        setLotes(activos)
-        if (activos.length === 0) {
+        setLotes(ls)
+        if (ls.length === 0) {
           toast.warning(`"${p.nombre}" no tiene lotes con saldo en esta bodega`, {
             description: 'Los lotes agotados no aparecen porque no hay nada que sacar.'
           })
           setLoteId('')
           return
         }
-        const first = activos[0]!
+        const first = ls[0]!
         setLoteId(first.id)
         setTimeout(() => cantRef.current?.focus(), 30)
       } catch (e) {

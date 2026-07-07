@@ -652,7 +652,8 @@ export function completeWizardFromFarma(
  * No se puede borrar sólo los usuarios conservando ventas: las ventas/cortes
  * referencian al cajero por FOREIGN KEY. Por eso el reset es una limpieza total.
  *
- * Requiere confirmación de password del usuario actual.
+ * Requiere confirmación de password del usuario actual y rol SUPERUSUARIO
+ * (ni siquiera ADMINISTRADOR puede — es la acción más destructiva de la app).
  */
 export function resetInstalacion(viewerUserId: string, currentPassword: string): { ok: true } {
   const sqlite = getSqlite()
@@ -666,8 +667,8 @@ export function resetInstalacion(viewerUserId: string, currentPassword: string):
     )
     .get(viewerUserId) as { id: string; passwordHash: string; rol: string } | undefined
   if (!row) throw new Error('Usuario no encontrado')
-  if (row.rol !== 'SUPERUSUARIO' && row.rol !== 'ADMINISTRADOR') {
-    throw new Error('Requiere permisos de administrador')
+  if (row.rol !== 'SUPERUSUARIO') {
+    throw new Error('Sólo el SUPERUSUARIO puede resetear el modo de instalación')
   }
   if (!bcrypt.compareSync(currentPassword, row.passwordHash)) {
     throw new Error('Password actual incorrecta')

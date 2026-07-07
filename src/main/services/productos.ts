@@ -221,10 +221,14 @@ export function getAllLotesActivos(): Array<{
 }
 
 /**
- * Devuelve los lotes de un producto (todos, incluyendo con saldo 0 — por si
- * el admin quiere ajustar un lote "vacío" hacia arriba). Ordenados por fecha
- * de caducidad ascendente (el más próximo a vencer primero, siguiendo FEFO).
- * Con `bodegaId` se limita a los lotes de esa bodega (matriz multi-bodega).
+ * Devuelve los lotes CON EXISTENCIA (saldo > 0) de un producto, ordenados por
+ * fecha de caducidad ascendente (el más próximo a vencer primero, siguiendo
+ * FEFO). Los lotes agotados se conservan en BD (kárdex/mov_stock los
+ * referencia) pero no se listan: sólo estorban en los selectores de
+ * ajustes/salidas y en la ficha F7 — para verlos está "Stock por bodega" con
+ * su opción de incluir existencia 0. Para "revivir" stock se registra una
+ * Entrada de mercancía (lote nuevo con su caducidad real), no un ajuste sobre
+ * el lote vacío. Con `bodegaId` se limita a esa bodega (matriz multi-bodega).
  */
 export function getLotesByProducto(
   productoId: string,
@@ -242,6 +246,7 @@ export function getLotesByProducto(
       `SELECT id, total, saldo, fecha_caducidad, fecha_entrada
          FROM caducidad_lote
         WHERE producto_id = ?
+          AND saldo > 0
           AND (? IS NULL OR bodega_id = ?)
         ORDER BY fecha_caducidad ASC, fecha_entrada ASC`
     )

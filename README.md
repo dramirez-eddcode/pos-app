@@ -4,7 +4,7 @@ Punto de venta **100% local** para Farmacias MS — Electron + React + TypeScrip
 Tailwind. SQLite local por equipo (vía Drizzle / better-sqlite3). **Sin dependencias
 en la nube**: matriz y sucursales se sincronizan por **USB**.
 
-> Versión actual: **v1.0.0**
+> Versión actual: **v1.1.9**
 
 ## Modos de instalación
 
@@ -42,16 +42,37 @@ El instalador queda en `release/farmacias-ms-pos-<version>-setup.exe`.
 - **POS de venta**: búsqueda de productos (paginada, atajos de teclado y botones),
   multiplicador `código*N`, IVA por producto (exento / incluido / sumar), cortes,
   cancelaciones e impresión de ticket ESC/POS (RAW vía `resources/scripts/print-raw.ps1`).
+- **Cortes**: parcial, cambio de turno y **final**. El **corte parcial** se muestra en
+  pantalla (modal con botón Cerrar) y puede imprimirse opcionalmente; el **corte final**
+  siempre imprime, con confirmación persistente y con el **desglose de los parciales del
+  día** en el mismo ticket.
 - **Catálogo y precios**: alta/edición de productos, IVA con vista previa del precio,
-  carga masiva por CSV (catálogo y precios+IVA), todo paginado.
-- **Inventario**: entradas por lote, ajustes, salidas, **carga inicial idempotente**
-  (CSV) y **stock por bodega** con valor, caducidades y exportación de hoja de conteo.
+  carga masiva por CSV (catálogo y precios+IVA), todo paginado. En **matriz** el stock se
+  muestra **desglosado por bodega**.
+- **Importador legacy `.dat`**: carga el archivo `.dat` del sistema viejo (catálogo,
+  descripciones y precios) con upsert suave; accesible en Catálogo y como opción morada
+  en F10. El IVA no se toma del `.dat` (nuevos → exento); estatus `D` → inactivo.
+- **Inventario**: entradas por lote, ajustes (**por lote** o **automáticos**: capturas la
+  existencia total y el reparto descuenta primero del lote más próximo a caducar), salidas,
+  **carga inicial idempotente**
+  (CSV) y **stock por bodega** con valor, caducidades, hoja de conteo, opción de **ver
+  productos con existencia 0** y **edición inline de la fecha de caducidad de cada lote**.
+- **Preview de confirmación**: entradas, salidas y traspasos muestran una pantalla de
+  revisión (productos + cantidades) antes de aplicar; Cancelar conserva lo capturado.
+- **Folio numérico** de movimientos: entradas `E-1`, salidas `S-1`, traspasos `T-1`
+  (consecutivo por tipo, por instalación). El UUID interno se conserva para la
+  sincronización/anti-duplicado; el número corto es el que se ve en reportes/PDF.
+- **Roles**: SUPERUSUARIO (único que puede resetear el modo de instalación), ADMINISTRADOR,
+  SUPERVISOR (sólo en sucursal: entradas de mercancía + recibir traspasos + actualizar
+  datos), CAJERO.
+- **Impresión configurable**: en Configuración se elige **qué se imprime** en el ticket
+  (razón social, RFC, sucursal, dirección y **folio**), con ticket de prueba.
 - **Matriz ↔ Sucursal por USB**:
   - **Exportar `.farma`**: catálogo + precios (opcionalmente con **stock inicial** y
     usuarios admin para configurar una sucursal nueva de un solo archivo).
   - **Traspaso bodega → sucursal**: descuenta de una bodega y genera un `.traspaso`
     (anti-duplicado por folio); la sucursal lo recibe como entrada. **Historial de
-    traspasos** con detalle en la matriz.
+    movimientos** (entradas/salidas/traspasos) con detalle e impresión en PDF.
 - **Respaldo / restauración**: copia completa del SQLite (incluye todo: ventas,
   inventario, traspasos, usuarios…). Restaurable desde el asistente inicial.
 - **Configuración inicial** (wizard): MATRIZ, SUCURSAL, **configurar sucursal desde

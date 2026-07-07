@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { X } from 'lucide-react'
 
 interface ModalProps {
   open: boolean
@@ -10,9 +11,12 @@ interface ModalProps {
 }
 
 /**
- * Modal ligero con overlay. No atrapa foco (los inputs propios se encargan),
- * pero cierra con ESC (reemplazable con `onEscape`) y bloquea el scroll del
- * body mientras está abierto.
+ * Modal ligero con overlay. No atrapa foco (los inputs propios se encargan).
+ * Cierra con ESC (reemplazable con `onEscape`) o con la X del encabezado, y
+ * bloquea el scroll del body mientras está abierto.
+ *
+ * A propósito NO cierra al hacer clic fuera del panel: un clic accidental en
+ * el overlay perdería la captura en curso (entradas, ajustes, traspasos…).
  */
 export default function Modal({
   open,
@@ -45,22 +49,30 @@ export default function Modal({
 
   if (!open) return null
 
+  const close = onEscape ?? onClose
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-40 flex items-start justify-center px-4 pt-20 pb-10 bg-black/40 backdrop-blur-sm overflow-y-auto"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
     >
       <div
         ref={panelRef}
         className={`w-[92%] ${maxWidth} bg-background border border-border rounded-lg shadow-xl overflow-hidden`}
       >
         {title && (
-          <header className="border-b border-border px-4 py-2 bg-muted/30">
-            <div className="text-sm font-semibold">{title}</div>
+          <header className="flex items-center gap-2 border-b border-border px-4 py-2 bg-muted/30">
+            <div className="flex-1 text-sm font-semibold">{title}</div>
+            <button
+              type="button"
+              onClick={close}
+              title="Cerrar (Esc)"
+              aria-label="Cerrar"
+              className="p-1 -mr-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              <X className="size-4" />
+            </button>
           </header>
         )}
         {children}

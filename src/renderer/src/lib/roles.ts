@@ -29,8 +29,9 @@ export function isAdminLike(user: Pick<SessionUser, 'rol'> | null | undefined): 
  * Administrador "completo": ADMINISTRADOR o SUPERUSUARIO. A diferencia de
  * isAdminLike, EXCLUYE al SUPERVISOR. Úsalo para acciones que el supervisor NO
  * debe hacer (respaldo, configuración, usuarios, datos de sucursal, salidas,
- * ajustes, generar traspasos, entradas). El supervisor de sucursal sólo puede
- * recibir traspasos y actualizar datos (catálogo, precios, IVA, .farma, .dat).
+ * ajustes, generar traspasos). El supervisor de sucursal sólo puede registrar
+ * entradas de mercancía, recibir traspasos y actualizar datos (catálogo,
+ * precios, IVA, .farma, .dat).
  */
 export function isFullAdmin(user: Pick<SessionUser, 'rol'> | null | undefined): boolean {
   if (!user) return false
@@ -41,4 +42,13 @@ export function isFullAdmin(user: Pick<SessionUser, 'rol'> | null | undefined): 
 export function isSupervisor(user: Pick<SessionUser, 'rol'> | null | undefined): boolean {
   if (!user) return false
   return user.rol.toUpperCase() === 'SUPERVISOR'
+}
+
+/**
+ * Sólo SUPERUSUARIO. Para las acciones más destructivas (resetear el modo de
+ * instalación), que ni siquiera el ADMINISTRADOR debe ver.
+ */
+export function isSuperusuario(user: Pick<SessionUser, 'rol'> | null | undefined): boolean {
+  if (!user) return false
+  return user.rol.toUpperCase() === 'SUPERUSUARIO'
 }

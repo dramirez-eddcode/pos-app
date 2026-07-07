@@ -9,6 +9,8 @@ import Spinner from './Spinner'
 import ConfirmMovimientoModal from './ConfirmMovimientoModal'
 import { ProveedorSubModal } from './ProveedoresModal'
 import { money } from '../lib/format'
+import { useSession } from '../stores/session'
+import { isFullAdmin } from '../lib/roles'
 import type { BodegaDto, ProductoDto, ProveedorDto } from '@shared/dto'
 
 interface EntryRow {
@@ -40,6 +42,11 @@ function defaultCaducidad(): string {
 }
 
 export default function EntradaModal({ open, onClose, userId, onSaved }: Props) {
+  // El alta rápida de proveedor exige admin completo en backend (proveedores.ts
+  // requireAdmin); al SUPERVISOR se le oculta la opción — sí puede elegir
+  // proveedores existentes.
+  const { user } = useSession()
+  const puedeCrearProveedor = isFullAdmin(user)
   const [items, setItems] = useState<EntryRow[]>([])
   const [current, setCurrent] = useState<ProductoDto | null>(null)
   const [codigo, setCodigo] = useState('')
@@ -731,7 +738,9 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                               {p.nombre}
                             </option>
                           ))}
-                          <option value="__nuevo__">➕ Nuevo proveedor…</option>
+                          {puedeCrearProveedor && (
+                            <option value="__nuevo__">➕ Nuevo proveedor…</option>
+                          )}
                         </select>
                       </td>
                       <td className="px-2 py-1 text-right font-mono">{money(it.costo)}</td>

@@ -46,10 +46,12 @@ interface Props {
   onImportarDat: () => void
 }
 
-// El SUPERVISOR (de sucursal) sólo puede recibir traspasos y actualizar datos:
-// catálogo, precios/IVA, aplicar la actualización de la matriz (.farma) y el
-// archivo legacy (.dat). El resto es exclusivo de admins.
+// El SUPERVISOR (de sucursal) sólo puede registrar entradas de mercancía,
+// recibir traspasos y actualizar datos: catálogo, precios/IVA, aplicar la
+// actualización de la matriz (.farma) y el archivo legacy (.dat). El resto es
+// exclusivo de admins.
 const SUPERVISOR_PROCESOS = new Set([
+  'entrada',
   'recibir-traspaso',
   'precios',
   'catalogo',
@@ -218,8 +220,21 @@ export default function ProcesosEspecialesModal({
 
   useEffect(() => {
     if (!open) return
-    btnRefs.current[idx]?.focus()
-  }, [idx, open])
+    const btn = btnRefs.current[idx]
+    if (!btn) return
+    // Controlamos el scroll a mano: en los extremos el auto-scroll del focus
+    // deja fuera el encabezado / pie del modal.
+    btn.focus({ preventScroll: true })
+    const overlay = btn.closest('[role="dialog"]') as HTMLElement | null
+    if (!overlay) return
+    if (idx === 0) {
+      overlay.scrollTo({ top: 0 })
+    } else if (idx === options.length - 1) {
+      overlay.scrollTo({ top: overlay.scrollHeight })
+    } else {
+      btn.scrollIntoView({ block: 'nearest' })
+    }
+  }, [idx, open, options.length])
 
   useEffect(() => {
     if (!open) return

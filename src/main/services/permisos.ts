@@ -9,8 +9,9 @@ import { getSqlite } from '../db/connection'
  *    generar traspasos, salidas, ajustes, usuarios, datos de empresa, etc.).
  *  - requireAdminOrSupervisor: ADMINISTRADOR/SUPERUSUARIO en cualquier modo, y
  *    SUPERVISOR sólo en instalaciones tipo SUCURSAL. Es lo que un supervisor de
- *    sucursal puede hacer: recibir traspasos, aplicar actualizaciones de la
- *    matriz (.farma) o del legacy (.dat), editar catálogo, precios e IVA.
+ *    sucursal puede hacer: registrar entradas de mercancía, recibir traspasos,
+ *    aplicar actualizaciones de la matriz (.farma) o del legacy (.dat), editar
+ *    catálogo, precios e IVA.
  */
 
 export function rolDeUsuario(userId: string): string | null {

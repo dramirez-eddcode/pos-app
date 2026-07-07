@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import Modal from './Modal'
 import Spinner from './Spinner'
@@ -49,7 +49,10 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     setTerm('')
     setResults([])
     setIdx(0)
-    inputRef.current?.focus()
+    // Con delay: al abrir desde otro modal (F5) el padre se desmonta en el
+    // mismo render y un focus síncrono se pierde.
+    const t = setTimeout(() => inputRef.current?.focus(), 50)
+    return () => clearTimeout(t)
   }, [open])
 
   // Búsqueda con debounce
@@ -94,11 +97,15 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     setMode((m) => (m === 'nombre' ? 'sustancia' : m === 'sustancia' ? 'codigo' : 'nombre'))
   }, [])
 
-  // Listener propio del modal: F9 (cambiar modo) y Esc (cerrar). Se registra
-  // en capture phase para ganarle al useShortcut global del POSPage.
+  // Listener propio del modal: F9 (cambiar modo), Esc (cerrar), ↑/↓ (navegar)
+  // y Enter (agregar). Se registra en capture phase para ganarle al useShortcut
+  // global del POSPage. Las flechas/Enter van a nivel ventana (no en el input)
+  // para que la navegación funcione aunque el foco esté en otro lado (p. ej.
+  // tras hacer clic en una fila de la tabla).
   useEffect(() => {
     if (!open) return
     const onKeyDown = (e: KeyboardEvent): void => {
+      const tag = (e.target as HTMLElement | null)?.tagName
       if (e.key === 'F9') {
         e.preventDefault()
         e.stopPropagation()
@@ -107,25 +114,25 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
         e.preventDefault()
         e.stopPropagation()
         onClose()
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (tag === 'SELECT') return // el select de paginación usa las flechas
+        e.preventDefault()
+        e.stopPropagation()
+        setIdx((i) =>
+          e.key === 'ArrowDown' ? Math.min(results.length - 1, i + 1) : Math.max(0, i - 1)
+        )
+      } else if (e.key === 'Enter') {
+        // En botones/selects, Enter conserva su acción nativa (p. ej. Cerrar)
+        if (tag === 'BUTTON' || tag === 'SELECT') return
+        e.preventDefault()
+        e.stopPropagation()
+        const sel = results[idx]
+        if (sel) commit(sel)
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [open, onClose, rotateMode])
-
-  const onKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setIdx((i) => Math.min(results.length - 1, i + 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setIdx((i) => Math.max(0, i - 1))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      const sel = results[idx]
-      if (sel) commit(sel)
-    }
-  }
+  }, [open, onClose, rotateMode, results, idx, commit])
 
   return (
     <Modal open={open} title="Búsqueda de producto" onClose={onClose} maxWidth="max-w-4xl">
@@ -142,7 +149,6 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
               className="w-full border border-border rounded px-2 py-1.5"
               value={term}
               onChange={(e) => setTerm(e.target.value)}
-              onKeyDown={onKey}
               placeholder={
                 mode === 'codigo'
                   ? 'Código EAN-13 o SKU interno…'

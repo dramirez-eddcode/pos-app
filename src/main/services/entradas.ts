@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { getDb, getSqlite } from '../db/connection'
 import { caducidadLote, movStock, producto } from '../db/schema'
+import { requireAdminOrSupervisor } from './permisos'
 import type { CreateEntradaInput, CreateEntradaResult, MovimientoLinea } from '@shared/dto'
 
 /**
@@ -16,6 +17,8 @@ import type { CreateEntradaInput, CreateEntradaResult, MovimientoLinea } from '@
  * Todo dentro de una misma transacción — si falla un ítem, nada se persiste.
  */
 export function createEntrada(input: CreateEntradaInput): CreateEntradaResult {
+  requireAdminOrSupervisor(input.usuarioId)
+
   const db = getDb()
 
   if (input.items.length === 0) throw new Error('Sin items para registrar')
