@@ -1,5 +1,11 @@
 import { getSqlite } from '../db/connection'
-import type { MovimientoDetalle, MovimientoHistItem, MovimientoLinea } from '@shared/dto'
+import type {
+  KardexItem,
+  KardexTipo,
+  MovimientoDetalle,
+  MovimientoHistItem,
+  MovimientoLinea
+} from '@shared/dto'
 
 /**
  * Historial unificado de movimientos de inventario de la matriz:
@@ -139,6 +145,94 @@ export function listMovimientos(): MovimientoHistItem[] {
 
   items.sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0))
   return items
+}
+
+// Lote "sin caducidad" (sentinel de cargaInicial/traspasos): no se muestra fecha.
+const SIN_CADUCIDAD_MS = Date.UTC(2099, 11, 31)
+
+/**
+ * Kárdex por producto: TODOS los movimientos de stock del producto (ventas,
+ * cancelaciones, entradas, salidas, ajustes, traspasos y carga inicial) en
+ * orden cronológico, con el saldo acumulado después de cada uno. Sale del
+ * journal `mov_stock` (cantidad firmada), así que el saldo del último renglón
+ * coincide con la existencia actual.
+ */
+export function getKardexProducto(productoId: string): KardexItem[] {
+  const sqlite = getSqlite()
+  // docFolio: el journal no guarda la referencia al documento, pero cada
+  // operación usa el MISMO timestamp en toda su transacción (journal y
+  // documento comparten el `now`), así que el documento se resuelve por
+  // fecha exacta + tipo (movimiento) o fecha exacta (traspaso).
+  const rows = sqlite
+    .prepare(
+      `SELECT ms.tipo, ms.cantidad, ms.fecha, ms.motivo,
+              cl.fecha_caducidad AS caducidadMs,
+              b.nombre           AS bodega,
+              v.folio_local      AS ventaFolio,
+              COALESCE(
+                (SELECT m2.folio FROM movimiento m2
+                  WHERE m2.fecha = ms.fecha AND m2.tipo = ms.tipo LIMIT 1),
+                (SELECT t2.folio FROM traspaso t2
+                  WHERE t2.fecha = ms.fecha LIMIT 1)
+              ) AS docFolio
+         FROM mov_stock ms
+         JOIN caducidad_lote cl ON cl.id = ms.lote_id
+         LEFT JOIN bodega b     ON b.id = cl.bodega_id
+         LEFT JOIN venta_item vi ON vi.id = ms.venta_item_id
+         LEFT JOIN venta v       ON v.id = vi.venta_id
+        WHERE cl.producto_id = ?
+        ORDER BY ms.fecha ASC, ms.rowid ASC`
+    )
+    .all(productoId) as Array<{
+    tipo: string
+    cantidad: number
+    fecha: number
+    motivo: string | null
+    caducidadMs: number
+    bodega: string | null
+    ventaFolio: number | null
+    docFolio: string | null
+  }>
+
+  // El motivo guarda "… por <uuid>" para auditoría; se limpia para mostrar.
+  const UUID_SUFFIX = / por [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  let saldo = 0
+  return rows.map((r) => {
+    const cantidad = Number(r.cantidad) || 0
+    saldo += cantidad
+    const tipo = (
+      ['ENTRADA', 'SALIDA', 'AJUSTE', 'VENTA', 'CANCELACION_VENTA'].includes(r.tipo)
+        ? r.tipo
+        : 'AJUSTE'
+    ) as KardexTipo
+    const referencia =
+      tipo === 'VENTA'
+        ? r.ventaFolio != null
+          ? `Venta #${r.ventaFolio}`
+          : 'Venta'
+        : tipo === 'CANCELACION_VENTA'
+          ? r.ventaFolio != null
+            ? `Cancelación venta #${r.ventaFolio}`
+            : 'Cancelación de venta'
+          : null
+    return {
+      fecha: new Date(r.fecha).toISOString(),
+      tipo,
+      cantidad,
+      saldo,
+      motivo: r.motivo ? r.motivo.replace(UUID_SUFFIX, '') : null,
+      referencia,
+      caducidad:
+        Number(r.caducidadMs) === SIN_CADUCIDAD_MS
+          ? null
+          : new Date(Number(r.caducidadMs)).toISOString().slice(0, 10),
+      bodega: r.bodega ?? null,
+      // Sólo entradas/salidas tienen documento; en ventas/ajustes/carga
+      // inicial un match casual por fecha sería un falso positivo.
+      docFolio: tipo === 'ENTRADA' || tipo === 'SALIDA' ? (r.docFolio ?? null) : null
+    }
+  })
 }
 
 export function getMovimientoDetalle(folio: string): MovimientoDetalle | null {

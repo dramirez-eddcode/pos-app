@@ -69,7 +69,7 @@ import {
   pickTraspaso,
   traspasoEntreBodegas
 } from './services/traspaso'
-import { getMovimientoDetalle, listMovimientos } from './services/movimientos'
+import { getKardexProducto, getMovimientoDetalle, listMovimientos } from './services/movimientos'
 import {
   exportMovimientoPdf,
   exportStockBodegaPdf,
@@ -323,6 +323,9 @@ export function registerIpcHandlers(): void {
     return exportMovimientoPdf(folio, win)
   })
   ipcMain.handle('movimientos:imprimir', async (_e, folio: string) => imprimirMovimiento(folio))
+  ipcMain.handle('movimientos:kardex', async (_e, productoId: string) =>
+    getKardexProducto(productoId)
+  )
 
   // ── precios de venta ────────────────────────────────────────────────────
   ipcMain.handle('precios:update', async (_e, input: UpdatePreciosInput) => updatePrecios(input))

@@ -1303,6 +1303,12 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => (tab === 'iva' ? setFromProductIva(p) : setFromProduct(p))}
         allowZeroStock
+        returnFocus={() =>
+          setTimeout(
+            () => (tab === 'iva' ? ivaCodRef.current?.focus() : codRef.current?.focus()),
+            100
+          )
+        }
       />
     </>
   )

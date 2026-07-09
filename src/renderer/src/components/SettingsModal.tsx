@@ -6,7 +6,7 @@ import Spinner from './Spinner'
 import RespaldoModal from './RespaldoModal'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
-import { isSuperusuario } from '../lib/roles'
+import { isFullAdmin, isSuperusuario } from '../lib/roles'
 
 const DEFAULT_PRINTER_HINT = 'EPSON TM-T20III Receipt'
 
@@ -34,6 +34,10 @@ export default function SettingsModal({ open, onClose }: Props) {
   // La zona peligrosa (reset de modo) es exclusiva del SUPERUSUARIO; el backend
   // (instalacion.resetInstalacion) lo exige también.
   const userIsSuper = isSuperusuario(user)
+  // Qué se imprime en el ticket (hora, encabezado, pie): sólo SUPERUSUARIO y
+  // ADMINISTRADOR lo cambian. Cajero/supervisor lo ven deshabilitado — la
+  // impresora y el cajón sí los pueden ajustar (son de hardware, por equipo).
+  const puedeConfigurarTicket = isFullAdmin(user)
 
   const loadPrinters = useCallback(async () => {
     try {
@@ -127,7 +131,7 @@ export default function SettingsModal({ open, onClose }: Props) {
               value={selected}
               onChange={(e) => setSelected(e.target.value)}
             >
-              <option value="">— elige impresora —</option>
+              <option value="">Sin impresora — no imprimir tickets</option>
               {printers.map((p) => (
                 <option key={p} value={p}>
                   {p}
@@ -142,9 +146,13 @@ export default function SettingsModal({ open, onClose }: Props) {
               Recargar
             </button>
           </div>
-          {selected === '' && printers.includes(DEFAULT_PRINTER_HINT) && (
+          {selected === '' && (
             <p className="text-xs text-muted-foreground">
-              Tip: parece que tienes "{DEFAULT_PRINTER_HINT}" instalada.
+              Con "Sin impresora" el sistema opera normal (ventas, cortes, cancelaciones) pero
+              no manda nada a imprimir.
+              {printers.includes(DEFAULT_PRINTER_HINT) && (
+                <> Tip: parece que tienes &quot;{DEFAULT_PRINTER_HINT}&quot; instalada.</>
+              )}
             </p>
           )}
         </section>
@@ -164,18 +172,22 @@ export default function SettingsModal({ open, onClose }: Props) {
             id="show-time"
             type="checkbox"
             checked={showTime}
+            disabled={!puedeConfigurarTicket}
             onChange={(e) => setShowTime(e.target.checked)}
           />
-          <label htmlFor="show-time">Mostrar hora de la venta en el ticket</label>
+          <label htmlFor="show-time" className={puedeConfigurarTicket ? '' : 'opacity-60'}>
+            Mostrar hora de la venta en el ticket
+          </label>
         </section>
 
-        <section className="space-y-1.5">
+        <section className={`space-y-1.5 ${puedeConfigurarTicket ? '' : 'opacity-60'}`}>
           <div className="font-medium text-xs">Encabezado del ticket — qué imprimir</div>
           <div className="border border-border rounded px-3 py-2 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={mostrarRazonSocial}
+                disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarRazonSocial(e.target.checked)}
               />
               Razón social
@@ -184,6 +196,7 @@ export default function SettingsModal({ open, onClose }: Props) {
               <input
                 type="checkbox"
                 checked={mostrarRfc}
+                disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarRfc(e.target.checked)}
               />
               RFC
@@ -192,6 +205,7 @@ export default function SettingsModal({ open, onClose }: Props) {
               <input
                 type="checkbox"
                 checked={mostrarSucursal}
+                disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarSucursal(e.target.checked)}
               />
               Nombre de la sucursal
@@ -200,6 +214,7 @@ export default function SettingsModal({ open, onClose }: Props) {
               <input
                 type="checkbox"
                 checked={mostrarDireccion}
+                disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarDireccion(e.target.checked)}
               />
               Dirección
@@ -208,19 +223,29 @@ export default function SettingsModal({ open, onClose }: Props) {
               <input
                 type="checkbox"
                 checked={mostrarFolio}
+                disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarFolio(e.target.checked)}
               />
               Folio (nota de mostrador)
             </label>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Lo desmarcado no se imprime. Razón social, RFC, sucursal y dirección aplican a todos los
-            tickets (venta, cancelación y corte); el folio aplica al ticket de venta. Usa "Ticket de
-            prueba" para previsualizar antes de guardar.
+            {puedeConfigurarTicket ? (
+              <>
+                Lo desmarcado no se imprime. Razón social, RFC, sucursal y dirección aplican a
+                todos los tickets (venta, cancelación y corte); el folio aplica al ticket de
+                venta. Usa "Ticket de prueba" para previsualizar antes de guardar.
+              </>
+            ) : (
+              <>
+                Sólo un <strong>administrador</strong> o <strong>superusuario</strong> puede
+                cambiar qué se imprime en el ticket.
+              </>
+            )}
           </p>
         </section>
 
-        <section className="space-y-1">
+        <section className={`space-y-1 ${puedeConfigurarTicket ? '' : 'opacity-60'}`}>
           <label htmlFor="receipt-footer" className="block font-medium text-xs">
             Mensaje al pie del ticket
           </label>
@@ -231,6 +256,7 @@ export default function SettingsModal({ open, onClose }: Props) {
             placeholder='Ej. "¡Gracias por su compra!" — máx. 160 caracteres, una o dos líneas.'
             className="w-full border border-border rounded px-2 py-1.5 text-sm"
             value={receiptFooter}
+            disabled={!puedeConfigurarTicket}
             onChange={(e) => setReceiptFooter(e.target.value)}
           />
           <p className="text-[11px] text-muted-foreground">

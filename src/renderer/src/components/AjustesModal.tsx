@@ -847,6 +847,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
+        returnFocus={() => setTimeout(() => codRef.current?.focus(), 100)}
       />
     </>
   )

@@ -9,7 +9,14 @@ import ConfirmMovimientoModal from './ConfirmMovimientoModal'
 import type { BodegaDto, LoteInfo, ProductoDto, SalidaItemInput } from '@shared/dto'
 import type { MotivoSalida } from '@shared/types'
 
-interface Row extends SalidaItemInput {
+// Renglón capturado. El motivo y la nota NO van por renglón: son de TODA la
+// salida (se eligen una vez y se aplican a todas las líneas al guardar).
+interface Row {
+  loteId: string
+  productoNombre: string
+  codigo: string
+  saldoActual: number
+  cantidad: number
   fechaCaducidad: string
 }
 
@@ -40,6 +47,9 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   const [lotes, setLotes] = useState<LoteInfo[]>([])
   const [codigo, setCodigo] = useState('')
   const [loteId, setLoteId] = useState('')
+  // 'auto' (default): capturas la cantidad total y se reparte FEFO entre los
+  // lotes (el más próximo a caducar primero). 'lote': eliges lote específico.
+  const [modo, setModo] = useState<'auto' | 'lote'>('auto')
   const [cantidad, setCantidad] = useState('')
   const [motivo, setMotivo] = useState<MotivoSalida>('CADUCIDAD')
   const [nota, setNota] = useState('')
@@ -52,6 +62,11 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   const codRef = useRef<HTMLInputElement>(null)
   const loteRef = useRef<HTMLSelectElement>(null)
   const cantRef = useRef<HTMLInputElement>(null)
+  // Renglón "activo" de la tabla, para repasar lo capturado: clic o flechas
+  // lo sombrean y recorren.
+  const [selRow, setSelRow] = useState(-1)
+  const tablaRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
 
   const reset = useCallback(() => {
     setItems([])
@@ -63,6 +78,8 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     setMotivo('CADUCIDAD')
     setNota('')
     setPreview(false)
+    setModo('auto')
+    setSelRow(-1)
   }, [])
 
   const resetRow = useCallback(() => {
@@ -71,7 +88,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     setCodigo('')
     setLoteId('')
     setCantidad('')
-    setNota('')
+    // motivo y nota NO se limpian: son de toda la salida
     setTimeout(() => codRef.current?.focus(), 30)
   }, [])
 
@@ -106,8 +123,12 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
           setLoteId('')
           return
         }
-        const first = ls[0]!
-        setLoteId(first.id)
+        if (modo === 'auto') {
+          setLoteId('')
+        } else {
+          const first = ls[0]!
+          setLoteId(first.id)
+        }
         setTimeout(() => cantRef.current?.focus(), 30)
       } catch (e) {
         toast.error('No se pudieron cargar los lotes', {
@@ -115,7 +136,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
         })
       }
     },
-    [bodegaId]
+    [bodegaId, modo]
   )
 
   const lookupByCode = useCallback(async () => {
@@ -131,14 +152,22 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
 
   const currentLote = lotes.find((l) => l.id === loteId)
 
+  // Lo ya capturado (pendiente) por lote, para no exceder el saldo real.
+  const pendienteDeLote = useCallback(
+    (id: string): number =>
+      items.filter((it) => it.loteId === id).reduce((s, it) => s + it.cantidad, 0),
+    [items]
+  )
+
+  // Disponible total del producto en la bodega (saldos menos pendientes).
+  const disponibleTotal = lotes.reduce(
+    (s, l) => s + Math.max(0, l.saldo - pendienteDeLote(l.id)),
+    0
+  )
+
   const addItem = useCallback(() => {
     if (!current) {
       toast.error('Busca un producto primero')
-      return
-    }
-    const l = lotes.find((x) => x.id === loteId)
-    if (!l) {
-      toast.error('Selecciona un lote')
       return
     }
     const qty = Math.round(parseFloat(cantidad))
@@ -146,32 +175,83 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
       toast.error('Cantidad inválida (debe ser > 0)')
       return
     }
-    // Suma lo que ya está pendiente para este lote
-    const pendiente = items
-      .filter((it) => it.loteId === l.id)
-      .reduce((s, it) => s + it.cantidad, 0)
-    if (pendiente + qty > l.saldo) {
-      const disponible = Math.max(0, l.saldo - pendiente)
-      toast.error(
-        `Excedes el saldo: lote tiene ${l.saldo}, ${pendiente > 0 ? `ya pendiente ${pendiente}, disponible ${disponible}` : ''}`
-      )
-      return
-    }
-    setItems((prev) => [
-      ...prev,
-      {
-        loteId: l.id,
-        productoNombre: current.nombre,
-        codigo: current.codigo,
-        saldoActual: l.saldo,
-        cantidad: qty,
-        motivo,
-        nota: nota.trim() || null,
-        fechaCaducidad: l.fechaCaducidad
+
+    if (modo === 'auto') {
+      // Reparto FEFO: descuenta del lote más próximo a caducar hacia adelante
+      // (getLotes ya viene en ese orden), respetando lo ya capturado.
+      if (lotes.length === 0) {
+        toast.error('El producto no tiene lotes con saldo')
+        return
       }
-    ])
+      if (qty > disponibleTotal) {
+        toast.error(
+          `Excedes lo disponible: hay ${disponibleTotal} unidad${disponibleTotal === 1 ? '' : 'es'}${
+            disponibleTotal !== lotes.reduce((s, l) => s + l.saldo, 0)
+              ? ' (contando lo ya capturado)'
+              : ''
+          }`
+        )
+        return
+      }
+      const nuevos: Row[] = []
+      let restante = qty
+      for (const l of lotes) {
+        if (restante <= 0) break
+        const disp = Math.max(0, l.saldo - pendienteDeLote(l.id))
+        if (disp <= 0) continue
+        const toma = Math.min(disp, restante)
+        restante -= toma
+        nuevos.push({
+          loteId: l.id,
+          productoNombre: current.nombre,
+          codigo: current.codigo,
+          saldoActual: l.saldo,
+          cantidad: toma,
+          fechaCaducidad: l.fechaCaducidad
+        })
+      }
+      setItems((prev) => [...prev, ...nuevos])
+      if (nuevos.length > 1) {
+        toast.success(`${qty} unidades repartidas en ${nuevos.length} lotes (FEFO)`)
+      }
+    } else {
+      const l = lotes.find((x) => x.id === loteId)
+      if (!l) {
+        toast.error('Selecciona un lote')
+        return
+      }
+      // Suma lo que ya está pendiente para este lote
+      const pendiente = pendienteDeLote(l.id)
+      if (pendiente + qty > l.saldo) {
+        const disponible = Math.max(0, l.saldo - pendiente)
+        toast.error(
+          `Excedes el saldo: lote tiene ${l.saldo}, ${pendiente > 0 ? `ya pendiente ${pendiente}, disponible ${disponible}` : ''}`
+        )
+        return
+      }
+      setItems((prev) => [
+        ...prev,
+        {
+          loteId: l.id,
+          productoNombre: current.nombre,
+          codigo: current.codigo,
+          saldoActual: l.saldo,
+          cantidad: qty,
+          fechaCaducidad: l.fechaCaducidad
+        }
+      ])
+    }
     resetRow()
-  }, [current, lotes, loteId, cantidad, motivo, nota, items, resetRow])
+  }, [current, lotes, loteId, cantidad, modo, disponibleTotal, pendienteDeLote, resetRow])
+
+  // Al cambiar de modo con un producto cargado, ajusta el prefill del lote.
+  const onModoChange = (m: 'auto' | 'lote'): void => {
+    setModo(m)
+    if (lotes.length === 0) return
+    if (m === 'auto') setLoteId('')
+    else setLoteId(lotes[0]!.id)
+    setTimeout(() => cantRef.current?.focus(), 30)
+  }
 
   const removeItem = useCallback((i: number) => {
     setItems((prev) => prev.filter((_, idx) => idx !== i))
@@ -184,10 +264,16 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     }
     setSaving(true)
     try {
+      // El motivo/nota (de toda la salida) se aplica a cada línea al guardar.
+      const notaLimpia = nota.trim() || null
       const r = await window.api.salidas.create({
         cajeroId: userId,
         bodegaId: bodegaId || null,
-        items: items.map(({ fechaCaducidad: _omit, ...rest }) => rest)
+        items: items.map<SalidaItemInput>(({ fechaCaducidad: _omit, ...rest }) => ({
+          ...rest,
+          motivo,
+          nota: notaLimpia
+        }))
       })
       toast.success(
         `Salida registrada: ${r.itemsCreados} ${r.itemsCreados === 1 ? 'línea' : 'líneas'}, ${r.unidadesTotales} unidad${r.unidadesTotales === 1 ? '' : 'es'}`,
@@ -215,7 +301,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     } finally {
       setSaving(false)
     }
-  }, [items, userId, userNombre, bodegaId, onSaved, onClose])
+  }, [items, motivo, nota, userId, userNombre, bodegaId, onSaved, onClose])
 
   const onKeyCode = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -232,6 +318,29 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
       addItem()
     }
   }
+
+  // ↑/↓ con la tabla enfocada recorren y sombrean los renglones capturados
+  // (para repasar lo ingresado). preventDefault evita que la navegación
+  // genérica del modal se lleve el foco a otro campo.
+  const onKeyTabla = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (items.length === 0) return
+    e.preventDefault()
+    setSelRow((i) =>
+      e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+    )
+  }
+
+  // Mantén visible el renglón activo y ajusta si la lista cambia.
+  useEffect(() => {
+    if (selRow < 0) return
+    if (selRow > items.length - 1) {
+      setSelRow(items.length - 1)
+      return
+    }
+    const row = tbodyRef.current?.children[selRow] as HTMLElement | undefined
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow, items.length])
 
   // Abre el preview de confirmación (no registra todavía).
   const pedirConfirmacion = useCallback(() => {
@@ -289,6 +398,45 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
             </section>
           )}
 
+          {/* Motivo de TODA la salida — se elige ANTES de capturar */}
+          <section className="border border-border rounded p-3 bg-muted/10">
+            <div className="grid grid-cols-[220px_1fr] gap-2">
+              <div>
+                <label className="flex items-center text-xs text-muted-foreground mb-1">
+                  Motivo de la salida
+                  <InfoTooltip title="Motivo — aplica a toda la lista" align="start">
+                    Un solo motivo para <strong>todas las líneas</strong> de esta salida. Queda
+                    en <span className="font-mono">mov_stock</span> con tipo{' '}
+                    <span className="font-mono">SALIDA</span>. Si es "Otro", usa la nota para
+                    explicar.
+                  </InfoTooltip>
+                </label>
+                <select
+                  value={motivo}
+                  onChange={(e) => setMotivo(e.target.value as MotivoSalida)}
+                  className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
+                >
+                  {MOTIVO_OPTIONS.map((m) => (
+                    <option key={m.value} value={m.value} title={m.hint}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-muted-foreground mb-1">Nota (opcional)</label>
+                <input
+                  type="text"
+                  maxLength={200}
+                  className="w-full border border-border rounded px-2 py-1.5 text-xs"
+                  value={nota}
+                  onChange={(e) => setNota(e.target.value)}
+                  placeholder='Ej: "Traspaso a Torres Landa", "Muestra Dr. Pérez", "Caducaron 15 abril"…'
+                />
+              </div>
+            </div>
+          </section>
+
           {/* Formulario de captura */}
           <section className="border border-border rounded p-3 bg-muted/10 space-y-3">
             <div className="grid grid-cols-[1fr_auto] gap-2">
@@ -331,37 +479,103 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
               </div>
             )}
 
-            <div className="grid grid-cols-[1fr_140px_1fr] gap-2">
-              <div>
-                <label className="flex items-center text-xs text-muted-foreground mb-1">
-                  Lote (FEFO)
-                  <InfoTooltip title="Lote del que sale la mercancía" align="start">
-                    Solo se muestran lotes <strong>con saldo {'>'} 0</strong>, ordenados por
-                    caducidad. Selecciona de qué lote sale — si la salida es por caducidad, será
-                    el más próximo a vencer.
-                  </InfoTooltip>
-                </label>
-                <select
-                  ref={loteRef}
-                  value={loteId}
-                  onChange={(e) => setLoteId(e.target.value)}
-                  disabled={!current || lotes.length === 0}
-                  className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs font-mono"
+            {/* Modo de salida */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Lote:</span>
+              <div className="inline-flex border border-border rounded overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => onModoChange('auto')}
+                  className={`px-3 py-1 ${
+                    modo === 'auto'
+                      ? 'bg-primary text-primary-foreground font-medium'
+                      : 'bg-background hover:bg-muted'
+                  }`}
                 >
-                  <option value="">— elige lote —</option>
-                  {lotes.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      Cad. {isoToYmd(l.fechaCaducidad)} · saldo {l.saldo}
-                    </option>
-                  ))}
-                </select>
+                  Automático (FEFO)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onModoChange('lote')}
+                  className={`px-3 py-1 border-l border-border ${
+                    modo === 'lote'
+                      ? 'bg-primary text-primary-foreground font-medium'
+                      : 'bg-background hover:bg-muted'
+                  }`}
+                >
+                  Elegir lote
+                </button>
               </div>
+              <InfoTooltip title="Modo de salida" align="start">
+                <strong>Automático:</strong> capturas la cantidad total y el sistema descuenta
+                empezando por el lote <strong>más próximo a caducar</strong> (FEFO), repartiendo
+                entre lotes si hace falta.
+                <div className="mt-1">
+                  <strong>Elegir lote:</strong> tú decides de qué lote específico sale.
+                </div>
+              </InfoTooltip>
+            </div>
+
+            <div className="grid grid-cols-[1fr_140px] gap-2">
+              {modo === 'lote' ? (
+                <div>
+                  <label className="flex items-center text-xs text-muted-foreground mb-1">
+                    Lote (FEFO)
+                    <InfoTooltip title="Lote del que sale la mercancía" align="start">
+                      Solo se muestran lotes <strong>con saldo {'>'} 0</strong>, ordenados por
+                      caducidad. Selecciona de qué lote sale — si la salida es por caducidad, será
+                      el más próximo a vencer.
+                    </InfoTooltip>
+                  </label>
+                  <select
+                    ref={loteRef}
+                    value={loteId}
+                    onChange={(e) => setLoteId(e.target.value)}
+                    disabled={!current || lotes.length === 0}
+                    className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs font-mono"
+                  >
+                    <option value="">— elige lote —</option>
+                    {lotes.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        Cad. {isoToYmd(l.fechaCaducidad)} · saldo {l.saldo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">Lotes</label>
+                  <div className="border border-dashed border-border rounded px-2 py-1.5 bg-muted/20 text-xs text-muted-foreground">
+                    {current && lotes.length > 0 ? (
+                      <>
+                        {lotes.length} lote{lotes.length === 1 ? '' : 's'} · disponible{' '}
+                        <span className="font-mono font-semibold text-foreground">
+                          {disponibleTotal}
+                        </span>{' '}
+                        — descuenta del más próximo a caducar
+                      </>
+                    ) : (
+                      'Busca un producto — el lote se descuenta automático (FEFO)'
+                    )}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="flex items-center text-xs text-muted-foreground mb-1">
                   Cantidad
                   <InfoTooltip title="Unidades que salen" align="center">
-                    Cuántas unidades se retiran del lote. Se resta directo del saldo. Debe ser{' '}
-                    <strong>{'≤'} saldo actual</strong> del lote.
+                    {modo === 'auto' ? (
+                      <>
+                        Cuántas unidades salen en total. Se descuentan empezando por el lote más
+                        próximo a caducar, repartiendo entre lotes si hace falta. Debe ser{' '}
+                        <strong>{'≤'} disponible</strong> del producto en la bodega.
+                      </>
+                    ) : (
+                      <>
+                        Cuántas unidades se retiran del lote. Se resta directo del saldo. Debe
+                        ser <strong>{'≤'} saldo actual</strong> del lote.
+                      </>
+                    )}
                     <div className="mt-1.5 pt-1.5 border-t border-primary-foreground/20 italic">
                       Ej: un lote de aspirinas vencido con 7 unidades → captura{' '}
                       <strong>7</strong> con motivo Caducidad.
@@ -373,49 +587,14 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                   type="number"
                   min={1}
                   step={1}
-                  max={currentLote?.saldo ?? undefined}
+                  max={modo === 'auto' ? disponibleTotal || undefined : currentLote?.saldo ?? undefined}
                   className="w-full border border-border rounded px-2 py-1.5 font-mono text-right"
                   value={cantidad}
                   onChange={(e) => setCantidad(e.target.value)}
                   onKeyDown={onKeyCantidad}
-                  disabled={!loteId}
+                  disabled={modo === 'auto' ? !current || lotes.length === 0 : !loteId}
                 />
               </div>
-              <div>
-                <label className="flex items-center text-xs text-muted-foreground mb-1">
-                  Motivo
-                  <InfoTooltip title="Motivo de salida" align="end">
-                    La razón queda en <span className="font-mono">mov_stock</span> con tipo{' '}
-                    <span className="font-mono">SALIDA</span>. Si es "Otro", usa la nota para
-                    explicar.
-                  </InfoTooltip>
-                </label>
-                <select
-                  value={motivo}
-                  onChange={(e) => setMotivo(e.target.value as MotivoSalida)}
-                  disabled={!loteId}
-                  className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
-                >
-                  {MOTIVO_OPTIONS.map((m) => (
-                    <option key={m.value} value={m.value} title={m.hint}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-muted-foreground mb-1">Nota (opcional)</label>
-              <input
-                type="text"
-                maxLength={200}
-                className="w-full border border-border rounded px-2 py-1.5 text-xs"
-                value={nota}
-                onChange={(e) => setNota(e.target.value)}
-                placeholder='Ej: "Traspaso a Torres Landa", "Muestra Dr. Pérez", "Caducaron 15 abril"…'
-                disabled={!loteId}
-              />
             </div>
 
             <div className="flex justify-between items-center">
@@ -425,7 +604,9 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
               <button
                 type="button"
                 onClick={addItem}
-                disabled={!loteId || !cantidad}
+                disabled={
+                  (modo === 'auto' ? !current || lotes.length === 0 : !loteId) || !cantidad
+                }
                 className="px-4 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-medium"
               >
                 Agregar salida
@@ -442,7 +623,13 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                 {items.length > 0 && ` · ${totalUnidades} unidades`}
               </span>
             </header>
-            <div className="overflow-auto max-h-[260px]">
+            <div
+              ref={tablaRef}
+              tabIndex={0}
+              onKeyDown={onKeyTabla}
+              title="Clic en un renglón (o flechas con la tabla enfocada) para recorrer lo capturado"
+              className="overflow-auto max-h-[260px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b border-border">
                   <tr className="text-left">
@@ -451,15 +638,14 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                     <th className="px-2 py-1 w-16 text-right">Saldo</th>
                     <th className="px-2 py-1 w-16 text-right">Sale</th>
                     <th className="px-2 py-1 w-16 text-right">Queda</th>
-                    <th className="px-2 py-1 w-28">Motivo</th>
                     <th className="px-2 py-1 w-8" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={tbodyRef}>
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={6}
                         className="px-2 py-6 text-center text-muted-foreground italic"
                       >
                         Sin salidas — captura una arriba
@@ -469,17 +655,21 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                   {items.map((it, i) => {
                     const queda = it.saldoActual - it.cantidad
                     return (
-                      <tr key={i} className="border-b border-border/60">
+                      <tr
+                        key={i}
+                        onClick={() => {
+                          setSelRow(i)
+                          tablaRef.current?.focus()
+                        }}
+                        className={`border-b border-border/60 cursor-pointer ${
+                          i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                        }`}
+                      >
                         <td className="px-2 py-1">
                           <div>{it.productoNombre}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">
                             {it.codigo}
                           </div>
-                          {it.nota && (
-                            <div className="text-[10px] text-muted-foreground italic">
-                              {it.nota}
-                            </div>
-                          )}
                         </td>
                         <td className="px-2 py-1 font-mono text-[11px]">
                           {isoToYmd(it.fechaCaducidad)}
@@ -489,7 +679,6 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                           -{it.cantidad}
                         </td>
                         <td className="px-2 py-1 text-right font-mono">{queda}</td>
-                        <td className="px-2 py-1 text-[11px]">{it.motivo}</td>
                         <td className="px-2 py-1 text-center">
                           <button
                             type="button"
@@ -546,18 +735,26 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
+        returnFocus={() => setTimeout(() => codRef.current?.focus(), 100)}
       />
 
       {open && preview && (
         <ConfirmMovimientoModal
           title="Confirmar salida de inventario"
-          detalleHeader="Motivo"
+          encabezado={
+            <span>
+              Motivo:{' '}
+              <strong>{MOTIVO_OPTIONS.find((m) => m.value === motivo)?.label ?? motivo}</strong>
+              {nota.trim() && <span className="text-muted-foreground"> · {nota.trim()}</span>}
+            </span>
+          }
           lineas={items.map((it) => ({
             codigo: it.codigo,
             nombre: it.productoNombre,
             cantidad: it.cantidad,
-            detalle: MOTIVO_OPTIONS.find((m) => m.value === it.motivo)?.label ?? it.motivo
+            detalle: isoToYmd(it.fechaCaducidad)
           }))}
+          detalleHeader="Caducidad"
           confirmLabel="Sí, registrar salida"
           procesando={saving}
           onConfirm={save}

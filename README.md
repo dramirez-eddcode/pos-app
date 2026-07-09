@@ -4,14 +4,16 @@ Punto de venta **100% local** para Farmacias MS — Electron + React + TypeScrip
 Tailwind. SQLite local por equipo (vía Drizzle / better-sqlite3). **Sin dependencias
 en la nube**: matriz y sucursales se sincronizan por **USB**.
 
-> Versión actual: **v1.1.9**
+> Versión actual: **v1.1.10**
 
 ## Modos de instalación
 
 Cada equipo se configura, en el primer arranque, en uno de dos modos:
 
 - **MATRIZ**: gestiona catálogo global, precios/IVA, bodegas, sucursales y genera
-  paquetes para las sucursales. No vende.
+  paquetes para las sucursales. Los administradores pueden además **abrir el punto de
+  venta en el mismo equipo** (para el caso dueño-con-una-máquina: gestiona la bodega y
+  vende); cajeros/supervisores en un equipo matriz entran directo al POS.
 - **SUCURSAL**: el POS que vende día a día. Su inventario es local (Bodega Principal).
 
 ## Requisitos
@@ -66,13 +68,18 @@ El instalador queda en `release/farmacias-ms-pos-<version>-setup.exe`.
   SUPERVISOR (sólo en sucursal: entradas de mercancía + recibir traspasos + actualizar
   datos), CAJERO.
 - **Impresión configurable**: en Configuración se elige **qué se imprime** en el ticket
-  (razón social, RFC, sucursal, dirección y **folio**), con ticket de prueba.
+  (razón social, RFC, sucursal, dirección, **folio**, hora y pie), con ticket de prueba.
+  Sólo ADMINISTRADOR/SUPERUSUARIO pueden cambiarlo; la impresora y el cajón sí son por
+  equipo (cualquier usuario).
 - **Matriz ↔ Sucursal por USB**:
   - **Exportar `.farma`**: catálogo + precios (opcionalmente con **stock inicial** y
     usuarios admin para configurar una sucursal nueva de un solo archivo).
   - **Traspaso bodega → sucursal**: descuenta de una bodega y genera un `.traspaso`
-    (anti-duplicado por folio); la sucursal lo recibe como entrada. **Historial de
-    movimientos** (entradas/salidas/traspasos) con detalle e impresión en PDF.
+    (anti-duplicado por folio); la sucursal lo recibe como **entrada con folio E-n**
+    (queda en el historial). **Historial de movimientos** (entradas/salidas/traspasos,
+    en matriz y en sucursal vía F10) con detalle, impresión en PDF y **kárdex por
+    producto** (todos los movimientos de stock con saldo acumulado: ventas,
+    cancelaciones, entradas, salidas, ajustes y traspasos).
 - **Respaldo / restauración**: copia completa del SQLite (incluye todo: ventas,
   inventario, traspasos, usuarios…). Restaurable desde el asistente inicial.
 - **Configuración inicial** (wizard): MATRIZ, SUCURSAL, **configurar sucursal desde

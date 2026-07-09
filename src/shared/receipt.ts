@@ -67,6 +67,16 @@ export interface CorteParcialResumen {
   total: number
 }
 
+/**
+ * Venta cobrada (total o parcialmente) con tarjeta — para el detalle del
+ * ticket del corte final. En pagos mixtos, `monto` es SÓLO la parte tarjeta
+ * (lo que debe cuadrar contra los vouchers de la terminal).
+ */
+export interface VentaTarjetaResumen {
+  folio: number
+  monto: number
+}
+
 export interface CorteReceiptData {
   empresa: ReceiptEmpresa
   fecha: string // ISO
@@ -90,4 +100,7 @@ export interface CorteReceiptData {
   // Sólo en el corte FINAL: desglose de los cortes parciales / cambios de turno
   // hechos ese mismo día, para que el ticket final muestre parciales + total del día.
   parcialesDelDia?: CorteParcialResumen[]
+  // Sólo en el corte FINAL: detalle de las notas cobradas con tarjeta (pago
+  // puro o mixto), folio + monto tarjeta, para cuadrar contra la terminal.
+  ventasTarjeta?: VentaTarjetaResumen[]
 }

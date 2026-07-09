@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings as SettingsIcon, Printer, LogOut } from 'lucide-react'
+import { Settings as SettingsIcon, Printer, LogOut, Warehouse } from 'lucide-react'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
 import { useShortcut } from '../hooks/useShortcut'
@@ -19,6 +19,7 @@ import TraspasoModal from '../components/TraspasoModal'
 import AjustesModal from '../components/AjustesModal'
 import PreciosModal from '../components/PreciosModal'
 import SalidasModal from '../components/SalidasModal'
+import MovimientosModal from '../components/MovimientosModal'
 import SustanciaInfoModal from '../components/SustanciaInfoModal'
 import UsuariosModal from '../components/UsuariosModal'
 import SucursalModal from '../components/SucursalModal'
@@ -37,7 +38,15 @@ import type { ReceiptData, ReceiptPago } from '@shared/receipt'
 const LOGOUT_TOAST_ID = 'logout-confirm'
 const EXIT_TOAST_ID = 'exit-confirm'
 
-export default function POSPage() {
+interface Props {
+  /**
+   * Sólo en instalaciones MATRIZ con admin completo: regresa al panel de
+   * gestión (equipo único que administra la bodega Y vende).
+   */
+  onVolverMatriz?: () => void
+}
+
+export default function POSPage({ onVolverMatriz }: Props = {}) {
   const { user, logout } = useSession()
   const { settings } = useSettings()
 
@@ -60,6 +69,7 @@ export default function POSPage() {
   const [generarTraspasoOpen, setGenerarTraspasoOpen] = useState(false)
   const [salidasOpen, setSalidasOpen] = useState(false)
   const [ajustesOpen, setAjustesOpen] = useState(false)
+  const [movimientosOpen, setMovimientosOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [sustanciaOpen, setSustanciaOpen] = useState(false)
   const [usuariosOpen, setUsuariosOpen] = useState(false)
@@ -93,6 +103,7 @@ export default function POSPage() {
     generarTraspasoOpen ||
     salidasOpen ||
     ajustesOpen ||
+    movimientosOpen ||
     preciosOpen ||
     sustanciaOpen ||
     usuariosOpen ||
@@ -255,25 +266,20 @@ export default function POSPage() {
   }, [confirmLogout, user?.nombre])
 
   // ── Abrir modal de cobro (valida que haya algo que cobrar) ───────────────
+  // Sin impresora configurada NO se bloquea: la venta se registra normal y
+  // simplemente no se imprime ticket (sucursales que operan sin impresora).
   const startCobro = useCallback(() => {
     if (cart.length === 0) {
       setStatus({ kind: 'info', msg: 'Agrega productos antes de cobrar' })
       return
     }
-    if (!settings?.printerName) {
-      toast.warning('Configura la impresora primero', {
-        description: 'Ve a Configuración (⚙) para seleccionar la EPSON.',
-        action: { label: 'Abrir', onClick: () => setSettingsOpen(true) }
-      })
-      return
-    }
     setPaymentOpen(true)
-  }, [cart.length, settings?.printerName])
+  }, [cart.length])
 
-  // ── Confirmar cobro: crea venta, imprime, abre cajón, reset ──────────────
+  // ── Confirmar cobro: crea venta, imprime (si hay impresora), cajón, reset ─
   const onPaymentConfirm = useCallback(
     async (args: { pagos: { metodo: MetodoPago; monto: number }[]; cambio: number }) => {
-      if (!user || !settings?.printerName) return
+      if (!user) return
       setCharging(true)
       try {
         // 1) Persistir venta
@@ -295,42 +301,44 @@ export default function POSPage() {
           cambio: args.cambio
         })
 
-        // 2) Imprimir ticket
-        const receipt: ReceiptData = {
-          empresa: {
-            nombreComercial: user.sucursal?.nombreComercial ?? 'Farmacias MS',
-            rfc: user.sucursal?.rfc ?? null,
-            sucursalNombre: user.sucursal?.sucursalNombre ?? '—',
-            calle: user.sucursal?.calle ?? null,
-            colonia: user.sucursal?.colonia ?? null,
-            cp: user.sucursal?.cp ?? null
-          },
-          folio: createRes.folioLocal,
-          fecha: createRes.fecha,
-          cajero: user.nombre,
-          items: cart.map((i) => ({
-            nombre: i.nombre,
-            cantidad: i.cantidad,
-            precio: precioConIva(i),
-            total: i.total
-          })),
-          subtotal: totals.subtotal,
-          iva: totals.iva,
-          total: totals.total,
-          pagos: args.pagos.map<ReceiptPago>((p) => ({ metodo: p.metodo, monto: p.monto })),
-          cambio: args.cambio,
-          openDrawer:
-            (settings.openDrawerOnCash ?? true) &&
-            args.pagos.some((p) => p.metodo === 'EFECTIVO'),
-          showTime: settings.showTimeOnReceipt ?? false,
-          footer: settings.receiptFooter ?? null
-        }
+        // 2) Imprimir ticket — sólo si hay impresora configurada
+        if (settings?.printerName) {
+          const receipt: ReceiptData = {
+            empresa: {
+              nombreComercial: user.sucursal?.nombreComercial ?? 'Farmacias MS',
+              rfc: user.sucursal?.rfc ?? null,
+              sucursalNombre: user.sucursal?.sucursalNombre ?? '—',
+              calle: user.sucursal?.calle ?? null,
+              colonia: user.sucursal?.colonia ?? null,
+              cp: user.sucursal?.cp ?? null
+            },
+            folio: createRes.folioLocal,
+            fecha: createRes.fecha,
+            cajero: user.nombre,
+            items: cart.map((i) => ({
+              nombre: i.nombre,
+              cantidad: i.cantidad,
+              precio: precioConIva(i),
+              total: i.total
+            })),
+            subtotal: totals.subtotal,
+            iva: totals.iva,
+            total: totals.total,
+            pagos: args.pagos.map<ReceiptPago>((p) => ({ metodo: p.metodo, monto: p.monto })),
+            cambio: args.cambio,
+            openDrawer:
+              (settings.openDrawerOnCash ?? true) &&
+              args.pagos.some((p) => p.metodo === 'EFECTIVO'),
+            showTime: settings.showTimeOnReceipt ?? false,
+            footer: settings.receiptFooter ?? null
+          }
 
-        const pr = await window.api.printer.printReceipt(settings.printerName, receipt)
-        if (!pr.ok) {
-          toast.error('Venta guardada pero falló la impresión', {
-            description: (pr.stderr || pr.stdout).trim()
-          })
+          const pr = await window.api.printer.printReceipt(settings.printerName, receipt)
+          if (!pr.ok) {
+            toast.error('Venta guardada pero falló la impresión', {
+              description: (pr.stderr || pr.stdout).trim()
+            })
+          }
         }
 
         // 3) Reset POS para la siguiente venta
@@ -352,17 +360,43 @@ export default function POSPage() {
   )
 
   // ── Atajos de teclado (modo legacy) ──────────────────────────────────────
+  // Con un modal abierto, los atajos del POS que abren otros modales o tocan
+  // el carrito NO deben dispararse (las teclas de función llegan a window
+  // aunque el foco esté en un input del modal): sin el guard, F5 dentro de
+  // Entradas/Salidas/Kárdex abría ADEMÁS la búsqueda del punto de venta
+  // atrás, duplicando ventanas y robándole el foco al modal.
   useShortcut([
     { key: 'F12', handler: requestLogout },
-    { key: 'Delete', handler: removeSelected },
+    {
+      key: 'Delete',
+      handler: () => {
+        if (!anyModalOpen) removeSelected()
+      }
+    },
     { key: 'Escape', handler: clearSale, allowInInput: true },
-    { key: 'F5', handler: () => setSearchOpen(true) },
-    { key: 'F7', handler: () => setSustanciaOpen(true) },
-    { key: 'F11', handler: () => setFunctionsOpen(true) },
+    {
+      key: 'F5',
+      handler: () => {
+        if (!anyModalOpen) setSearchOpen(true)
+      }
+    },
+    {
+      key: 'F7',
+      handler: () => {
+        if (!anyModalOpen) setSustanciaOpen(true)
+      }
+    },
+    {
+      key: 'F11',
+      handler: () => {
+        if (!anyModalOpen) setFunctionsOpen(true)
+      }
+    },
     { key: 'Pause', handler: toggleTotalesRecientes },
     {
       key: 'F10',
       handler: () => {
+        if (anyModalOpen) return
         if (!isAdmin) {
           toast.error('F10 requiere permisos de administrador', {
             description: 'Pide a un administrador que inicie sesión.'
@@ -372,7 +406,12 @@ export default function POSPage() {
         setProcesosOpen(true)
       }
     },
-    { key: 'End', handler: startCobro },
+    {
+      key: 'End',
+      handler: () => {
+        if (!anyModalOpen) startCobro()
+      }
+    },
     { key: ',', ctrl: true, handler: () => setSettingsOpen(true), allowInInput: true },
     {
       key: 'ArrowUp',
@@ -430,6 +469,17 @@ export default function POSPage() {
                 {fechaTicket(now)} {horaTicket(now)}
               </div>
             </div>
+            {onVolverMatriz && (
+              <button
+                type="button"
+                onClick={onVolverMatriz}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded border border-border hover:bg-muted"
+                title="Volver al panel de gestión de la matriz"
+              >
+                <Warehouse className="size-3.5" />
+                Matriz
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -669,6 +719,7 @@ export default function POSPage() {
         onGenerarTraspaso={() => setGenerarTraspasoOpen(true)}
         onSalidas={() => setSalidasOpen(true)}
         onAjustes={() => setAjustesOpen(true)}
+        onMovimientos={() => setMovimientosOpen(true)}
         onPrecios={() => setPreciosOpen(true)}
         onUsuarios={() => setUsuariosOpen(true)}
         onSucursal={() => setSucursalOpen(true)}
@@ -676,60 +727,114 @@ export default function POSPage() {
         onImportar={() => setImportarOpen(true)}
         onImportarDat={() => setImportarDatOpen(true)}
       />
+      {/* Los modales lanzados desde F10 regresan al menú de Procesos Especiales
+          al cerrarse (para encadenar tareas); Esc en el menú sí vuelve al POS. */}
       <EntradaModal
         open={entradaOpen}
-        onClose={() => setEntradaOpen(false)}
+        onClose={() => {
+          setEntradaOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
+      />
+      <MovimientosModal
+        open={movimientosOpen}
+        onClose={() => {
+          setMovimientosOpen(false)
+          setProcesosOpen(true)
+        }}
       />
       <CargaInicialModal
         open={cargaInicialOpen}
-        onClose={() => setCargaInicialOpen(false)}
+        onClose={() => {
+          setCargaInicialOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
       />
       <RecibirTraspasoModal
         open={recibirTraspasoOpen}
-        onClose={() => setRecibirTraspasoOpen(false)}
+        onClose={() => {
+          setRecibirTraspasoOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
       />
       <TraspasoModal
         open={generarTraspasoOpen}
-        onClose={() => setGenerarTraspasoOpen(false)}
+        onClose={() => {
+          setGenerarTraspasoOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
         destinoLibre
       />
       <SalidasModal
         open={salidasOpen}
-        onClose={() => setSalidasOpen(false)}
+        onClose={() => {
+          setSalidasOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
         userNombre={user.nombre}
       />
       <AjustesModal
         open={ajustesOpen}
-        onClose={() => setAjustesOpen(false)}
+        onClose={() => {
+          setAjustesOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
       />
       <PreciosModal
         open={preciosOpen}
-        onClose={() => setPreciosOpen(false)}
+        onClose={() => {
+          setPreciosOpen(false)
+          setProcesosOpen(true)
+        }}
         userId={user.id}
       />
       <SustanciaInfoModal
         open={sustanciaOpen}
         onClose={() => setSustanciaOpen(false)}
       />
-      <UsuariosModal open={usuariosOpen} onClose={() => setUsuariosOpen(false)} />
-      <SucursalModal open={sucursalOpen} onClose={() => setSucursalOpen(false)} />
+      <UsuariosModal
+        open={usuariosOpen}
+        onClose={() => {
+          setUsuariosOpen(false)
+          setProcesosOpen(true)
+        }}
+      />
+      <SucursalModal
+        open={sucursalOpen}
+        onClose={() => {
+          setSucursalOpen(false)
+          setProcesosOpen(true)
+        }}
+      />
       <CatalogoProductosModal
         open={catalogoOpen}
-        onClose={() => setCatalogoOpen(false)}
+        onClose={() => {
+          setCatalogoOpen(false)
+          setProcesosOpen(true)
+        }}
         permitirReemplazoExistencias
       />
       <ImportarFarmaModal
         open={importarOpen}
-        onClose={() => setImportarOpen(false)}
+        onClose={() => {
+          setImportarOpen(false)
+          setProcesosOpen(true)
+        }}
         onApplied={reloadFolio}
       />
-      <ImportarDatModal open={importarDatOpen} onClose={() => setImportarDatOpen(false)} />
+      <ImportarDatModal
+        open={importarDatOpen}
+        onClose={() => {
+          setImportarDatOpen(false)
+          setProcesosOpen(true)
+        }}
+      />
       <RespaldoModal open={respaldoOpen} onClose={() => setRespaldoOpen(false)} />
     </div>
   )

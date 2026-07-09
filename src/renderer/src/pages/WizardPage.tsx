@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useSession } from '../stores/session'
 import { formatRol } from '../lib/roles'
+import { arrowFieldNav } from '../lib/arrowNav'
 import Spinner from '../components/Spinner'
 import PasswordInput from '../components/PasswordInput'
 import type {
@@ -72,6 +73,7 @@ export default function WizardPage({ onConfigured }: Props) {
   const [adminMode, setAdminMode] = useState<'existente' | 'nuevo'>('nuevo')
   const [useExistingId, setUseExistingId] = useState<string>('')
   const propietarioRef = useRef<HTMLInputElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
   // Configurar SUCURSAL desde archivo .farma de la matriz
   const [farmaPreview, setFarmaPreview] = useState<WizardFarmaPreview | null>(null)
   const [farmaPropietario, setFarmaPropietario] = useState('')
@@ -262,7 +264,11 @@ export default function WizardPage({ onConfigured }: Props) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
-      <div className="w-full max-w-2xl bg-background border border-border rounded-lg shadow-sm">
+      <div
+        ref={cardRef}
+        onKeyDown={(e) => arrowFieldNav(e, cardRef.current)}
+        className="w-full max-w-2xl bg-background border border-border rounded-lg shadow-sm"
+      >
         <header className="px-6 py-4 border-b border-border">
           <h1 className="text-lg font-semibold">Configuración inicial — Farmacias MS</h1>
           <p className="text-xs text-muted-foreground mt-0.5">

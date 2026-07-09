@@ -52,6 +52,7 @@ import type {
   ExportFarmaStockLote,
   InstalacionDto,
   PickFarmaResult,
+  KardexItem,
   LoginResult,
   LoteInfo,
   ProductoCatalogoItem,
@@ -357,7 +358,9 @@ const api = {
     pdf: (folio: string): Promise<PdfMovimientoResult> =>
       ipcRenderer.invoke('movimientos:pdf', folio),
     imprimir: (folio: string): Promise<PdfMovimientoResult> =>
-      ipcRenderer.invoke('movimientos:imprimir', folio)
+      ipcRenderer.invoke('movimientos:imprimir', folio),
+    kardex: (productoId: string): Promise<KardexItem[]> =>
+      ipcRenderer.invoke('movimientos:kardex', productoId)
   },
 
   precios: {

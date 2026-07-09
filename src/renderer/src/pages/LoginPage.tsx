@@ -3,6 +3,7 @@ import { useSession } from '../stores/session'
 import Spinner from '../components/Spinner'
 import Logo from '../components/Logo'
 import PasswordInput from '../components/PasswordInput'
+import { arrowFieldNav } from '../lib/arrowNav'
 
 export default function LoginPage() {
   const { login } = useSession()
@@ -11,6 +12,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const loginRef = useRef<HTMLInputElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
     loginRef.current?.focus()
@@ -39,7 +41,9 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/40">
       <form
+        ref={formRef}
         onSubmit={submit}
+        onKeyDown={(e) => arrowFieldNav(e, formRef.current)}
         className="w-full max-w-sm border border-border bg-background rounded-lg p-6 space-y-4 shadow-sm"
       >
         <header className="text-center space-y-1">

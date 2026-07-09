@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 
@@ -40,6 +40,16 @@ export default function ConfirmMovimientoModal({
   onCancel
 }: Props) {
   const totalUnidades = lineas.reduce((s, l) => s + (Number(l.cantidad) || 0), 0)
+
+  // El foco entra al botón de confirmar: sin esto se queda en el botón del
+  // modal padre (que sigue montado atrás) y ni Enter ni las flechas responden
+  // aquí. Con el foco dentro: Enter confirma, ↑/↓ mueven entre Cancelar y
+  // Confirmar (navegación genérica del Modal), Esc cancela.
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const t = setTimeout(() => confirmRef.current?.focus(), 80)
+    return () => clearTimeout(t)
+  }, [])
 
   return (
     <Modal
@@ -102,10 +112,11 @@ export default function ConfirmMovimientoModal({
           Cancelar
         </button>
         <button
+          ref={confirmRef}
           type="button"
           onClick={onConfirm}
           disabled={procesando}
-          className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+          className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 focus:ring-2 focus:ring-primary/50 focus:outline-none text-sm font-semibold"
         >
           {procesando && <Spinner size={14} />}
           {procesando ? 'Procesando…' : confirmLabel}

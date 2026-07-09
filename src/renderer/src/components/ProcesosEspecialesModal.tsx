@@ -5,6 +5,7 @@ import {
   Building2,
   Download,
   FileUp,
+  History,
   PackageCheck,
   PackageMinus,
   PackagePlus,
@@ -38,6 +39,7 @@ interface Props {
   onGenerarTraspaso: () => void
   onSalidas: () => void
   onAjustes: () => void
+  onMovimientos: () => void
   onPrecios: () => void
   onUsuarios: () => void
   onSucursal: () => void
@@ -47,12 +49,14 @@ interface Props {
 }
 
 // El SUPERVISOR (de sucursal) sólo puede registrar entradas de mercancía,
-// recibir traspasos y actualizar datos: catálogo, precios/IVA, aplicar la
-// actualización de la matriz (.farma) y el archivo legacy (.dat). El resto es
-// exclusivo de admins.
+// recibir traspasos, consultar el historial de movimientos (reporte de sólo
+// lectura) y actualizar datos: catálogo, precios/IVA, aplicar la actualización
+// de la matriz (.farma) y el archivo legacy (.dat). El resto es exclusivo de
+// admins.
 const SUPERVISOR_PROCESOS = new Set([
   'entrada',
   'recibir-traspaso',
+  'movimientos',
   'precios',
   'catalogo',
   'importar',
@@ -72,6 +76,7 @@ export default function ProcesosEspecialesModal({
   onGenerarTraspaso,
   onSalidas,
   onAjustes,
+  onMovimientos,
   onPrecios,
   onUsuarios,
   onSucursal,
@@ -138,6 +143,16 @@ export default function ProcesosEspecialesModal({
       handler: () => {
         onClose()
         onAjustes()
+      }
+    },
+    {
+      id: 'movimientos',
+      label: 'Historial de movimientos',
+      hint: 'Reporte de entradas, salidas y traspasos · movimientos por producto',
+      icon: <History className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onMovimientos()
       }
     },
     {

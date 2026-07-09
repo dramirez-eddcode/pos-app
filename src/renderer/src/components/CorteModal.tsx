@@ -128,7 +128,8 @@ export default function CorteModal({ open, onClose }: Props) {
           salidasCaja: r.totales.salidasCaja,
           cancelaciones: r.totales.cancelaciones,
           efectivoEsperado: r.totales.efectivoEsperado,
-          parcialesDelDia: r.parcialesDelDia
+          parcialesDelDia: r.parcialesDelDia,
+          ventasTarjeta: r.ventasTarjeta
         })
         if (!pr.ok) {
           toast.warning('Corte registrado pero falló la impresión', {
@@ -296,14 +297,16 @@ export default function CorteModal({ open, onClose }: Props) {
   )
 
   const showDetail = useCallback(
-    async (folioLocal: number) => {
+    async (folioLocal: number, scroll = true) => {
       setLoadingDetail(true)
       try {
         const d = await window.api.ventas.byFolio(folioLocal)
         setDetail(d)
-        setTimeout(() => {
-          detailRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-        }, 50)
+        if (scroll) {
+          setTimeout(() => {
+            detailRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+          }, 50)
+        }
       } catch (e) {
         toast.error('No pude cargar la venta', { description: String(e) })
       } finally {
@@ -312,6 +315,24 @@ export default function CorteModal({ open, onClose }: Props) {
     },
     []
   )
+
+  // Detalle instantáneo: al navegar los folios con ↑/↓ (o clic) el detalle se
+  // carga solo — sin Enter. Debounce corto para no disparar una consulta por
+  // cada repetición de la flecha; sin auto-scroll (el panel vive justo debajo
+  // de la lista y el detalle previo queda visible mientras llega el nuevo).
+  useEffect(() => {
+    if (!open) return
+    const folios = data?.folios ?? []
+    if (idx < 0 || idx >= folios.length) {
+      setDetail(null)
+      return
+    }
+    const folio = folios[idx]!.folioLocal
+    const t = setTimeout(() => {
+      showDetail(folio, false)
+    }, 120)
+    return () => clearTimeout(t)
+  }, [open, idx, data, showDetail])
 
   // Navegación por teclado dentro del modal (capture phase → le gana al resto)
   useEffect(() => {
@@ -422,7 +443,8 @@ export default function CorteModal({ open, onClose }: Props) {
                 </div>
               </section>
 
-              {/* Folios del día */}
+              {/* Columna derecha (como el legacy): folios arriba, detalle abajo */}
+              <div className="flex flex-col gap-4 min-w-0">
               <section className="border border-border rounded flex flex-col">
                 <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center">
                   <span>Folios del día</span>
@@ -490,6 +512,93 @@ export default function CorteModal({ open, onClose }: Props) {
                   </table>
                 </div>
               </section>
+
+              {/* Detalle de venta seleccionada — se actualiza solo al navegar */}
+              <section ref={detailRef} className="border border-border rounded">
+              <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center">
+                <span>
+                  Detalle de venta
+                  {detail && (
+                    <>
+                      {' — '}
+                      <span className="font-mono">Folio {fmtFolio(detail.folioLocal)}</span>
+                      {detail.cancelada && (
+                        <span className="ml-2 text-red-700 normal-case font-normal">
+                          (cancelada)
+                        </span>
+                      )}
+                    </>
+                  )}
+                </span>
+                {loadingDetail && <span className="text-[10px] normal-case">cargando…</span>}
+              </header>
+              <div className="p-3">
+                {!detail && !loadingDetail && (
+                  <div className="text-muted-foreground text-xs italic">
+                    Navega los folios con <span className="font-mono">↑/↓</span> (o haz clic en
+                    uno) — el detalle de la nota se muestra aquí automáticamente.
+                  </div>
+                )}
+                {detail && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>
+                        {new Date(detail.fecha).toLocaleString('es-MX')} · Cajero {detail.cajero}
+                      </span>
+                      <span>Motivo: {detail.motivo}</span>
+                    </div>
+                    <div className="border border-border rounded overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/40 border-b border-border">
+                          <tr className="text-left">
+                            <th className="px-2 py-1 w-12 text-right">Cant</th>
+                            <th className="px-2 py-1">Producto</th>
+                            <th className="px-2 py-1 w-24 text-right">Precio</th>
+                            <th className="px-2 py-1 w-24 text-right">Importe</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.items.map((it) => (
+                            <tr key={it.id} className="border-b border-border/60">
+                              <td className="px-2 py-1 text-right font-mono">{it.cantidad}</td>
+                              <td className="px-2 py-1">
+                                <div>{it.nombre}</div>
+                                <div className="text-[10px] text-muted-foreground font-mono">
+                                  {it.codigo}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono">
+                                {money(it.precioUnitario)}
+                              </td>
+                              <td className="px-2 py-1 text-right font-mono">{money(it.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 font-mono text-xs">
+                      <MiniField label="Subtotal" value={money(detail.subtotal)} />
+                      <MiniField label="IVA" value={money(detail.iva)} />
+                      <MiniField label="Total" value={money(detail.total)} highlight />
+                    </div>
+                    {detail.pagos.length > 0 && (
+                      <div className="text-xs">
+                        <div className="text-muted-foreground mb-1">Pagos:</div>
+                        <div className="font-mono space-y-0.5">
+                          {detail.pagos.map((p, i) => (
+                            <div key={i} className="flex justify-between">
+                              <span>{METODO_LABEL[p.metodo] ?? p.metodo}</span>
+                              <span>{money(p.monto)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              </section>
+              </div>
             </div>
 
             {/* Por método de pago */}
@@ -749,99 +858,13 @@ export default function CorteModal({ open, onClose }: Props) {
               </section>
             )}
 
-            {/* Detalle de venta seleccionada */}
-            <section ref={detailRef} className="border border-border rounded">
-              <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center">
-                <span>
-                  Detalle de venta
-                  {detail && (
-                    <>
-                      {' — '}
-                      <span className="font-mono">Folio {fmtFolio(detail.folioLocal)}</span>
-                      {detail.cancelada && (
-                        <span className="ml-2 text-red-700 normal-case font-normal">
-                          (cancelada)
-                        </span>
-                      )}
-                    </>
-                  )}
-                </span>
-                {loadingDetail && <span className="text-[10px] normal-case">cargando…</span>}
-              </header>
-              <div className="p-3">
-                {!detail && !loadingDetail && (
-                  <div className="text-muted-foreground text-xs italic">
-                    Selecciona un folio y presiona <span className="font-mono">Enter</span> (o
-                    doble click) para ver el detalle
-                  </div>
-                )}
-                {detail && (
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>
-                        {new Date(detail.fecha).toLocaleString('es-MX')} · Cajero {detail.cajero}
-                      </span>
-                      <span>Motivo: {detail.motivo}</span>
-                    </div>
-                    <div className="border border-border rounded overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/40 border-b border-border">
-                          <tr className="text-left">
-                            <th className="px-2 py-1 w-12 text-right">Cant</th>
-                            <th className="px-2 py-1">Producto</th>
-                            <th className="px-2 py-1 w-24 text-right">Precio</th>
-                            <th className="px-2 py-1 w-24 text-right">Importe</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {detail.items.map((it) => (
-                            <tr key={it.id} className="border-b border-border/60">
-                              <td className="px-2 py-1 text-right font-mono">{it.cantidad}</td>
-                              <td className="px-2 py-1">
-                                <div>{it.nombre}</div>
-                                <div className="text-[10px] text-muted-foreground font-mono">
-                                  {it.codigo}
-                                </div>
-                              </td>
-                              <td className="px-2 py-1 text-right font-mono">
-                                {money(it.precioUnitario)}
-                              </td>
-                              <td className="px-2 py-1 text-right font-mono">{money(it.total)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 font-mono text-xs">
-                      <MiniField label="Subtotal" value={money(detail.subtotal)} />
-                      <MiniField label="IVA" value={money(detail.iva)} />
-                      <MiniField label="Total" value={money(detail.total)} highlight />
-                    </div>
-                    {detail.pagos.length > 0 && (
-                      <div className="text-xs">
-                        <div className="text-muted-foreground mb-1">Pagos:</div>
-                        <div className="font-mono space-y-0.5">
-                          {detail.pagos.map((p, i) => (
-                            <div key={i} className="flex justify-between">
-                              <span>{METODO_LABEL[p.metodo] ?? p.metodo}</span>
-                              <span>{money(p.monto)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </section>
           </div>
         )}
       </div>
 
       <footer className="flex justify-between items-center px-4 py-3 border-t border-border bg-muted/20 text-xs">
         <div className="text-muted-foreground">
-          <span className="font-mono">↑/↓</span> navegar folios ·{' '}
-          <span className="font-mono">Enter</span> ver detalle ·{' '}
+          <span className="font-mono">↑/↓</span> navegar folios (detalle automático) ·{' '}
           <span className="font-mono">Ctrl+R</span> recargar ·{' '}
           <span className="font-mono">Esc</span> cerrar
         </div>

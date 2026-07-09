@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   Boxes,
@@ -13,6 +13,7 @@ import {
   PackagePlus,
   Percent,
   Settings as SettingsIcon,
+  ShoppingCart,
   Store,
   Tags,
   Truck,
@@ -23,6 +24,7 @@ import {
 import { useSession } from '../stores/session'
 import { fechaTicket, horaTicket } from '../lib/format'
 import { formatRol } from '../lib/roles'
+import { arrowFieldNav } from '../lib/arrowNav'
 import CatalogoProductosModal from '../components/CatalogoProductosModal'
 import Logo from '../components/Logo'
 import EntradaModal from '../components/EntradaModal'
@@ -45,6 +47,8 @@ import Spinner from '../components/Spinner'
 interface Props {
   propietarioNombre: string | null
   matrizId: string | null
+  /** Cambia a la vista de punto de venta (equipo único matriz + ventas). */
+  onAbrirPos: () => void
 }
 
 interface CatalogoStats {
@@ -54,8 +58,9 @@ interface CatalogoStats {
 
 const EXIT_TOAST_ID = 'matriz-logout-confirm'
 
-export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
+export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: Props) {
   const { user, logout } = useSession()
+  const menuRef = useRef<HTMLElement>(null)
   const [sucursalesOpen, setSucursalesOpen] = useState(false)
   const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [usuariosOpen, setUsuariosOpen] = useState(false)
@@ -181,7 +186,11 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
       </header>
 
       {/* ── Main: grid de tarjetas ────────────────────────────────────────── */}
-      <main className="flex-1 mx-auto max-w-[1200px] w-full px-4 py-6">
+      <main
+        ref={menuRef}
+        onKeyDown={(e) => arrowFieldNav(e, menuRef.current)}
+        className="flex-1 mx-auto max-w-[1200px] w-full px-4 py-6"
+      >
         <div className="mb-5">
           <h2 className="text-lg font-semibold">Panel de gestión</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -191,6 +200,17 @@ export default function MatrizPage({ propietarioNombre, matrizId }: Props) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Punto de venta (equipo único: gestión + ventas) */}
+          <DashCard
+            icon={<ShoppingCart className="size-5 text-green-700" />}
+            titulo="Punto de venta"
+            subtitulo="Vender en este equipo"
+            descripcion="Abre la pantalla de ventas usando el inventario de esta matriz. Regresas al panel desde el botón de matriz."
+            cta="Abrir punto de venta"
+            onClick={onAbrirPos}
+            accent="green"
+          />
+
           {/* Sucursales */}
           <DashCard
             icon={<Store className="size-5 text-blue-600" />}

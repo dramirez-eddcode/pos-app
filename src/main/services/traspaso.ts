@@ -7,6 +7,7 @@ import type {
   AplicarTraspasoResult,
   CrearTraspasoInput,
   CrearTraspasoResult,
+  MovimientoLinea,
   PickTraspasoResult,
   TraspasoBodegasInput,
   TraspasoFaltante,
@@ -529,7 +530,8 @@ export async function pickTraspaso(window: BrowserWindow | null): Promise<PickTr
         lineas: p.items.length,
         unidades,
         yaAplicado: yaAplicado(p.folio),
-        sucursalCoincide: sucursalCoincide(instal.sucursalActivaId, p.sucursal)
+        sucursalCoincide: sucursalCoincide(instal.sucursalActivaId, p.sucursal),
+        items: p.items
       }
     }
   } catch (e) {
@@ -585,6 +587,8 @@ export function aplicarTraspaso(
 
     const run = sqlite.transaction(() => {
       const now = Date.now()
+      const lineasDoc: MovimientoLinea[] = []
+      let valorDoc = 0
       for (const l of p.items) {
         const cantidad = Math.round(Number(l.cantidad))
         if (!Number.isFinite(cantidad) || cantidad <= 0) continue
@@ -598,6 +602,54 @@ export function aplicarTraspaso(
         insMov.run(randomUUID(), loteId, cantidad, now, motivo)
         lotesCreados++
         unidades += cantidad
+
+        const costo = Number(l.costo) || 0
+        lineasDoc.push({
+          codigo: String(l.codigo).trim(),
+          nombre: l.nombre,
+          cantidad,
+          costo,
+          caducidad: l.caducidad || null,
+          proveedor: null
+        })
+        valorDoc += cantidad * costo
+      }
+
+      // Documento ENTRADA en el historial de movimientos: sin esto, los
+      // traspasos RECIBIDOS no aparecerían en el reporte de la sucursal
+      // (la tabla `traspaso` sólo guarda los generados localmente).
+      if (lotesCreados > 0) {
+        const usuario = sqlite
+          .prepare('SELECT nombre FROM usuario WHERE id = ?')
+          .get(viewerUserId) as { nombre: string } | undefined
+        const numero = (
+          sqlite
+            .prepare(
+              "SELECT COALESCE(MAX(numero), 0) + 1 AS n FROM movimiento WHERE tipo = 'ENTRADA'"
+            )
+            .get() as { n: number }
+        ).n
+        sqlite
+          .prepare(
+            `INSERT INTO movimiento
+               (folio, numero, tipo, fecha, usuario_id, usuario_nombre, bodega_id, bodega_nombre,
+                proveedor_id, proveedor_nombre, motivo, lineas, unidades, valor, items_json)
+             VALUES (?, ?, 'ENTRADA', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            randomUUID(),
+            numero,
+            now,
+            viewerUserId,
+            usuario?.nombre ?? null,
+            bodega.id,
+            bodega.nombre,
+            `Traspaso recibido de ${p.bodegaOrigen?.nombre ?? 'matriz'} (${p.folio.slice(0, 8)}…)`,
+            lineasDoc.length,
+            unidades,
+            +valorDoc.toFixed(2),
+            JSON.stringify(lineasDoc)
+          )
       }
     })
 

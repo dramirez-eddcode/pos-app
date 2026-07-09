@@ -292,6 +292,25 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
   p.bold(true).line(labelValue('TOTAL VENDIDO', data.total.toFixed(2))).bold(false)
   p.feed(1)
 
+  // Corte final: detalle de las notas cobradas con tarjeta (pago puro o
+  // mixto) — folio + monto tarjeta, para cuadrar contra los vouchers de la
+  // terminal. En mixto sólo se imprime la parte cobrada con tarjeta.
+  if (data.tipo === 'FINAL' && data.ventasTarjeta && data.ventasTarjeta.length > 0) {
+    p.align('center').line('--- VENTAS CON TARJETA ---')
+    p.align('left')
+    let sumaTarjeta = 0
+    for (const v of data.ventasTarjeta) {
+      sumaTarjeta += v.monto
+      p.line(labelValue(`Folio ${v.folio}`, v.monto.toFixed(2)))
+    }
+    p.line(padRight('', COLS_DEFAULT - 10) + '----------')
+    const notas = data.ventasTarjeta.length
+    p.bold(true)
+      .line(labelValue(`${notas} nota${notas === 1 ? '' : 's'} tarjeta`, sumaTarjeta.toFixed(2)))
+      .bold(false)
+    p.feed(1)
+  }
+
   // Movimientos de caja
   p.align('center').line('--- MOVIMIENTOS DE CAJA ---')
   p.align('left')

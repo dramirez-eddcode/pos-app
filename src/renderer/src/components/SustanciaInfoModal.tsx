@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Copy } from 'lucide-react'
 import Modal from './Modal'
@@ -84,7 +84,9 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
     setTimeout(() => inputRef.current?.focus(), 80)
   }, [open])
 
-  // F9 + Esc en capture phase (ignora foco en input, como en SearchModal)
+  // F9 + Esc + ↑/↓ en capture phase (ignora foco en input, como en
+  // SearchModal): la navegación de resultados funciona aunque el foco esté en
+  // otro lado (p. ej. tras hacer clic en una fila o en un botón).
   useEffect(() => {
     if (!open) return
     const h = (e: KeyboardEvent) => {
@@ -96,11 +98,17 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
         e.preventDefault()
         e.stopPropagation()
         onClose()
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        setIdx((i) =>
+          e.key === 'ArrowDown' ? Math.min(results.length - 1, i + 1) : Math.max(0, i - 1)
+        )
       }
     }
     window.addEventListener('keydown', h, true)
     return () => window.removeEventListener('keydown', h, true)
-  }, [open, onClose, rotateMode])
+  }, [open, onClose, rotateMode, results.length])
 
   // Búsqueda con debounce
   useEffect(() => {
@@ -144,16 +152,6 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
       .finally(() => setLoadingLotes(false))
   }, [selected?.id])
 
-  const onKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setIdx((i) => Math.min(results.length - 1, i + 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setIdx((i) => Math.max(0, i - 1))
-    }
-  }
-
   const copyFicha = useCallback(async () => {
     if (!selected) return
     try {
@@ -192,7 +190,6 @@ export default function SustanciaInfoModal({ open, onClose }: Props) {
                 className="w-full border border-border rounded px-2 py-1.5"
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
-                onKeyDown={onKey}
                 placeholder={
                   mode === 'codigo'
                     ? 'Código EAN-13 o SKU interno…'

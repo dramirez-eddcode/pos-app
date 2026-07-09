@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import { toast } from 'sonner'
 import { AlertTriangle, CheckCircle2, FileDown } from 'lucide-react'
 import Modal from './Modal'
@@ -20,6 +26,11 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
   const [forzar, setForzar] = useState(false)
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [bodegaId, setBodegaId] = useState('')
+  // Renglón "activo" de la tabla de contenido, para validar lo que llega:
+  // clic o flechas lo sombrean y recorren.
+  const [selRow, setSelRow] = useState(-1)
+  const tablaRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
 
   useEffect(() => {
     if (!open) {
@@ -52,6 +63,8 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
       }
       setPreview(r.preview)
       setForzar(false)
+      setSelRow(-1)
+      setTimeout(() => tablaRef.current?.focus(), 80)
     } finally {
       setPicking(false)
     }
@@ -87,8 +100,25 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
   const necesitaForzar = !!preview && !preview.yaAplicado && !preview.sucursalCoincide
   const bloqueado = !!preview && (preview.yaAplicado || (necesitaForzar && !forzar))
 
+  const numItems = preview?.items?.length ?? 0
+
+  // ↑/↓ con la tabla enfocada recorren y sombrean los renglones del traspaso
+  // (para validar contra lo físico antes de aplicar).
+  const onKeyTabla = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (numItems === 0) return
+    e.preventDefault()
+    setSelRow((i) => (e.key === 'ArrowDown' ? Math.min(numItems - 1, i + 1) : Math.max(0, i - 1)))
+  }
+
+  useEffect(() => {
+    if (selRow < 0) return
+    const row = tbodyRef.current?.children[selRow] as HTMLElement | undefined
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow])
+
   return (
-    <Modal open={open} title="Recibir traspaso" onClose={onClose} maxWidth="max-w-lg">
+    <Modal open={open} title="Recibir traspaso" onClose={onClose} maxWidth="max-w-2xl">
       <div className="relative">
         <div className="p-4 space-y-3 text-sm">
           <div className="rounded border border-dashed border-border bg-muted/20 p-3 text-xs text-muted-foreground">
@@ -137,6 +167,59 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
               <Row k="Generado" v={new Date(preview.generadoEn).toLocaleString('es-MX')} />
               <Row k="Contenido" v={`${preview.lineas} líneas · ${preview.unidades.toLocaleString('es-MX')} unidades`} />
             </div>
+          )}
+
+          {/* Contenido del traspaso — navegable para validar contra lo físico */}
+          {preview && numItems > 0 && (
+            <section className="border border-border rounded">
+              <header className="px-3 py-2 border-b border-border bg-muted/30 text-[10px] font-semibold uppercase tracking-wide flex justify-between items-center">
+                <span>Lo que recibes</span>
+                <span className="normal-case font-normal text-muted-foreground">
+                  ↑/↓ recorre los renglones para validar
+                </span>
+              </header>
+              <div
+                ref={tablaRef}
+                tabIndex={0}
+                onKeyDown={onKeyTabla}
+                title="Clic en un renglón (o flechas con la tabla enfocada) para recorrer y validar"
+                className="overflow-auto max-h-[45vh] focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-background border-b border-border">
+                    <tr className="text-left">
+                      <th className="px-2 py-1 w-8 text-right">#</th>
+                      <th className="px-2 py-1 font-mono w-32">Código</th>
+                      <th className="px-2 py-1">Producto</th>
+                      <th className="px-2 py-1 w-20 text-right">Cantidad</th>
+                      <th className="px-2 py-1 w-28 text-center">Caducidad</th>
+                    </tr>
+                  </thead>
+                  <tbody ref={tbodyRef}>
+                    {preview.items.map((it, i) => (
+                      <tr
+                        key={i}
+                        onClick={() => {
+                          setSelRow(i)
+                          tablaRef.current?.focus()
+                        }}
+                        className={`border-b border-border/60 cursor-pointer ${
+                          i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                        }`}
+                      >
+                        <td className="px-2 py-1 text-right text-muted-foreground">{i + 1}</td>
+                        <td className="px-2 py-1 font-mono">{it.codigo}</td>
+                        <td className="px-2 py-1">{it.nombre}</td>
+                        <td className="px-2 py-1 text-right font-mono font-semibold">
+                          {Number(it.cantidad).toLocaleString('es-MX')}
+                        </td>
+                        <td className="px-2 py-1 text-center font-mono">{it.caducidad || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
 
           {preview && preview.yaAplicado && (

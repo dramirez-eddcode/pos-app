@@ -4,7 +4,7 @@
  */
 
 import type { IvaModo, MetodoPago } from './types'
-import type { CorteParcialResumen } from './receipt'
+import type { CorteParcialResumen, VentaTarjetaResumen } from './receipt'
 
 export type InstalacionTipo = 'MATRIZ' | 'SUCURSAL'
 
@@ -791,6 +791,8 @@ export interface TraspasoPreview {
   unidades: number
   yaAplicado: boolean
   sucursalCoincide: boolean
+  // Renglones del traspaso, para revisarlos ANTES de aplicar.
+  items: TraspasoLineaFile[]
 }
 
 export interface PickTraspasoResult {
@@ -850,6 +852,25 @@ export interface MovimientoDetalle extends MovimientoHistItem {
 export function folioMovimiento(tipo: MovimientoTipo, numero: number): string {
   const p = tipo === 'ENTRADA' ? 'E' : tipo === 'SALIDA' ? 'S' : 'T'
   return `${p}-${numero}`
+}
+
+// ── Kárdex por producto ──────────────────────────────────────────────────
+// Renglón del journal `mov_stock` de un producto, con saldo acumulado.
+export type KardexTipo = 'ENTRADA' | 'SALIDA' | 'AJUSTE' | 'VENTA' | 'CANCELACION_VENTA'
+
+export interface KardexItem {
+  fecha: string // ISO
+  tipo: KardexTipo
+  cantidad: number // firmada: positivo entra, negativo sale
+  saldo: number // existencia del producto DESPUÉS de este movimiento
+  motivo: string | null // limpio para mostrar (sin el "por <uuid>" de auditoría)
+  referencia: string | null // p. ej. "Venta #123" / "Cancelación venta #123"
+  caducidad: string | null // YYYY-MM-DD del lote afectado (null = sin caducidad)
+  bodega: string | null
+  // Folio (UUID) del documento de movimiento/traspaso al que pertenece este
+  // renglón — para saltar a su detalle. null si no hay documento (ventas,
+  // ajustes, carga inicial).
+  docFolio: string | null
 }
 
 // Resultado de exportar un movimiento a PDF (para impresora normal)
@@ -1069,6 +1090,8 @@ export interface CorteReimpresionDto {
   efectivoEsperado: number
   // Sólo cortes FINAL: parciales / cambios de turno del mismo día.
   parcialesDelDia?: CorteParcialResumen[]
+  // Sólo cortes FINAL: notas cobradas con tarjeta (pago puro o mixto).
+  ventasTarjeta?: VentaTarjetaResumen[]
 }
 
 export interface CreateCorteInput {
@@ -1101,4 +1124,6 @@ export interface CreateCorteResult {
   totales: CorteTotales
   // Sólo cortes FINAL: parciales / cambios de turno del mismo día (para el ticket).
   parcialesDelDia?: CorteParcialResumen[]
+  // Sólo cortes FINAL: notas cobradas con tarjeta (pago puro o mixto).
+  ventasTarjeta?: VentaTarjetaResumen[]
 }

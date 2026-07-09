@@ -14,7 +14,7 @@ import type {
   UltimoCorteInfo
 } from '@shared/dto'
 import type { MetodoPago } from '@shared/types'
-import type { CorteParcialResumen } from '@shared/receipt'
+import type { CorteParcialResumen, VentaTarjetaResumen } from '@shared/receipt'
 
 /**
  * Devuelve las cifras de control del día (corte "en pantalla"):
@@ -302,6 +302,30 @@ function parcialesDelDia(desde: number, hasta: number): CorteParcialResumen[] {
 }
 
 /**
+ * Notas del rango cobradas (total o parcialmente) con TARJETA, para el detalle
+ * del ticket del corte final. En pago mixto sólo se reporta la parte tarjeta —
+ * es lo que debe cuadrar contra los vouchers de la terminal. Excluye canceladas
+ * (consistente con los totales por método del corte).
+ */
+function ventasConTarjeta(folioInicio: number, folioFin: number): VentaTarjetaResumen[] {
+  const rows = getSqlite()
+    .prepare(
+      `SELECT v.folio_local AS folio, COALESCE(SUM(p.monto), 0) AS monto
+         FROM pago p
+         JOIN venta v ON v.id = p.venta_id
+        WHERE p.metodo = 'TARJETA'
+          AND v.cancelada = 0
+          AND v.folio_local BETWEEN ? AND ?
+        GROUP BY v.folio_local
+        ORDER BY v.folio_local ASC`
+    )
+    .all(folioInicio, folioFin) as Array<{ folio: number; monto: number }>
+  return rows
+    .map((r) => ({ folio: r.folio, monto: round2(Number(r.monto) || 0) }))
+    .filter((r) => r.monto > 0)
+}
+
+/**
  * Crea un registro de corte: snapshot atómico de ventas + caja. Devuelve los
  * totales calculados para que el renderer pueda imprimir el ticket de corte.
  *
@@ -385,8 +409,10 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
 
     const efectivoEsperado = round2(agg.total_efectivo + cajaAgg.entradas - cajaAgg.salidas)
 
-    // En el corte final, adjunta los parciales del día para el ticket combinado.
+    // En el corte final, adjunta los parciales del día para el ticket combinado
+    // y el detalle de notas con tarjeta (pago puro o mixto).
     const parciales = tipo === 'FINAL' ? parcialesDelDia(hoy00, now) : undefined
+    const tarjetas = tipo === 'FINAL' ? ventasConTarjeta(folioInicio, folioFin) : undefined
 
     return {
       corteId,
@@ -409,7 +435,8 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
         cancelaciones: round2(agg.cancelaciones),
         efectivoEsperado
       },
-      ...(parciales && parciales.length > 0 ? { parcialesDelDia: parciales } : {})
+      ...(parciales && parciales.length > 0 ? { parcialesDelDia: parciales } : {}),
+      ...(tarjetas && tarjetas.length > 0 ? { ventasTarjeta: tarjetas } : {})
     }
   })
 
@@ -556,6 +583,7 @@ export function createCorteFinalPendiente(cajeroId: string, fechaYmd: string): C
 
     const efectivoEsperado = round2(agg.total_efectivo + cajaAgg.entradas - cajaAgg.salidas)
     const parciales = parcialesDelDia(dia00, diaFin)
+    const tarjetas = ventasConTarjeta(folioInicio, folioFin)
 
     return {
       corteId,
@@ -578,7 +606,8 @@ export function createCorteFinalPendiente(cajeroId: string, fechaYmd: string): C
         cancelaciones: round2(agg.cancelaciones),
         efectivoEsperado
       },
-      ...(parciales.length > 0 ? { parcialesDelDia: parciales } : {})
+      ...(parciales.length > 0 ? { parcialesDelDia: parciales } : {}),
+      ...(tarjetas.length > 0 ? { ventasTarjeta: tarjetas } : {})
     }
   })
 
@@ -668,10 +697,12 @@ export function getCorteReimpresion(viewerUserId: string, corteId: string): Cort
   const agg = aggVentasRango(c.folioInicio, c.folioFin)
   const efectivoEsperado = round2(c.efectivo + c.entradasCaja - c.salidasCaja)
 
-  // Reimpresión del corte final: reconstruye también los parciales de ese día.
+  // Reimpresión del corte final: reconstruye también los parciales de ese día
+  // y el detalle de notas con tarjeta.
   const dia00 = startOfDayMs(c.fecha)
   const parciales =
     c.tipo === 'FINAL' ? parcialesDelDia(dia00, dia00 + 24 * 3600 * 1000 - 1) : undefined
+  const tarjetas = c.tipo === 'FINAL' ? ventasConTarjeta(c.folioInicio, c.folioFin) : undefined
 
   return {
     fecha: new Date(c.fecha).toISOString(),
@@ -692,6 +723,7 @@ export function getCorteReimpresion(viewerUserId: string, corteId: string): Cort
     salidasCaja: round2(c.salidasCaja),
     cancelaciones: round2(c.cancelaciones),
     efectivoEsperado,
-    ...(parciales && parciales.length > 0 ? { parcialesDelDia: parciales } : {})
+    ...(parciales && parciales.length > 0 ? { parcialesDelDia: parciales } : {}),
+    ...(tarjetas && tarjetas.length > 0 ? { ventasTarjeta: tarjetas } : {})
   }
 }

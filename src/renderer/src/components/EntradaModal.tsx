@@ -62,13 +62,23 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const costoRef = useRef<HTMLInputElement>(null)
   const cadRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Renglón "activo" de la tabla, para cotejar contra una lista externa
+  // (factura): clic o flechas lo sombrean y recorren.
+  const [selRow, setSelRow] = useState(-1)
+  const tablaRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
   const [importing, setImporting] = useState(false)
   const [bodegas, setBodegas] = useState<BodegaDto[]>([])
   const [bodegaId, setBodegaId] = useState<string>('')
   const [proveedores, setProveedores] = useState<ProveedorDto[]>([])
+  // Default: UN proveedor para toda la entrada (se elige antes de capturar).
+  // "Proveedor por producto" habilita el selector por renglón (facturas mixtas).
+  const [provEntradaId, setProvEntradaId] = useState('')
+  const [provPorProducto, setProvPorProducto] = useState(false)
   // Alta rápida de proveedor sin salir de la entrada: a qué renglón se asigna
-  // el nuevo proveedor ('todos' = a todos los renglones capturados).
-  const [nuevoProvPara, setNuevoProvPara] = useState<number | 'todos' | null>(null)
+  // el nuevo proveedor ('todos' = a todos los renglones; 'entrada' = el
+  // selector general de toda la entrada).
+  const [nuevoProvPara, setNuevoProvPara] = useState<number | 'todos' | 'entrada' | null>(null)
 
   const cargarProveedores = useCallback(async () => {
     try {
@@ -88,7 +98,10 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     setCosto('')
     setCaducidad(defaultCaducidad())
     setNuevoProvPara(null)
+    setProvEntradaId('')
+    setProvPorProducto(false)
     setPreview(false)
+    setSelRow(-1)
     setTimeout(() => codRef.current?.focus(), 80)
     window.api.bodegas
       .list()
@@ -172,11 +185,11 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       cantidad: q,
       costo: c,
       fechaCaducidad: caducidad || null,
-      proveedorId: null
+      proveedorId: provPorProducto ? null : provEntradaId || null
     }
     setItems((prev) => [...prev, row])
     resetRow()
-  }, [current, cantidad, costo, caducidad, resetRow])
+  }, [current, cantidad, costo, caducidad, provPorProducto, provEntradaId, resetRow])
 
   const removeItem = useCallback((i: number) => {
     setItems((prev) => prev.filter((_, idx) => idx !== i))
@@ -376,7 +389,9 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
           fechaCaducidad: i.fechaCaducidad
             ? new Date(i.fechaCaducidad + 'T12:00:00').toISOString()
             : null,
-          proveedorId: i.proveedorId
+          // Modo default: el proveedor de TODA la entrada manda (aunque el
+          // renglón se haya capturado antes de elegirlo).
+          proveedorId: provPorProducto ? i.proveedorId : provEntradaId || null
         }))
       })
       toast.success(
@@ -405,7 +420,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     } finally {
       setSaving(false)
     }
-  }, [items, userId, bodegaId, onClose, onSaved])
+  }, [items, userId, bodegaId, provPorProducto, provEntradaId, onClose, onSaved])
 
   // Valida y abre el preview de confirmación (no registra todavía).
   const pedirConfirmacion = useCallback(() => {
@@ -449,6 +464,29 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     }
   }
 
+  // ↑/↓ con la tabla enfocada recorren y sombrean los renglones capturados
+  // (para cotejar contra la factura). El preventDefault evita que la
+  // navegación genérica del modal se lleve el foco a otro campo.
+  const onKeyTabla = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (items.length === 0) return
+    e.preventDefault()
+    setSelRow((i) =>
+      e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+    )
+  }
+
+  // Mantén visible el renglón activo y ajusta si la lista cambia.
+  useEffect(() => {
+    if (selRow < 0) return
+    if (selRow > items.length - 1) {
+      setSelRow(items.length - 1)
+      return
+    }
+    const row = tbodyRef.current?.children[selRow] as HTMLElement | undefined
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow, items.length])
+
   // Totales
   const totales = items.reduce(
     (acc, it) => ({
@@ -467,9 +505,9 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         maxWidth="max-w-5xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
-          {/* Bodega destino — el proveedor se asigna por renglón en la tabla */}
+          {/* Bodega destino + proveedor de la entrada */}
           {bodegas.length > 0 && (
-            <section className="flex items-center gap-2">
+            <section className="flex items-center gap-2 flex-wrap">
               <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
                 Bodega destino:
               </label>
@@ -489,6 +527,56 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                   ))}
                 </select>
               )}
+
+              <span className="mx-1 h-5 w-px bg-border" />
+
+              <label className="text-xs text-muted-foreground whitespace-nowrap font-medium">
+                Proveedor de la entrada:
+              </label>
+              {provPorProducto ? (
+                <span className="text-xs text-muted-foreground italic">
+                  se elige por producto en la tabla
+                </span>
+              ) : (
+                <select
+                  className="border border-border rounded px-2 py-1.5 bg-background text-sm max-w-[260px]"
+                  value={provEntradaId}
+                  onChange={(e) => {
+                    if (e.target.value === '__nuevo__') {
+                      setNuevoProvPara('entrada')
+                      return
+                    }
+                    setProvEntradaId(e.target.value)
+                  }}
+                >
+                  <option value="">— sin proveedor —</option>
+                  {proveedores.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre}
+                    </option>
+                  ))}
+                  {puedeCrearProveedor && (
+                    <option value="__nuevo__">➕ Nuevo proveedor…</option>
+                  )}
+                </select>
+              )}
+              <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={provPorProducto}
+                  onChange={(e) => {
+                    const activar = e.target.checked
+                    setProvPorProducto(activar)
+                    if (activar) {
+                      // Los renglones ya capturados parten del proveedor general
+                      setItems((prev) =>
+                        prev.map((it) => ({ ...it, proveedorId: provEntradaId || null }))
+                      )
+                    }
+                  }}
+                />
+                Proveedor por producto
+              </label>
             </section>
           )}
 
@@ -674,43 +762,51 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                 {items.length} renglón(es)
               </span>
             </header>
-            <div className="overflow-auto max-h-[250px]">
+            <div
+              ref={tablaRef}
+              tabIndex={0}
+              onKeyDown={onKeyTabla}
+              title="Clic en un renglón (o flechas con la tabla enfocada) para recorrer y cotejar"
+              className="overflow-auto max-h-[250px] focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b border-border">
                   <tr className="text-left">
                     <th className="px-2 py-1 w-12 text-right">Cant</th>
                     <th className="px-2 py-1">Producto</th>
-                    <th className="px-2 py-1 w-48">
-                      <div className="flex items-center gap-1.5">
-                        <span>Proveedor</span>
-                        {items.length > 1 && proveedores.length > 0 && (
-                          <select
-                            value=""
-                            onChange={(e) => asignarProveedorTodos(e.target.value)}
-                            title="Asignar el mismo proveedor a todos los renglones"
-                            className="border border-border rounded px-1 py-0.5 bg-background text-[10px] font-normal text-muted-foreground"
-                          >
-                            <option value="">todos…</option>
-                            {proveedores.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.nombre}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-                    </th>
+                    {provPorProducto && (
+                      <th className="px-2 py-1 w-48">
+                        <div className="flex items-center gap-1.5">
+                          <span>Proveedor</span>
+                          {items.length > 1 && proveedores.length > 0 && (
+                            <select
+                              value=""
+                              onChange={(e) => asignarProveedorTodos(e.target.value)}
+                              title="Asignar el mismo proveedor a todos los renglones"
+                              className="border border-border rounded px-1 py-0.5 bg-background text-[10px] font-normal text-muted-foreground"
+                            >
+                              <option value="">todos…</option>
+                              {proveedores.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nombre}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      </th>
+                    )}
                     <th className="px-2 py-1 w-24 text-right">Costo</th>
                     <th className="px-2 py-1 w-28 text-right">Importe</th>
                     <th className="px-2 py-1 w-28">Caducidad</th>
                     <th className="px-2 py-1 w-8" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={tbodyRef}>
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={provPorProducto ? 7 : 6}
                         className="px-2 py-6 text-center text-muted-foreground italic"
                       >
                         Sin lotes — captura un producto arriba
@@ -718,7 +814,16 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                     </tr>
                   )}
                   {items.map((it, i) => (
-                    <tr key={i} className="border-b border-border/60">
+                    <tr
+                      key={i}
+                      onClick={() => {
+                        setSelRow(i)
+                        tablaRef.current?.focus()
+                      }}
+                      className={`border-b border-border/60 cursor-pointer ${
+                        i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                      }`}
+                    >
                       <td className="px-2 py-1 text-right font-mono">{it.cantidad}</td>
                       <td className="px-2 py-1">
                         <div>{it.nombre}</div>
@@ -726,23 +831,25 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                           {it.codigo}
                         </div>
                       </td>
-                      <td className="px-2 py-1">
-                        <select
-                          value={it.proveedorId ?? ''}
-                          onChange={(e) => onRowProveedor(i, e.target.value)}
-                          className="w-full border border-border rounded px-1 py-1 bg-background text-[11px]"
-                        >
-                          <option value="">— sin proveedor —</option>
-                          {proveedores.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.nombre}
-                            </option>
-                          ))}
-                          {puedeCrearProveedor && (
-                            <option value="__nuevo__">➕ Nuevo proveedor…</option>
-                          )}
-                        </select>
-                      </td>
+                      {provPorProducto && (
+                        <td className="px-2 py-1">
+                          <select
+                            value={it.proveedorId ?? ''}
+                            onChange={(e) => onRowProveedor(i, e.target.value)}
+                            className="w-full border border-border rounded px-1 py-1 bg-background text-[11px]"
+                          >
+                            <option value="">— sin proveedor —</option>
+                            {proveedores.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.nombre}
+                              </option>
+                            ))}
+                            {puedeCrearProveedor && (
+                              <option value="__nuevo__">➕ Nuevo proveedor…</option>
+                            )}
+                          </select>
+                        </td>
+                      )}
                       <td className="px-2 py-1 text-right font-mono">{money(it.costo)}</td>
                       <td className="px-2 py-1 text-right font-mono">
                         {money(it.cantidad * it.costo)}
@@ -817,6 +924,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
+        returnFocus={() => setTimeout(() => codRef.current?.focus(), 100)}
       />
 
       {/* Alta rápida de proveedor sin perder la captura: la entrada queda
@@ -830,11 +938,16 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
             setNuevoProvPara(null)
             await cargarProveedores()
             if (nuevoId != null) {
-              setItems((prev) =>
-                prev.map((it, idx) =>
-                  destino === 'todos' || idx === destino ? { ...it, proveedorId: nuevoId } : it
+              if (destino === 'entrada') {
+                // Proveedor general de toda la entrada
+                setProvEntradaId(nuevoId)
+              } else {
+                setItems((prev) =>
+                  prev.map((it, idx) =>
+                    destino === 'todos' || idx === destino ? { ...it, proveedorId: nuevoId } : it
+                  )
                 )
-              )
+              }
             }
           }}
         />
@@ -848,6 +961,14 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
             <span>
               Bodega destino:{' '}
               <strong>{bodegas.find((b) => b.id === bodegaId)?.nombre ?? '—'}</strong>
+              {!provPorProducto && (
+                <>
+                  {' · '}Proveedor:{' '}
+                  <strong>
+                    {proveedores.find((p) => p.id === provEntradaId)?.nombre ?? 'sin proveedor'}
+                  </strong>
+                </>
+              )}
             </span>
           }
           lineas={items.map((it) => ({

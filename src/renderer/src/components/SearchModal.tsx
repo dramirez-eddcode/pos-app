@@ -16,6 +16,13 @@ interface Props {
    * busca productos precisamente para agregarles stock.
    */
   allowZeroStock?: boolean
+  /**
+   * Se llama al cerrar SIN seleccionar (Esc, X o botón Cerrar), para que el
+   * modal padre regrese el foco a su input de búsqueda. Al seleccionar NO se
+   * llama: el padre enfoca su siguiente campo (cantidad, etc.) en onSelect.
+   * El padre debe usar un setTimeout: su modal se re-monta al cerrarse éste.
+   */
+  returnFocus?: () => void
 }
 
 const MODE_LABEL: Record<ProductoSearchMode, string> = {
@@ -27,7 +34,13 @@ const MODE_LABEL: Record<ProductoSearchMode, string> = {
 const DEBOUNCE_MS = 180
 const SEARCH_LIMIT = 200
 
-export default function SearchModal({ open, onClose, onSelect, allowZeroStock = false }: Props) {
+export default function SearchModal({
+  open,
+  onClose,
+  onSelect,
+  allowZeroStock = false,
+  returnFocus
+}: Props) {
   const [mode, setMode] = useState<ProductoSearchMode>('nombre')
   const [term, setTerm] = useState('')
   const [results, setResults] = useState<ProductoDto[]>([])
@@ -50,9 +63,17 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     setResults([])
     setIdx(0)
     // Con delay: al abrir desde otro modal (F5) el padre se desmonta en el
-    // mismo render y un focus síncrono se pierde.
-    const t = setTimeout(() => inputRef.current?.focus(), 50)
-    return () => clearTimeout(t)
+    // mismo render y un focus síncrono se pierde. Segundo intento por si otro
+    // modal en transición robó el foco entre tanto.
+    const t1 = setTimeout(() => inputRef.current?.focus(), 50)
+    const t2 = setTimeout(() => {
+      const el = inputRef.current
+      if (el && document.activeElement !== el) el.focus()
+    }, 200)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
   }, [open])
 
   // Búsqueda con debounce
@@ -97,6 +118,12 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     setMode((m) => (m === 'nombre' ? 'sustancia' : m === 'sustancia' ? 'codigo' : 'nombre'))
   }, [])
 
+  // Cierre SIN selección (Esc / X / Cerrar): devuelve el foco al padre.
+  const cancel = useCallback(() => {
+    onClose()
+    returnFocus?.()
+  }, [onClose, returnFocus])
+
   // Listener propio del modal: F9 (cambiar modo), Esc (cerrar), ↑/↓ (navegar)
   // y Enter (agregar). Se registra en capture phase para ganarle al useShortcut
   // global del POSPage. Las flechas/Enter van a nivel ventana (no en el input)
@@ -113,7 +140,7 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
       } else if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        onClose()
+        cancel()
       } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         if (tag === 'SELECT') return // el select de paginación usa las flechas
         e.preventDefault()
@@ -132,10 +159,10 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [open, onClose, rotateMode, results, idx, commit])
+  }, [open, cancel, rotateMode, results, idx, commit])
 
   return (
-    <Modal open={open} title="Búsqueda de producto" onClose={onClose} maxWidth="max-w-4xl">
+    <Modal open={open} title="Búsqueda de producto" onClose={cancel} maxWidth="max-w-4xl">
       <div className="p-4 space-y-3">
         <div className="flex gap-3 items-center">
           <div className="flex-1">
@@ -281,7 +308,7 @@ export default function SearchModal({ open, onClose, onSelect, allowZeroStock = 
 
         <button
           type="button"
-          onClick={onClose}
+          onClick={cancel}
           className="px-3 py-1 border border-border rounded hover:bg-muted shrink-0"
         >
           Cerrar

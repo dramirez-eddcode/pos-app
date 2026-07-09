@@ -51,6 +51,7 @@ import type {
   ExportFarmaStockLote,
   InstalacionDto,
   PickFarmaResult,
+  KardexItem,
   LoginResult,
   SessionUser,
   LoteInfo,
@@ -285,6 +286,7 @@ declare global {
         detalle: (folio: string) => Promise<MovimientoDetalle | null>
         pdf: (folio: string) => Promise<PdfMovimientoResult>
         imprimir: (folio: string) => Promise<PdfMovimientoResult>
+        kardex: (productoId: string) => Promise<KardexItem[]>
       }
       precios: {
         update: (input: UpdatePreciosInput) => Promise<UpdatePreciosResult>
