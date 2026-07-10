@@ -4,7 +4,7 @@ Punto de venta **100% local** para Farmacias MS — Electron + React + TypeScrip
 Tailwind. SQLite local por equipo (vía Drizzle / better-sqlite3). **Sin dependencias
 en la nube**: matriz y sucursales se sincronizan por **USB**.
 
-> Versión actual: **v1.1.10**
+> Versión actual: **v1.1.12**
 
 ## Modos de instalación
 
@@ -44,10 +44,12 @@ El instalador queda en `release/farmacias-ms-pos-<version>-setup.exe`.
 - **POS de venta**: búsqueda de productos (paginada, atajos de teclado y botones),
   multiplicador `código*N`, IVA por producto (exento / incluido / sumar), cortes,
   cancelaciones e impresión de ticket ESC/POS (RAW vía `resources/scripts/print-raw.ps1`).
-- **Cortes**: parcial, cambio de turno y **final**. El **corte parcial** se muestra en
-  pantalla (modal con botón Cerrar) y puede imprimirse opcionalmente; el **corte final**
-  siempre imprime, con confirmación persistente y con el **desglose de los parciales del
-  día** en el mismo ticket.
+- **Cortes**: parcial, cambio de turno y **final**, por **periodo** (no por día): la
+  venta en pantalla se acumula desde el último corte final —aunque pasen varios días—
+  y sólo el corte final la "limpia". El **corte parcial** se muestra en pantalla (modal
+  con botón Cerrar) y puede imprimirse opcionalmente; el **corte final** siempre
+  imprime, con confirmación persistente y con el **desglose de los parciales del
+  periodo** en el mismo ticket.
 - **Catálogo y precios**: alta/edición de productos, IVA con vista previa del precio,
   carga masiva por CSV (catálogo y precios+IVA), todo paginado. En **matriz** el stock se
   muestra **desglosado por bodega**.

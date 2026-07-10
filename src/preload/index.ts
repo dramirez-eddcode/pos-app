@@ -10,7 +10,6 @@ import type {
   PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
-  CortePendienteDia,
   CorteFinalHistItem,
   CorteReimpresionDto,
   CreateAjustesInput,
@@ -277,10 +276,6 @@ const api = {
     hoy: (): Promise<CorteHoyDto> => ipcRenderer.invoke('corte:hoy'),
     create: (cajeroId: string, tipo: CorteTipo): Promise<CreateCorteResult> =>
       ipcRenderer.invoke('corte:create', cajeroId, tipo),
-    pendientesDias: (): Promise<CortePendienteDia[]> =>
-      ipcRenderer.invoke('corte:pendientes-dias'),
-    createFinalPendiente: (cajeroId: string, fechaYmd: string): Promise<CreateCorteResult> =>
-      ipcRenderer.invoke('corte:create-final-pendiente', cajeroId, fechaYmd),
     finales: (viewerUserId: string): Promise<CorteFinalHistItem[]> =>
       ipcRenderer.invoke('corte:finales', viewerUserId),
     reimpresion: (viewerUserId: string, corteId: string): Promise<CorteReimpresionDto> =>

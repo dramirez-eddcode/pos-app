@@ -9,7 +9,6 @@ import type {
   PickWizardFarmaResult,
   CorteHoyDto,
   CorteTipo,
-  CortePendienteDia,
   CorteFinalHistItem,
   CorteReimpresionDto,
   CargaInicialInput,
@@ -232,8 +231,6 @@ declare global {
       corte: {
         hoy: () => Promise<CorteHoyDto>
         create: (cajeroId: string, tipo: CorteTipo) => Promise<CreateCorteResult>
-        pendientesDias: () => Promise<CortePendienteDia[]>
-        createFinalPendiente: (cajeroId: string, fechaYmd: string) => Promise<CreateCorteResult>
         finales: (viewerUserId: string) => Promise<CorteFinalHistItem[]>
         reimpresion: (viewerUserId: string, corteId: string) => Promise<CorteReimpresionDto>
       }

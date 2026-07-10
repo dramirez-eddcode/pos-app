@@ -40,7 +40,7 @@ export interface ReceiptData {
   cajero?: string
   openDrawer?: boolean
   showTime?: boolean
-  // Imprimir el folio ("Nota de mostrador"). Si es false, se omite. Default: sí.
+  // Imprimir la línea "Folio" en el ticket. Si es false, se omite. Default: sí.
   showFolio?: boolean
   footer?: string | null
 }

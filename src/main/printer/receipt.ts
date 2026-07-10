@@ -100,7 +100,7 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
 
   // ── Folio + fecha (izquierda, con ": " alineado como en legacy) ───────────
   p.align('left')
-  if (data.showFolio !== false) p.line(`Nota de mostrador : ${formatFolio(data.folio)}`)
+  if (data.showFolio !== false) p.line(`Folio : ${formatFolio(data.folio)}`)
   p.line(`Fecha de Venta    : ${formatFecha(data.fecha)}`)
   if (data.showTime) p.line(`Hora de Venta     : ${formatHora(data.fecha)}`)
   if (data.cajero) p.line(`Cajero            : ${data.cajero}`)
@@ -262,10 +262,10 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
   p.line(`Canceladas   : ${data.foliosCancelados}`)
   p.feed(1)
 
-  // Corte final: desglose de los cortes parciales / cambios de turno del día,
-  // antes del total del día completo.
+  // Corte final: desglose de los cortes parciales / cambios de turno del
+  // periodo (desde el último corte final), antes del total del periodo.
   if (data.tipo === 'FINAL' && data.parcialesDelDia && data.parcialesDelDia.length > 0) {
-    p.align('center').line('--- CORTES PARCIALES DEL DIA ---')
+    p.align('center').line('--- CORTES PARCIALES DEL PERIODO ---')
     p.align('left')
     let sumaParciales = 0
     for (const c of data.parcialesDelDia) {
@@ -277,7 +277,7 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
     p.line(padRight('', COLS_DEFAULT - 10) + '----------')
     p.bold(true).line(labelValue('Suma parciales', sumaParciales.toFixed(2))).bold(false)
     p.feed(1)
-    p.align('center').line('=== TOTAL DEL DIA ===')
+    p.align('center').line('=== TOTAL DEL PERIODO ===')
     p.feed(1)
   }
 

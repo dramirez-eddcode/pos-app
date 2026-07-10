@@ -1,6 +1,6 @@
 # CLAUDE.md — Farmacias MS POS
 
-Contexto para trabajar en este proyecto. **Versión actual: v1.1.10.**
+Contexto para trabajar en este proyecto. **Versión actual: v1.1.12.**
 
 ## Qué es
 Punto de venta (POS) de escritorio para una cadena de farmacias, **100% local/offline** (sin nube). Matriz y sucursales se sincronizan **por USB**.
@@ -54,13 +54,14 @@ El stock NO se centraliza: vive en cada equipo (tabla `caducidad_lote` por bodeg
 ## Convenciones
 - UI en **español**, listados grandes **paginados**, indicadores de carga (Spinner/BusyOverlay).
 - El `Modal` compartido tiene scroll de overlay (los modales largos scrollean solos). Cierra con Esc o la X del encabezado; a propósito NO cierra con clic fuera del panel (un clic accidental perdería la captura en curso). Además navega con ↑/↓ entre los campos enfocables del panel (helper compartido `lib/arrowNav.ts`, estilo legacy: selecciona el contenido al enfocar; incluye selects cerrados — la opción se cambia abriendo el desplegable con Espacio/Alt+↓); respeta textareas/radios y los modales de lista con listeners en captura. El mismo helper se usa en Login, Wizard y el menú de Matriz; NO usarlo donde las flechas ya signifiquen otra cosa (carrito del POS).
+- **NUNCA usar `confirm()`/`alert()` nativos en el renderer**: en Electron dejan la ventana sin foco de teclado (bug de Chromium) y la app queda "bloqueada" hasta alt-tab. Confirmaciones = toast de sonner con `action` (patrón de logout/cortes/descartar venta).
 - Tras cualquier cambio: **`npm run typecheck`** antes de empaquetar.
 
 ## Subsistemas / decisiones clave (al día)
 - **Folios de movimientos**: entradas/salidas/traspasos tienen un **UUID interno** (llave, sync USB, anti-duplicado) y un **folio numérico consecutivo por tipo** para mostrar: `E-1` (entrada), `S-1` (salida), `T-1` (traspaso). Helper `folioMovimiento(tipo, numero)` en `shared/dto.ts`. En reportes/PDF/historial se muestra el número corto, no el UUID. Ver memoria [[folio-numerico-movimientos]].
 - **Roles**: SUPERUSUARIO (todo; único que ve/puede el reset de modo de instalación — `isSuperusuario` + gate en `instalacion.resetInstalacion`), ADMINISTRADOR (todo excepto el reset), SUPERVISOR (sólo en SUCURSAL: entradas de mercancía + recibir traspasos + actualizar datos), CAJERO. Gating en `services/permisos.ts` (`requireAdmin` / `requireAdminOrSupervisor`) y en `lib/roles.ts` (`isFullAdmin` / `isAdminLike`). Ver memoria [[rol-supervisor-permisos]].
 - **Preview de confirmación**: entradas/salidas/traspasos muestran `ConfirmMovimientoModal` (productos + cantidades) antes de aplicar; Cancelar conserva la captura.
-- **Corte**: parcial se ve en pantalla (imprimir opcional); final imprime siempre e incluye el desglose de parciales del día y el **detalle de notas con tarjeta** (folio + monto tarjeta; en pago mixto sólo la parte tarjeta — `ventasConTarjeta` en corte.ts, aplica también a cierres de días pendientes y reimpresiones).
+- **Corte**: por PERIODO, no por día — el "corte en pantalla" acumula desde el último corte FINAL (puede abarcar varios días o varios finales en un día) y el corte final cierra ese periodo completo y "limpia" la pantalla (los parciales/cambios de turno NO la limpian). Parcial se ve en pantalla (imprimir opcional); final imprime siempre e incluye el desglose de parciales del periodo y el **detalle de notas con tarjeta** (folio + monto tarjeta; en pago mixto sólo la parte tarjeta — `ventasConTarjeta` en corte.ts, aplica también a reimpresiones). El subsistema de "cortes finales pendientes por día" se eliminó (obsoleto con periodos), y el botón de "Cambio de turno" se quitó de la UI (en operación sólo usan parcial y final; el tipo CAMBIO_TURNO se conserva en backend por los registros históricos).
 - **Stock por bodega**: opción "incluir existencia 0" y **edición inline de la caducidad** de cada lote (`stock.updateLoteCaducidad`).
 - **Lotes agotados**: `getLotesByProducto` sólo regresa lotes con `saldo > 0` — los selectores de lote (ajustes, salidas, ficha F7) no listan lotes vacíos. Los lotes agotados NO se borran de BD (el kárdex `mov_stock` los referencia); se ven en Stock por bodega con "incluir existencia 0". Para revivir stock: Entrada de mercancía (lote nuevo), no ajuste sobre el lote vacío.
 - **Salidas de inventario**: dos modos en `SalidasModal` — "Automático (FEFO)" (default: capturas la cantidad total y se reparte entre lotes descontando del más próximo a caducar, respetando lo ya capturado) y "Elegir lote". El motivo/nota es de TODO el documento (se aplica a cada línea al guardar). Backend sin cambios.

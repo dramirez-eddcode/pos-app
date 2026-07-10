@@ -226,7 +226,7 @@ export default function SettingsModal({ open, onClose }: Props) {
                 disabled={!puedeConfigurarTicket}
                 onChange={(e) => setMostrarFolio(e.target.checked)}
               />
-              Folio (nota de mostrador)
+              Folio
             </label>
           </div>
           <p className="text-[11px] text-muted-foreground">

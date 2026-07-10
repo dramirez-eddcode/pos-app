@@ -50,14 +50,7 @@ import {
 } from './services/productos'
 import { peekNextFolio } from './services/folio'
 import { cancelVenta, createVenta, getTotalesRecientes, getVentaByFolio } from './services/ventas'
-import {
-  createCorte,
-  createCorteFinalPendiente,
-  getCorteHoy,
-  getCorteReimpresion,
-  getCortesPendientesDias,
-  listCortesFinales
-} from './services/corte'
+import { createCorte, getCorteHoy, getCorteReimpresion, listCortesFinales } from './services/corte'
 import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
 import { createSalida } from './services/salidas'
@@ -229,10 +222,6 @@ export function registerIpcHandlers(): void {
     createCorte(cajeroId, tipo)
   )
   // Días anteriores sin corte final + cierre retroactivo (cualquier usuario, una vez)
-  ipcMain.handle('corte:pendientes-dias', async () => getCortesPendientesDias())
-  ipcMain.handle('corte:create-final-pendiente', async (_e, cajeroId: string, fechaYmd: string) =>
-    createCorteFinalPendiente(cajeroId, fechaYmd)
-  )
   // Reimpresión de cortes finales (sólo admin/superusuario)
   ipcMain.handle('corte:finales', async (_e, viewerUserId: string) =>
     listCortesFinales(viewerUserId)

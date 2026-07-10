@@ -5,7 +5,6 @@ import { venta, pago, movCaja } from '../db/schema'
 import type {
   CorteFinalHistItem,
   CorteHoyDto,
-  CortePendienteDia,
   CorteReimpresionDto,
   CorteTipo,
   CreateCorteResult,
@@ -17,18 +16,33 @@ import type { MetodoPago } from '@shared/types'
 import type { CorteParcialResumen, VentaTarjetaResumen } from '@shared/receipt'
 
 /**
- * Devuelve las cifras de control del día (corte "en pantalla"):
+ * Devuelve las cifras de control del PERIODO actual (corte "en pantalla"):
  *  - Conteos y totales de ventas + cancelaciones
  *  - Entradas / salidas de caja
  *  - Totales por método de pago (excluye canceladas)
- *  - Lista de folios del día para la grilla de detalle
+ *  - Lista de folios del periodo para la grilla de detalle
  *
- * El "día" es desde 00:00:00 local hasta el momento de la consulta.
+ * El periodo NO se limita por día: va desde el último corte FINAL hasta el
+ * momento de la consulta (la pantalla "se limpia" con cada corte final; puede
+ * abarcar varios días o varias veces en un día). Si nunca ha habido corte
+ * final, cubre todo lo vendido.
  */
 export function getCorteHoy(): CorteHoyDto {
   const db = getDb()
+  const sqlite = getSqlite()
   const ahora = new Date()
-  const inicio = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+  const lastFinal = sqlite
+    .prepare("SELECT fecha FROM corte WHERE tipo = 'FINAL' ORDER BY fecha DESC LIMIT 1")
+    .get() as { fecha: number } | undefined
+  // Consulta: estrictamente DESPUÉS del último final (fecha + 1 ms).
+  const inicio = new Date(lastFinal ? lastFinal.fecha + 1 : 0)
+  // Display: si nunca ha habido final, muestra desde la primera venta (o hoy).
+  const inicioDisplay = lastFinal
+    ? inicio
+    : new Date(
+        ((sqlite.prepare('SELECT MIN(fecha) AS f FROM venta').get() as { f: number | null })
+          .f as number | null) ?? startOfDayMs(ahora.getTime())
+      )
 
   const agg = db
     .select({
@@ -89,8 +103,25 @@ export function getCorteHoy(): CorteHoyDto {
     .orderBy(venta.folioLocal)
     .all()
 
+  // Método de pago por nota (query directo — un solo método → su nombre;
+  // varios distintos → 'MIXTO'; sin pagos → no aparece en el mapa).
+  const metodoPorVenta = new Map(
+    (
+      sqlite
+        .prepare(
+          `SELECT p.venta_id AS ventaId,
+                  CASE WHEN COUNT(DISTINCT p.metodo) > 1 THEN 'MIXTO' ELSE MAX(p.metodo) END AS metodo
+             FROM pago p
+             JOIN venta v ON v.id = p.venta_id
+            WHERE v.fecha >= ? AND v.fecha <= ?
+            GROUP BY p.venta_id`
+        )
+        .all(inicio.getTime(), ahora.getTime()) as Array<{ ventaId: string; metodo: string }>
+    ).map((r) => [r.ventaId, r.metodo])
+  )
+
   return {
-    fechaDesde: inicio.toISOString(),
+    fechaDesde: inicioDisplay.toISOString(),
     fechaHasta: ahora.toISOString(),
     foliosVendidos: agg.foliosVendidos,
     foliosCancelados: agg.foliosCancelados,
@@ -110,7 +141,8 @@ export function getCorteHoy(): CorteHoyDto {
       folioLocal: f.folioLocal,
       fecha: (f.fecha as Date).toISOString(),
       total: round2(f.total),
-      cancelada: f.cancelada
+      cancelada: f.cancelada,
+      metodo: metodoPorVenta.get(f.id) ?? null
     })),
     ultimoCorte: getUltimoCorteInfo(),
     pendiente: getRangoPendiente()
@@ -176,11 +208,6 @@ function round2(n: number): number {
 function startOfDayMs(ms: number): number {
   const d = new Date(ms)
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-}
-
-function ymdLocal(ms: number): string {
-  const d = new Date(ms)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function rolOf(userId: string): string | null {
@@ -271,10 +298,10 @@ function aggCaja(desde: number, hasta: number): CajaAggRow {
 
 /**
  * Cortes PARCIAL / CAMBIO_TURNO registrados dentro de un rango de tiempo (el
- * día del corte final). Se usan para imprimir en el ticket del corte final el
- * desglose de los parciales del día, antes del total del día completo.
+ * periodo de un corte final). Se usan para imprimir en el ticket del corte
+ * final el desglose de los parciales, antes del total del periodo completo.
  */
-function parcialesDelDia(desde: number, hasta: number): CorteParcialResumen[] {
+function parcialesDelPeriodo(desde: number, hasta: number): CorteParcialResumen[] {
   const rows = getSqlite()
     .prepare(
       `SELECT tipo, fecha,
@@ -332,9 +359,11 @@ function ventasConTarjeta(folioInicio: number, folioFin: number): VentaTarjetaRe
  * Semántica por tipo:
  *   - PARCIAL / CAMBIO_TURNO: incremental — cubre los folios desde el último
  *     corte (folio_fin + 1) hasta el último folio vendido.
- *   - FINAL: cierre de TODO el día (00:00 → ahora), sin importar cuántos
- *     parciales o cambios de turno haya habido en medio (reporte "Z" diario).
- *     Su ticket cuadra con el "corte en pantalla" del día completo.
+ *   - FINAL: cierre de TODO el PERIODO — desde el último corte FINAL hasta
+ *     ahora, SIN límite de día (puede abarcar varios días, o hacerse varias
+ *     veces en un día), incluyendo lo ya cubierto por parciales o cambios de
+ *     turno intermedios (reporte "Z" del periodo). Su ticket cuadra con el
+ *     "corte en pantalla", que también acumula desde el último final.
  *
  * El siguiente corte siempre arranca después del folio_fin más reciente.
  */
@@ -354,18 +383,22 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
     let fechaDesdeCaja: number
 
     if (tipo === 'FINAL') {
-      // Todo el día: del primer al último folio vendido HOY, y caja desde 00:00.
-      const rango = sqlite
+      // Todo el periodo: folios que ningún corte FINAL ha cubierto, y caja
+      // desde el último final (sin límite de día).
+      const lastFinal = sqlite
         .prepare(
-          'SELECT MIN(folio_local) AS a, MAX(folio_local) AS b FROM venta WHERE fecha >= ? AND fecha <= ?'
+          "SELECT fecha, folio_fin FROM corte WHERE tipo = 'FINAL' ORDER BY fecha DESC LIMIT 1"
         )
-        .get(hoy00, now) as { a: number | null; b: number | null }
-      if (rango.a == null || rango.b == null) {
-        throw new Error('No hay ventas hoy — el corte final cierra el día completo')
+        .get() as { fecha: number; folio_fin: number } | undefined
+      folioInicio = lastFinal ? lastFinal.folio_fin + 1 : 1
+      const maxRow = sqlite
+        .prepare('SELECT MAX(folio_local) AS m FROM venta')
+        .get() as { m: number | null }
+      folioFin = maxRow.m ?? folioInicio - 1
+      if (folioFin < folioInicio) {
+        throw new Error('No hay ventas nuevas desde el último corte final')
       }
-      folioInicio = rango.a
-      folioFin = rango.b
-      fechaDesdeCaja = hoy00
+      fechaDesdeCaja = lastFinal ? lastFinal.fecha + 1 : 0
     } else {
       folioInicio = lastCorte ? lastCorte.folio_fin + 1 : 1
       const maxRow = sqlite
@@ -409,9 +442,9 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
 
     const efectivoEsperado = round2(agg.total_efectivo + cajaAgg.entradas - cajaAgg.salidas)
 
-    // En el corte final, adjunta los parciales del día para el ticket combinado
-    // y el detalle de notas con tarjeta (pago puro o mixto).
-    const parciales = tipo === 'FINAL' ? parcialesDelDia(hoy00, now) : undefined
+    // En el corte final, adjunta los parciales del PERIODO para el ticket
+    // combinado y el detalle de notas con tarjeta (pago puro o mixto).
+    const parciales = tipo === 'FINAL' ? parcialesDelPeriodo(fechaDesdeCaja, now) : undefined
     const tarjetas = tipo === 'FINAL' ? ventasConTarjeta(folioInicio, folioFin) : undefined
 
     return {
@@ -437,177 +470,6 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
       },
       ...(parciales && parciales.length > 0 ? { parcialesDelDia: parciales } : {}),
       ...(tarjetas && tarjetas.length > 0 ? { ventasTarjeta: tarjetas } : {})
-    }
-  })
-
-  return run()
-}
-
-// ── Cortes finales pendientes de días anteriores ─────────────────────────────
-
-/**
- * Días ANTERIORES a hoy con ventas que ningún corte cubre (se olvidó el corte
- * final). Agrupa los folios sin cubrir por día local. Se cierran del más
- * antiguo al más reciente para conservar la cadena de folios.
- */
-export function getCortesPendientesDias(): CortePendienteDia[] {
-  const sqlite = getSqlite()
-  const last = sqlite
-    .prepare('SELECT folio_fin FROM corte ORDER BY fecha DESC LIMIT 1')
-    .get() as { folio_fin: number } | undefined
-  const desdeFolio = last ? last.folio_fin + 1 : 1
-  const hoy00 = startOfDayMs(Date.now())
-
-  const rows = sqlite
-    .prepare(
-      `SELECT folio_local AS folio, fecha, total, cancelada
-         FROM venta
-        WHERE folio_local >= ? AND fecha < ?
-        ORDER BY folio_local`
-    )
-    .all(desdeFolio, hoy00) as Array<{
-    folio: number
-    fecha: number
-    total: number
-    cancelada: number
-  }>
-
-  const porDia = new Map<string, CortePendienteDia>()
-  for (const r of rows) {
-    const key = ymdLocal(r.fecha)
-    let g = porDia.get(key)
-    if (!g) {
-      g = { fecha: key, folioInicio: r.folio, folioFin: r.folio, notas: 0, total: 0 }
-      porDia.set(key, g)
-    }
-    g.folioFin = Math.max(g.folioFin, r.folio)
-    g.folioInicio = Math.min(g.folioInicio, r.folio)
-    g.notas++
-    if (!r.cancelada) g.total += Number(r.total) || 0
-  }
-
-  return [...porDia.values()]
-    .map((g) => ({ ...g, total: round2(g.total) }))
-    .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
-}
-
-/**
- * Registra el corte FINAL de un día anterior que quedó pendiente. Igual que el
- * corte final normal, cubre TODO ese día (del primer al último folio del día,
- * y la caja completa de ese día), aunque haya tenido parciales. El corte queda
- * fechado al final del día (23:59:59) para que la cadena quede consistente.
- *
- * Reglas:
- *  - Lo puede hacer CUALQUIER usuario (igual que el corte normal).
- *  - Sólo procede una vez: al crearse, esos folios quedan cubiertos y el día
- *    deja de estar pendiente (no se puede repetir).
- *  - Debe cerrarse primero el día pendiente más antiguo.
- */
-export function createCorteFinalPendiente(cajeroId: string, fechaYmd: string): CreateCorteResult {
-  const m = (fechaYmd ?? '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  if (!m) throw new Error(`Fecha inválida: ${fechaYmd}`)
-  const dia00 = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
-  const diaFin = dia00 + 24 * 3600 * 1000 - 1
-  const hoy00 = startOfDayMs(Date.now())
-  if (dia00 >= hoy00) {
-    throw new Error('Ese día aún no termina — usa el corte final normal')
-  }
-
-  const sqlite = getSqlite()
-  const run = sqlite.transaction(() => {
-    const lastCorte = sqlite
-      .prepare('SELECT id, fecha, folio_inicio, folio_fin FROM corte ORDER BY fecha DESC LIMIT 1')
-      .get() as LastCorte | undefined
-    const primerSinCubrir = lastCorte ? lastCorte.folio_fin + 1 : 1
-
-    // El día más antiguo con folios sin cubrir debe ser exactamente el pedido.
-    const min = sqlite
-      .prepare('SELECT MIN(fecha) AS f FROM venta WHERE folio_local >= ?')
-      .get(primerSinCubrir) as { f: number | null }
-    if (min.f == null || min.f >= hoy00) {
-      throw new Error('No hay días anteriores pendientes de corte')
-    }
-    const masAntiguo00 = startOfDayMs(min.f)
-    if (masAntiguo00 !== dia00) {
-      throw new Error(
-        `Primero cierra el día pendiente más antiguo (${ymdLocal(masAntiguo00)})`
-      )
-    }
-
-    const sinCubrir = sqlite
-      .prepare('SELECT MAX(folio_local) AS m FROM venta WHERE fecha <= ?')
-      .get(diaFin) as { m: number | null }
-    if ((sinCubrir.m ?? 0) < primerSinCubrir) {
-      throw new Error('Ese día ya está cubierto por un corte')
-    }
-
-    // Cobertura: TODO el día pendiente (no sólo lo que faltaba por cubrir).
-    const rango = sqlite
-      .prepare(
-        'SELECT MIN(folio_local) AS a, MAX(folio_local) AS b FROM venta WHERE fecha >= ? AND fecha <= ?'
-      )
-      .get(dia00, diaFin) as { a: number | null; b: number | null }
-    if (rango.a == null || rango.b == null) {
-      throw new Error('Ese día no tiene ventas')
-    }
-    const folioInicio = rango.a
-    const folioFin = rango.b
-
-    const agg = aggVentasRango(folioInicio, folioFin)
-    const cajaAgg = aggCaja(dia00, diaFin)
-
-    const corteId = randomUUID()
-    sqlite
-      .prepare(
-        `INSERT INTO corte (
-           id, cajero_id, fecha, folio_inicio, folio_fin, tipo,
-           total_efectivo, total_tarjeta,
-           total_transferencia, total_otro,
-           entradas_caja, salidas_caja, cancelaciones
-         ) VALUES (?, ?, ?, ?, ?, 'FINAL', ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        corteId,
-        cajeroId,
-        diaFin,
-        folioInicio,
-        folioFin,
-        agg.total_efectivo,
-        agg.total_tarjeta,
-        agg.total_transferencia,
-        agg.total_otro,
-        cajaAgg.entradas,
-        cajaAgg.salidas,
-        agg.cancelaciones
-      )
-
-    const efectivoEsperado = round2(agg.total_efectivo + cajaAgg.entradas - cajaAgg.salidas)
-    const parciales = parcialesDelDia(dia00, diaFin)
-    const tarjetas = ventasConTarjeta(folioInicio, folioFin)
-
-    return {
-      corteId,
-      folioInicio,
-      folioFin,
-      fecha: new Date(diaFin).toISOString(),
-      tipo: 'FINAL' as CorteTipo,
-      totales: {
-        foliosVendidos: agg.folios_vendidos,
-        foliosCancelados: agg.folios_cancelados,
-        subtotal: round2(agg.subtotal),
-        iva: round2(agg.iva),
-        total: round2(agg.total),
-        efectivo: round2(agg.total_efectivo),
-        tarjeta: round2(agg.total_tarjeta),
-        transferencia: round2(agg.total_transferencia),
-        otro: round2(agg.total_otro),
-        entradasCaja: round2(cajaAgg.entradas),
-        salidasCaja: round2(cajaAgg.salidas),
-        cancelaciones: round2(agg.cancelaciones),
-        efectivoEsperado
-      },
-      ...(parciales.length > 0 ? { parcialesDelDia: parciales } : {}),
-      ...(tarjetas.length > 0 ? { ventasTarjeta: tarjetas } : {})
     }
   })
 
@@ -697,11 +559,16 @@ export function getCorteReimpresion(viewerUserId: string, corteId: string): Cort
   const agg = aggVentasRango(c.folioInicio, c.folioFin)
   const efectivoEsperado = round2(c.efectivo + c.entradasCaja - c.salidasCaja)
 
-  // Reimpresión del corte final: reconstruye también los parciales de ese día
-  // y el detalle de notas con tarjeta.
-  const dia00 = startOfDayMs(c.fecha)
+  // Reimpresión del corte final: reconstruye los parciales de SU periodo
+  // (entre el corte final anterior y éste) y el detalle de notas con tarjeta.
+  const prevFinal =
+    c.tipo === 'FINAL'
+      ? (sqlite
+          .prepare("SELECT MAX(fecha) AS f FROM corte WHERE tipo = 'FINAL' AND fecha < ?")
+          .get(c.fecha) as { f: number | null })
+      : null
   const parciales =
-    c.tipo === 'FINAL' ? parcialesDelDia(dia00, dia00 + 24 * 3600 * 1000 - 1) : undefined
+    c.tipo === 'FINAL' ? parcialesDelPeriodo((prevFinal?.f ?? -1) + 1, c.fecha) : undefined
   const tarjetas = c.tipo === 'FINAL' ? ventasConTarjeta(c.folioInicio, c.folioFin) : undefined
 
   return {

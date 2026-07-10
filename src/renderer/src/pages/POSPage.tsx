@@ -20,6 +20,7 @@ import AjustesModal from '../components/AjustesModal'
 import PreciosModal from '../components/PreciosModal'
 import SalidasModal from '../components/SalidasModal'
 import MovimientosModal from '../components/MovimientosModal'
+import ConsultaFolioModal from '../components/ConsultaFolioModal'
 import SustanciaInfoModal from '../components/SustanciaInfoModal'
 import UsuariosModal from '../components/UsuariosModal'
 import SucursalModal from '../components/SucursalModal'
@@ -70,6 +71,7 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
   const [salidasOpen, setSalidasOpen] = useState(false)
   const [ajustesOpen, setAjustesOpen] = useState(false)
   const [movimientosOpen, setMovimientosOpen] = useState(false)
+  const [consultaFolioOpen, setConsultaFolioOpen] = useState(false)
   const [preciosOpen, setPreciosOpen] = useState(false)
   const [sustanciaOpen, setSustanciaOpen] = useState(false)
   const [usuariosOpen, setUsuariosOpen] = useState(false)
@@ -104,6 +106,7 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
     salidasOpen ||
     ajustesOpen ||
     movimientosOpen ||
+    consultaFolioOpen ||
     preciosOpen ||
     sustanciaOpen ||
     usuariosOpen ||
@@ -220,12 +223,24 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
       setStatus(null)
       return
     }
-    if (confirm('¿Descartar venta en curso?')) {
-      setCart([])
-      setSelectedIdx(-1)
-      setCode('')
-      setStatus(null)
-    }
+    // OJO: nunca usar confirm()/alert() nativos aquí — en Electron dejan la
+    // ventana sin foco de teclado (bug conocido de Chromium) y el POS queda
+    // "bloqueado" (no se puede teclear) hasta cambiar de ventana y regresar.
+    toast.warning('¿Descartar la venta en curso?', {
+      id: 'descartar-venta',
+      description: `${cart.length} producto${cart.length === 1 ? '' : 's'} en el carrito.`,
+      duration: 8000,
+      action: {
+        label: 'Sí, descartar',
+        onClick: () => {
+          setCart([])
+          setSelectedIdx(-1)
+          setCode('')
+          setStatus(null)
+          codeRef.current?.focus()
+        }
+      }
+    })
   }, [anyModalOpen, cart.length])
 
   // ── Logout con confirmación (toast) ──────────────────────────────────────
@@ -720,6 +735,7 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         onSalidas={() => setSalidasOpen(true)}
         onAjustes={() => setAjustesOpen(true)}
         onMovimientos={() => setMovimientosOpen(true)}
+        onConsultarFolio={() => setConsultaFolioOpen(true)}
         onPrecios={() => setPreciosOpen(true)}
         onUsuarios={() => setUsuariosOpen(true)}
         onSucursal={() => setSucursalOpen(true)}
@@ -741,6 +757,13 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         open={movimientosOpen}
         onClose={() => {
           setMovimientosOpen(false)
+          setProcesosOpen(true)
+        }}
+      />
+      <ConsultaFolioModal
+        open={consultaFolioOpen}
+        onClose={() => {
+          setConsultaFolioOpen(false)
           setProcesosOpen(true)
         }}
       />

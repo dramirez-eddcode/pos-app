@@ -507,6 +507,9 @@ export interface CorteFolioRow {
   fecha: string // ISO
   total: number
   cancelada: boolean
+  // Método de pago de la nota: EFECTIVO/TARJETA/TRANSFERENCIA/OTRO, o
+  // 'MIXTO' si combinó varios. null si no tiene pagos registrados.
+  metodo: string | null
 }
 
 export interface UltimoCorteInfo {
@@ -1047,15 +1050,6 @@ export interface UpdateUsuarioInput {
 }
 
 export type CorteTipo = 'PARCIAL' | 'FINAL' | 'CAMBIO_TURNO'
-
-// Día anterior a hoy con ventas sin cubrir por ningún corte (corte final olvidado)
-export interface CortePendienteDia {
-  fecha: string // YYYY-MM-DD (día local)
-  folioInicio: number
-  folioFin: number
-  notas: number // folios del día (incluye canceladas)
-  total: number // venta no cancelada
-}
 
 // Corte FINAL ya registrado (para reimpresión por admin)
 export interface CorteFinalHistItem {

@@ -9,6 +9,7 @@ import {
   PackageCheck,
   PackageMinus,
   PackagePlus,
+  ReceiptText,
   RefreshCcw,
   Tags,
   Upload,
@@ -40,6 +41,7 @@ interface Props {
   onSalidas: () => void
   onAjustes: () => void
   onMovimientos: () => void
+  onConsultarFolio: () => void
   onPrecios: () => void
   onUsuarios: () => void
   onSucursal: () => void
@@ -57,6 +59,7 @@ const SUPERVISOR_PROCESOS = new Set([
   'entrada',
   'recibir-traspaso',
   'movimientos',
+  'consultar-folio',
   'precios',
   'catalogo',
   'importar',
@@ -77,6 +80,7 @@ export default function ProcesosEspecialesModal({
   onSalidas,
   onAjustes,
   onMovimientos,
+  onConsultarFolio,
   onPrecios,
   onUsuarios,
   onSucursal,
@@ -153,6 +157,16 @@ export default function ProcesosEspecialesModal({
       handler: () => {
         onClose()
         onMovimientos()
+      }
+    },
+    {
+      id: 'consultar-folio',
+      label: 'Consultar folio',
+      hint: 'Busca cualquier venta por su número de folio y ve su detalle',
+      icon: <ReceiptText className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onConsultarFolio()
       }
     },
     {
