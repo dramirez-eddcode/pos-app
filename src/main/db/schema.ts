@@ -168,6 +168,9 @@ export const venta = sqliteTable(
     iva: real('iva').notNull(),
     descuento: real('descuento').notNull().default(0),
     total: real('total').notNull(),
+    // Cambio entregado al cliente (el pago EFECTIVO se guarda NETO en `pago`;
+    // recibido real = suma de pagos + cambio).
+    cambio: real('cambio').notNull().default(0),
     motivo: text('motivo').notNull().default('VENTA'),
     cancelada: integer('cancelada', { mode: 'boolean' }).notNull().default(false),
     canceladaPor: text('cancelada_por').references(() => usuario.id),

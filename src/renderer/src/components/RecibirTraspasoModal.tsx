@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent
@@ -83,8 +84,12 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
         r.noEncontrados && r.noEncontrados.length > 0
           ? ` · ${r.noEncontrados.length} sin producto (importa el catálogo)`
           : ''
+      const archivo = r.archivoEliminado
+        ? ' · el archivo se borró del USB'
+        : ' · no se pudo borrar el archivo del USB (elimínalo a mano)'
       toast.success(`Traspaso recibido · ${r.unidades?.toLocaleString('es-MX')} unidades`, {
-        description: `${r.lotesCreados} lotes creados${extra}`
+        description: `${r.lotesCreados} lotes creados${extra}${archivo}`,
+        duration: 8000
       })
       onSaved?.()
       onClose()
@@ -100,7 +105,38 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
   const necesitaForzar = !!preview && !preview.yaAplicado && !preview.sucursalCoincide
   const bloqueado = !!preview && (preview.yaAplicado || (necesitaForzar && !forzar))
 
-  const numItems = preview?.items?.length ?? 0
+  // La tabla agrupa POR PRODUCTO: el archivo trae una línea por lote (FEFO) y
+  // ver el mismo código repetido confundía al validar. La cantidad se suma;
+  // con varios lotes la caducidad dice "N lotes" (tooltip con las fechas).
+  // Al aplicar se usan las líneas originales del archivo — esto es sólo vista.
+  interface GrupoRecibe {
+    codigo: string
+    nombre: string
+    cantidad: number
+    caducidades: string[]
+  }
+  const grupos = useMemo<GrupoRecibe[]>(() => {
+    const map = new Map<string, GrupoRecibe>()
+    for (const it of preview?.items ?? []) {
+      const codigo = String(it.codigo)
+      const cad = it.caducidad || '—'
+      const g = map.get(codigo)
+      if (g) {
+        g.cantidad += Number(it.cantidad) || 0
+        if (!g.caducidades.includes(cad)) g.caducidades.push(cad)
+      } else {
+        map.set(codigo, {
+          codigo,
+          nombre: it.nombre,
+          cantidad: Number(it.cantidad) || 0,
+          caducidades: [cad]
+        })
+      }
+    }
+    return [...map.values()]
+  }, [preview])
+
+  const numItems = grupos.length
 
   // ↑/↓ con la tabla enfocada recorren y sombrean los renglones del traspaso
   // (para validar contra lo físico antes de aplicar).
@@ -165,7 +201,7 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
               <Row k="Origen" v={preview.bodegaOrigen} />
               <Row k="Destino" v={preview.sucursalNombre} />
               <Row k="Generado" v={new Date(preview.generadoEn).toLocaleString('es-MX')} />
-              <Row k="Contenido" v={`${preview.lineas} líneas · ${preview.unidades.toLocaleString('es-MX')} unidades`} />
+              <Row k="Contenido" v={`${grupos.length} producto${grupos.length === 1 ? '' : 's'} · ${preview.unidades.toLocaleString('es-MX')} unidades`} />
             </div>
           )}
 
@@ -196,9 +232,9 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
                     </tr>
                   </thead>
                   <tbody ref={tbodyRef}>
-                    {preview.items.map((it, i) => (
+                    {grupos.map((it, i) => (
                       <tr
-                        key={i}
+                        key={it.codigo}
                         onClick={() => {
                           setSelRow(i)
                           tablaRef.current?.focus()
@@ -211,9 +247,18 @@ export default function RecibirTraspasoModal({ open, onClose, userId, onSaved }:
                         <td className="px-2 py-1 font-mono">{it.codigo}</td>
                         <td className="px-2 py-1">{it.nombre}</td>
                         <td className="px-2 py-1 text-right font-mono font-semibold">
-                          {Number(it.cantidad).toLocaleString('es-MX')}
+                          {it.cantidad.toLocaleString('es-MX')}
                         </td>
-                        <td className="px-2 py-1 text-center font-mono">{it.caducidad || '—'}</td>
+                        <td
+                          className="px-2 py-1 text-center font-mono"
+                          title={
+                            it.caducidades.length > 1 ? it.caducidades.join(' · ') : undefined
+                          }
+                        >
+                          {it.caducidades.length === 1
+                            ? it.caducidades[0]
+                            : `${it.caducidades.length} lotes`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

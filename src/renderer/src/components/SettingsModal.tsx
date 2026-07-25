@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, Database } from 'lucide-react'
+import { AlertTriangle, Database, HardDriveDownload } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import RespaldoModal from './RespaldoModal'
@@ -20,6 +20,8 @@ export default function SettingsModal({ open, onClose }: Props) {
   const { user } = useSession()
   const [printers, setPrinters] = useState<string[]>([])
   const [selected, setSelected] = useState<string>('')
+  const [docPrinter, setDocPrinter] = useState<string>('')
+  const [docDuplex, setDocDuplex] = useState<boolean>(false)
   const [drawerOnCash, setDrawerOnCash] = useState<boolean>(true)
   const [showTime, setShowTime] = useState<boolean>(false)
   const [receiptFooter, setReceiptFooter] = useState<string>('')
@@ -28,15 +30,20 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [mostrarSucursal, setMostrarSucursal] = useState<boolean>(true)
   const [mostrarDireccion, setMostrarDireccion] = useState<boolean>(true)
   const [mostrarFolio, setMostrarFolio] = useState<boolean>(true)
+  const [mostrarPuntoVenta, setMostrarPuntoVenta] = useState<boolean>(true)
+  const [esMatriz, setEsMatriz] = useState<boolean>(false)
   const [busy, setBusy] = useState<null | 'test' | 'drawer' | 'save'>(null)
+  const [actualizando, setActualizando] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
   // La zona peligrosa (reset de modo) es exclusiva del SUPERUSUARIO; el backend
   // (instalacion.resetInstalacion) lo exige también.
   const userIsSuper = isSuperusuario(user)
-  // Qué se imprime en el ticket (hora, encabezado, pie): sólo SUPERUSUARIO y
-  // ADMINISTRADOR lo cambian. Cajero/supervisor lo ven deshabilitado — la
-  // impresora y el cajón sí los pueden ajustar (son de hardware, por equipo).
+  // Qué se imprime en el ticket (hora, encabezado, pie), la apertura
+  // automática del cajón y los botones de prueba (ticket de prueba / abrir
+  // cajón): sólo SUPERUSUARIO y ADMINISTRADOR. Cajero/supervisor lo ven
+  // deshabilitado — la selección de impresora sí la pueden ajustar (es de
+  // hardware, por equipo).
   const puedeConfigurarTicket = isFullAdmin(user)
 
   const loadPrinters = useCallback(async () => {
@@ -52,6 +59,8 @@ export default function SettingsModal({ open, onClose }: Props) {
     if (!open) return
     loadPrinters()
     setSelected(settings?.printerName ?? '')
+    setDocPrinter(settings?.docPrinterName ?? '')
+    setDocDuplex(settings?.docPrinterDuplex ?? false)
     setDrawerOnCash(settings?.openDrawerOnCash ?? true)
     setShowTime(settings?.showTimeOnReceipt ?? false)
     setReceiptFooter(settings?.receiptFooter ?? '')
@@ -60,6 +69,11 @@ export default function SettingsModal({ open, onClose }: Props) {
     setMostrarSucursal(settings?.ticketMostrarSucursal ?? true)
     setMostrarDireccion(settings?.ticketMostrarDireccion ?? true)
     setMostrarFolio(settings?.ticketMostrarFolio ?? true)
+    setMostrarPuntoVenta(settings?.matrizMostrarPuntoVenta ?? true)
+    window.api.instalacion
+      .get()
+      .then((i) => setEsMatriz(i.configured === true && i.tipo === 'MATRIZ'))
+      .catch(() => setEsMatriz(false))
   }, [open, loadPrinters, settings])
 
   const printTest = async () => {
@@ -96,11 +110,55 @@ export default function SettingsModal({ open, onClose }: Props) {
     else toast.error('No se pudo abrir el cajón', { description: (r.stderr || r.stdout).trim() })
   }
 
+  // Actualizar el sistema desde USB (sólo admin): elige el instalador nuevo,
+  // se respalda la base automáticamente, se cierra la app y corre el setup.
+  // Los datos se conservan (viven fuera de la carpeta de instalación).
+  const actualizarDesdeUsb = async () => {
+    if (!user || actualizando) return
+    setActualizando(true)
+    try {
+      const r = await window.api.actualizacion.pick(user.id)
+      if (!r.ok) {
+        if (!r.cancelled) toast.error('Instalador no válido', { description: r.error })
+        return
+      }
+      const p = r.preview!
+      const descripcion =
+        p.comparacion === 1
+          ? `v${p.versionActual} → v${p.versionNueva}. Se hará un respaldo automático, la app se cerrará y abrirá el instalador. Tus datos se conservan.`
+          : p.comparacion === 0
+            ? `El instalador es la MISMA versión que ya tienes (v${p.versionActual}). ¿Reinstalar de todas formas?`
+            : `¡Atención! El instalador (v${p.versionNueva}) es MÁS VIEJO que la versión instalada (v${p.versionActual}).`
+      toast.warning(`¿Actualizar el sistema con "${p.fileName}"?`, {
+        id: 'actualizar-confirm',
+        description: descripcion,
+        duration: 15000,
+        action: {
+          label: 'Sí, actualizar',
+          onClick: async () => {
+            const res = await window.api.actualizacion.aplicar(user.id, p.filePath)
+            if (!res.ok) {
+              toast.error('No se pudo iniciar la actualización', { description: res.error })
+            } else {
+              toast.success('Abriendo el instalador…', {
+                description: 'La app se cerrará. Sigue los pasos del instalador y vuelve a abrir el sistema.'
+              })
+            }
+          }
+        }
+      })
+    } finally {
+      setActualizando(false)
+    }
+  }
+
   const save = async () => {
     setBusy('save')
     try {
       await update({
         printerName: selected || null,
+        docPrinterName: docPrinter || null,
+        docPrinterDuplex: docDuplex,
         openDrawerOnCash: drawerOnCash,
         showTimeOnReceipt: showTime,
         receiptFooter: receiptFooter.trim() || null,
@@ -108,7 +166,8 @@ export default function SettingsModal({ open, onClose }: Props) {
         ticketMostrarRfc: mostrarRfc,
         ticketMostrarSucursal: mostrarSucursal,
         ticketMostrarDireccion: mostrarDireccion,
-        ticketMostrarFolio: mostrarFolio
+        ticketMostrarFolio: mostrarFolio,
+        matrizMostrarPuntoVenta: mostrarPuntoVenta
       })
       toast.success('Configuración guardada')
       onClose()
@@ -157,14 +216,54 @@ export default function SettingsModal({ open, onClose }: Props) {
           )}
         </section>
 
+        {/* Impresora de DOCUMENTOS (carta): pedidos, resúmenes, historial.
+            La térmica de arriba queda EXCLUSIVA de tickets y cortes. */}
+        <section className="space-y-2 pt-3 border-t border-border">
+          <label className="block font-medium">Impresora de documentos (tamaño carta)</label>
+          <select
+            className="w-full border border-border rounded px-2 py-1.5 bg-background"
+            value={docPrinter}
+            onChange={(e) => setDocPrinter(e.target.value)}
+          >
+            <option value="">— Elegir al imprimir (diálogo de Windows) —</option>
+            {printers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Se usa para las hojas de <strong>pedidos de surtido</strong>, el{' '}
+            <strong>resumen de surtido</strong> y los documentos del{' '}
+            <strong>historial de movimientos</strong>. La impresora de tickets de arriba sólo
+            imprime tickets, cortes y cancelaciones.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              id="doc-duplex"
+              type="checkbox"
+              checked={docDuplex}
+              disabled={!puedeConfigurarTicket}
+              onChange={(e) => setDocDuplex(e.target.checked)}
+            />
+            <label htmlFor="doc-duplex" className={puedeConfigurarTicket ? '' : 'opacity-60'}>
+              Imprimir documentos a <strong>doble cara</strong> (si la impresora lo soporta) —
+              ahorra papel
+            </label>
+          </div>
+        </section>
+
         <section className="flex items-center gap-2">
           <input
             id="drawer"
             type="checkbox"
             checked={drawerOnCash}
+            disabled={!puedeConfigurarTicket}
             onChange={(e) => setDrawerOnCash(e.target.checked)}
           />
-          <label htmlFor="drawer">Abrir cajón automáticamente al cobrar en efectivo</label>
+          <label htmlFor="drawer" className={puedeConfigurarTicket ? '' : 'opacity-60'}>
+            Abrir cajón automáticamente al cobrar en efectivo
+          </label>
         </section>
 
         <section className="flex items-center gap-2">
@@ -264,36 +363,57 @@ export default function SettingsModal({ open, onClose }: Props) {
           </p>
         </section>
 
-        <section className="flex gap-2 pt-2 border-t border-border">
-          <button
-            type="button"
-            onClick={printTest}
-            disabled={!selected || busy !== null}
-            className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
-          >
-            {busy === 'test' ? (
-              <>
-                <Spinner size={14} /> Enviando…
-              </>
-            ) : (
-              'Ticket de prueba'
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={openDrawer}
-            disabled={!selected || busy !== null}
-            className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
-          >
-            {busy === 'drawer' ? (
-              <>
-                <Spinner size={14} /> Enviando…
-              </>
-            ) : (
-              'Abrir cajón'
-            )}
-          </button>
-        </section>
+        {puedeConfigurarTicket && (
+          <section className="flex gap-2 pt-2 border-t border-border">
+            <button
+              type="button"
+              onClick={printTest}
+              disabled={!selected || busy !== null}
+              className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              {busy === 'test' ? (
+                <>
+                  <Spinner size={14} /> Enviando…
+                </>
+              ) : (
+                'Ticket de prueba'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={openDrawer}
+              disabled={!selected || busy !== null}
+              className="flex-1 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50"
+            >
+              {busy === 'drawer' ? (
+                <>
+                  <Spinner size={14} /> Enviando…
+                </>
+              ) : (
+                'Abrir cajón'
+              )}
+            </button>
+          </section>
+        )}
+
+        {/* Panel de matriz — sólo admin completo en instalación MATRIZ ──── */}
+        {esMatriz && puedeConfigurarTicket && (
+          <section className="pt-3 border-t border-border space-y-1.5">
+            <div className="font-medium text-xs">Panel de matriz</div>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={mostrarPuntoVenta}
+                onChange={(e) => setMostrarPuntoVenta(e.target.checked)}
+              />
+              Mostrar "Punto de venta" (vender en este equipo)
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Desmárcalo para ocultar la tarjeta de punto de venta del panel de gestión y que
+              este equipo no se use para vender.
+            </p>
+          </section>
+        )}
 
         {/* Respaldo / restauración ──────────────────────────────────────── */}
         <section className="pt-3 border-t border-border space-y-2">
@@ -312,6 +432,28 @@ export default function SettingsModal({ open, onClose }: Props) {
             Respaldo y restauración…
           </button>
         </section>
+
+        {/* Actualización del sistema desde USB — sólo admin completo ───── */}
+        {puedeConfigurarTicket && (
+          <section className="pt-3 border-t border-border space-y-2">
+            <div className="font-medium text-xs">Actualización del sistema</div>
+            <div className="text-[11px] text-muted-foreground">
+              Selecciona el instalador nuevo (
+              <span className="font-mono">farmacias-ms-pos-x.y.z-setup.exe</span>) desde la USB.
+              Se respalda la base automáticamente y tus datos se conservan — no hace falta
+              desinstalar.
+            </div>
+            <button
+              type="button"
+              onClick={actualizarDesdeUsb}
+              disabled={busy !== null || actualizando}
+              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded cursor-pointer hover:bg-muted disabled:opacity-50 text-sm"
+            >
+              {actualizando ? <Spinner size={14} /> : <HardDriveDownload className="size-3.5" />}
+              Actualizar desde USB…
+            </button>
+          </section>
+        )}
 
         {/* Zona peligrosa: reset de modo — sólo SUPERUSUARIO ───────────── */}
         {userIsSuper && (

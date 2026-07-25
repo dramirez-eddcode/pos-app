@@ -44,7 +44,19 @@ export interface PrintResultLike {
 }
 
 export interface AppSettings {
+  /** Impresora TÉRMICA (ESC/POS): SÓLO tickets de venta, cortes y cancelaciones. */
   printerName: string | null
+  /**
+   * Impresora de DOCUMENTOS (tamaño carta): hojas de pedidos/prellenados,
+   * resumen de surtido y documentos del historial. null = preguntar con el
+   * diálogo de Windows en cada impresión.
+   */
+  docPrinterName: string | null
+  /**
+   * Imprimir documentos a DOBLE CARA (si la impresora lo soporta) para
+   * ahorrar papel. Sólo lo cambian SUPERUSUARIO/ADMINISTRADOR.
+   */
+  docPrinterDuplex: boolean
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
   receiptFooter: string | null
@@ -56,4 +68,8 @@ export interface AppSettings {
   ticketMostrarDireccion: boolean
   // Imprimir la línea "Folio" en el ticket de venta. Default: sí.
   ticketMostrarFolio: boolean
+  // Mostrar la tarjeta "Punto de venta" en el panel de matriz (equipo único
+  // que gestiona y vende). Ocultarla evita vender desde este equipo.
+  // Default: sí. Sólo la cambian SUPERUSUARIO/ADMINISTRADOR.
+  matrizMostrarPuntoVenta: boolean
 }

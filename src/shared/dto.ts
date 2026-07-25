@@ -442,6 +442,152 @@ export interface CartItemDto {
   total: number
 }
 
+// ── Resumen de surtido a sucursales (admin) ────────────────────────────────
+// Consolidado de TODOS los traspasos a sucursal de un rango de fechas: cada
+// producto UNA sola vez con el total enviado y la existencia que queda. Base
+// para armar la lista de faltantes / el pedido a proveedor de la semana.
+export interface ResumenSurtidoItem {
+  codigo: string
+  nombre: string
+  enviado: number
+  existencia: number
+  /** A cuántos destinos distintos se envió este producto en el rango. */
+  destinos: number
+}
+
+export interface ResumenSurtidoTraspaso {
+  numero: number
+  fecha: string // ISO
+  destino: string
+  unidades: number
+}
+
+export interface ResumenSurtidoDto {
+  desde: string // 'AAAA-MM-DD'
+  hasta: string // 'AAAA-MM-DD'
+  traspasos: ResumenSurtidoTraspaso[]
+  items: ResumenSurtidoItem[]
+  totalUnidades: number
+}
+
+// ── Actualización del sistema desde USB (admin) ────────────────────────────
+export interface ActualizacionPreview {
+  filePath: string
+  fileName: string
+  versionNueva: string
+  versionActual: string
+  /** 1 = más nueva, 0 = la misma, -1 = más vieja que la instalada. */
+  comparacion: 1 | 0 | -1
+}
+
+export interface PickActualizacionResult {
+  ok: boolean
+  cancelled?: boolean
+  error?: string
+  preview?: ActualizacionPreview
+}
+
+export interface AplicarActualizacionResult {
+  ok: boolean
+  error?: string
+  backupPath?: string
+}
+
+// ── Pedidos de surtido a sucursal (prellenado por cajeras, aprobado en matriz) ─
+export type PedidoEstado = 'PENDIENTE' | 'APROBADO' | 'RECHAZADO'
+
+/**
+ * SUCURSAL: surtir a otra farmacia (al aprobar genera el traspaso real).
+ * PROVEEDOR: lista de faltantes para pedirle al proveedor (al aprobar sólo se
+ * marca; la mercancía entra después con una Entrada de mercancía normal).
+ */
+export type PedidoTipo = 'SUCURSAL' | 'PROVEEDOR'
+
+export interface PedidoLinea {
+  codigo: string
+  nombre: string
+  cantidad: number
+}
+
+export interface PedidoTraspasoDto {
+  id: string
+  numero: number // folio corto para mostrar: P-<numero>
+  tipo: PedidoTipo
+  estado: PedidoEstado
+  sucursalId: string | null
+  sucursalCodigo: string
+  sucursalNombre: string
+  /** Bodega elegida al capturar (pedidos SUCURSAL en matriz multi-bodega). */
+  bodegaId: string | null
+  bodegaNombre: string | null
+  creadoNombre: string | null
+  fechaCreado: string // ISO
+  revisadoNombre: string | null
+  fechaRevision: string | null // ISO
+  traspasoFolio: string | null // UUID del traspaso generado al aprobar
+  notas: string | null
+  items: PedidoLinea[]
+}
+
+export interface CreatePedidoInput {
+  /** Sucursal del catálogo de la matriz… */
+  sucursalId?: string | null
+  /** …o destino EXTERNO escrito a mano (clientes fuera del catálogo)… */
+  destinoNombre?: string | null
+  /** …o PROVEEDOR del catálogo (pedido de compra)… */
+  proveedorId?: string | null
+  /** …o proveedor escrito a mano. */
+  proveedorNombre?: string | null
+  /**
+   * Bodega que surtirá (pedidos SUCURSAL/externo). Con UNA bodega activa el
+   * backend la toma sola; con varias es obligatoria — así el pedido no sale
+   * de una bodega equivocada.
+   */
+  bodegaId?: string | null
+  items: PedidoLinea[]
+  notas?: string | null
+}
+
+/** Proveedor mínimo para el selector del pedido (cualquier rol logueado). */
+export interface ProveedorBasicoDto {
+  id: string
+  nombre: string
+}
+
+/** Sucursal mínima para el selector de destino (sin datos sensibles; cualquier rol). */
+export interface SucursalBasicaDto {
+  id: string
+  codigo: string
+  nombre: string
+}
+
+// ── Fusión de códigos duplicados (cero inicial) ────────────────────────────
+// El legacy pierde los ceros iniciales del EAN, generando pares como
+// "0780083140588" / "780083140588" del mismo producto. La fusión conserva el
+// código CORTO (sin ceros — como lo maneja el negocio; la búsqueda tolera el
+// cero al escanear), suma las existencias moviendo los lotes (sin alterar
+// cantidades), deja el precio MÁS ALTO y elimina el duplicado.
+export interface DedupParItem {
+  codigoQueda: string
+  codigoElimina: string
+  nombre: string
+  existenciaQueda: number
+  existenciaElimina: number
+  precioQueda: number
+  precioElimina: number
+  /** Precio que quedará tras fusionar (el del producto actualizado más recientemente). */
+  precioFinal: number
+}
+
+export interface DedupPreviewResult {
+  pares: DedupParItem[]
+}
+
+export interface DedupApplyResult {
+  fusionados: number
+  unidadesMovidas: number
+}
+
 export interface CreateVentaInput {
   cajeroId: string
   items: CartItemDto[]
@@ -482,6 +628,10 @@ export interface VentaDetailDto {
   iva: number
   descuento: number
   total: number
+  // Cambio entregado al cliente y total recibido (pagos + cambio). El pago
+  // EFECTIVO en `pagos` va NETO (lo que quedó en caja).
+  cambio: number
+  recibido: number
   motivo: string
   cancelada: boolean
   canceladaEn: string | null
@@ -526,6 +676,17 @@ export interface RangoPendienteCorte {
   folioInicio: number
   folioFin: number
   cantidad: number
+}
+
+// Listado de ventas de un día arbitrario (SUPERUSUARIO/ADMINISTRADOR: consulta
+// con filtro de calendario, sin límite al periodo del corte actual).
+export interface VentasDiaDto {
+  dia: string // 'AAAA-MM-DD' consultado (día local)
+  ventas: CorteFolioRow[]
+  foliosVendidos: number
+  foliosCancelados: number
+  totalVendido: number
+  montoCancelado: number
 }
 
 export interface CorteHoyDto {
@@ -812,6 +973,8 @@ export interface AplicarTraspasoResult {
   lotesCreados?: number
   unidades?: number
   noEncontrados?: string[]
+  /** true si el archivo .traspaso se borró del origen (USB) tras aplicarse. */
+  archivoEliminado?: boolean
 }
 
 // ── Historial unificado de movimientos (entradas / salidas / traspasos) ─────
@@ -1065,6 +1228,8 @@ export interface CorteFinalHistItem {
 // el renderer desde la sesión, igual que al imprimir el corte original)
 export interface CorteReimpresionDto {
   fecha: string // ISO
+  // Sólo cortes FINAL: inicio del periodo (fecha de la primera venta cubierta).
+  fechaInicio?: string // ISO
   tipo: CorteTipo
   cajero: string
   folioInicio: number
@@ -1114,6 +1279,8 @@ export interface CreateCorteResult {
   folioInicio: number
   folioFin: number
   fecha: string // ISO
+  // Sólo cortes FINAL: inicio del periodo (fecha de la primera venta cubierta).
+  fechaInicio?: string // ISO
   tipo: CorteTipo
   totales: CorteTotales
   // Sólo cortes FINAL: parciales / cambios de turno del mismo día (para el ticket).

@@ -14,9 +14,11 @@ import type {
   CancelVentaResult,
   CreateVentaInput,
   CreateVentaResult,
-  VentaDetailDto
+  VentaDetailDto,
+  VentasDiaDto
 } from '@shared/dto'
 import type { MetodoPago } from '@shared/types'
+import { requireAdmin } from './permisos'
 
 /**
  * Crea una venta atómicamente: cabecera + items + pagos + descuento FEFO de
@@ -31,6 +33,16 @@ export function createVenta(input: CreateVentaInput): CreateVentaResult {
   const totalVenta = input.items.reduce((s, i) => s + i.total, 0)
   if (totalPagos < totalVenta - 0.01) {
     throw new Error(`Los pagos (${totalPagos.toFixed(2)}) no cubren el total (${totalVenta.toFixed(2)})`)
+  }
+  // Tarjeta/transferencia no dan cambio: su suma no puede exceder el total.
+  // Defensa contra errores de captura (p. ej. 3360 en una nota de 36).
+  const noEfectivo = input.pagos
+    .filter((p) => p.metodo !== 'EFECTIVO')
+    .reduce((s, p) => s + p.monto, 0)
+  if (noEfectivo > totalVenta + 0.01) {
+    throw new Error(
+      `El pago con tarjeta/transferencia (${noEfectivo.toFixed(2)}) no puede exceder el total (${totalVenta.toFixed(2)})`
+    )
   }
 
   const ventaId = randomUUID()
@@ -58,6 +70,7 @@ export function createVenta(input: CreateVentaInput): CreateVentaResult {
         iva: +iva.toFixed(2),
         descuento: 0,
         total,
+        cambio: +Math.max(0, Number(input.cambio) || 0).toFixed(2),
         motivo: input.motivo ?? 'VENTA',
         cancelada: false
       })
@@ -150,7 +163,9 @@ export function createVenta(input: CreateVentaInput): CreateVentaResult {
  *  1. Marca `venta.cancelada = true` (+ canceladaPor, canceladaEn)
  *  2. Para cada mov_stock tipo=VENTA de esta venta, crea el mov inverso
  *     (CANCELACION_VENTA) y suma la cantidad al `caducidad_lote.saldo`.
- * No toca los pagos — eso es tema contable (cambio físico de dinero).
+ * No toca los pagos — eso es tema contable (cambio físico de dinero); las
+ * ventas con tarjeta también se pueden cancelar (la devolución del cargo se
+ * gestiona fuera del POS, con la terminal).
  */
 export function cancelVenta(
   ventaId: string,
@@ -213,6 +228,72 @@ export function cancelVenta(
 }
 
 /**
+ * Ventas de un día arbitrario (día local completo, 00:00–23:59). Sólo
+ * SUPERUSUARIO/ADMINISTRADOR: es la consulta histórica con calendario, no
+ * está limitada al periodo del corte en curso.
+ */
+export function getVentasDia(viewerUserId: string, dia: string): VentasDiaDto {
+  requireAdmin(viewerUserId)
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dia)
+  if (!m) throw new Error('Fecha inválida (se espera AAAA-MM-DD)')
+  const desde = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+  const hasta = desde + 24 * 60 * 60 * 1000 - 1
+
+  const rows = getSqlite()
+    .prepare(
+      `SELECT v.id,
+              v.folio_local AS folioLocal,
+              v.fecha,
+              v.total,
+              v.cancelada,
+              (SELECT CASE WHEN COUNT(DISTINCT p.metodo) > 1 THEN 'MIXTO' ELSE MAX(p.metodo) END
+                 FROM pago p WHERE p.venta_id = v.id) AS metodo
+         FROM venta v
+        WHERE v.fecha >= ? AND v.fecha <= ?
+        ORDER BY v.folio_local ASC`
+    )
+    .all(desde, hasta) as Array<{
+    id: string
+    folioLocal: number
+    fecha: number
+    total: number
+    cancelada: number
+    metodo: string | null
+  }>
+
+  const round2 = (n: number): number => Math.round(n * 100) / 100
+  let totalVendido = 0
+  let montoCancelado = 0
+  let vendidos = 0
+  let cancelados = 0
+  for (const r of rows) {
+    if (r.cancelada) {
+      cancelados++
+      montoCancelado += r.total
+    } else {
+      vendidos++
+      totalVendido += r.total
+    }
+  }
+
+  return {
+    dia,
+    ventas: rows.map((r) => ({
+      id: r.id,
+      folioLocal: r.folioLocal,
+      fecha: new Date(r.fecha).toISOString(),
+      total: round2(r.total),
+      cancelada: !!r.cancelada,
+      metodo: r.metodo
+    })),
+    foliosVendidos: vendidos,
+    foliosCancelados: cancelados,
+    totalVendido: round2(totalVendido),
+    montoCancelado: round2(montoCancelado)
+  }
+}
+
+/**
  * Suma de ventas no canceladas de antier, ayer y hoy (cada ventana de 24h
  * delimitada por medianoche local). Usado por el atajo "Pausa" del POS para
  * mostrar el indicador sutil en la esquina inferior derecha.
@@ -266,6 +347,7 @@ export function getVentaByFolio(folioLocal: number): VentaDetailDto | null {
       iva: venta.iva,
       descuento: venta.descuento,
       total: venta.total,
+      cambio: venta.cambio,
       motivo: venta.motivo,
       cancelada: venta.cancelada,
       canceladaEn: venta.canceladaEn,
@@ -310,6 +392,8 @@ export function getVentaByFolio(folioLocal: number): VentaDetailDto | null {
     iva: v.iva,
     descuento: v.descuento,
     total: v.total,
+    cambio: v.cambio,
+    recibido: +(pagos.reduce((s, p) => s + p.monto, 0) + v.cambio).toFixed(2),
     motivo: v.motivo,
     cancelada: v.cancelada,
     canceladaEn: v.canceladaEn ? (v.canceladaEn as Date).toISOString() : null,

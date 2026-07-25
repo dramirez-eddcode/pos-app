@@ -105,7 +105,7 @@ export function createProveedor(
     .run(
       id,
       nombre,
-      nullableTrim(input.rfc),
+      nullableTrim(input.rfc)?.toUpperCase() ?? null,
       nullableTrim(input.telefono),
       nullableTrim(input.email),
       nullableTrim(input.contacto),
@@ -145,7 +145,7 @@ export function updateProveedor(
     )
     .run(
       nombre,
-      nullableTrim(input.rfc),
+      nullableTrim(input.rfc)?.toUpperCase() ?? null,
       nullableTrim(input.telefono),
       nullableTrim(input.email),
       nullableTrim(input.contacto),

@@ -10,7 +10,12 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export interface AppSettings {
+  /** Impresora TÉRMICA (ESC/POS): sólo tickets, cortes y cancelaciones. */
   printerName: string | null
+  /** Impresora de DOCUMENTOS carta (pedidos, resúmenes, historial). */
+  docPrinterName: string | null
+  /** Documentos a doble cara (si la impresora lo soporta). */
+  docPrinterDuplex: boolean
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
   receiptFooter: string | null
@@ -22,10 +27,14 @@ export interface AppSettings {
   ticketMostrarDireccion: boolean
   // Imprimir la línea "Folio" en el ticket de venta. Default: sí.
   ticketMostrarFolio: boolean
+  // Mostrar la tarjeta "Punto de venta" en el panel de matriz. Default: sí.
+  matrizMostrarPuntoVenta: boolean
 }
 
 const DEFAULTS: AppSettings = {
   printerName: null,
+  docPrinterName: null,
+  docPrinterDuplex: false,
   openDrawerOnCash: true,
   showTimeOnReceipt: false,
   receiptFooter: null,
@@ -33,7 +42,8 @@ const DEFAULTS: AppSettings = {
   ticketMostrarRfc: true,
   ticketMostrarSucursal: true,
   ticketMostrarDireccion: true,
-  ticketMostrarFolio: true
+  ticketMostrarFolio: true,
+  matrizMostrarPuntoVenta: true
 }
 
 function settingsPath(): string {

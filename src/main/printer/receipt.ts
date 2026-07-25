@@ -253,9 +253,16 @@ export function buildCorteReceiptBytes(data: CorteReceiptData): Uint8Array {
   p.bold(true).line(`*** ${TIPO_TITULO[data.tipo]} ***`).bold(false)
   p.feed(1)
 
-  // Datos generales
+  // Datos generales. En el corte FINAL se imprimen inicio y fin del periodo:
+  // pueden ser días distintos (p. ej. corte pendiente por un corte de luz).
   p.align('left')
-  p.line(`Fecha        : ${formatFecha(data.fecha)} ${formatHora(data.fecha)}`)
+  if (data.fechaInicio) {
+    const inicio = new Date(data.fechaInicio)
+    p.line(`Inicio       : ${formatFecha(inicio)} ${formatHora(inicio)}`)
+    p.line(`Corte        : ${formatFecha(data.fecha)} ${formatHora(data.fecha)}`)
+  } else {
+    p.line(`Fecha        : ${formatFecha(data.fecha)} ${formatHora(data.fecha)}`)
+  }
   p.line(`Cajero       : ${data.cajero}`)
   p.line(`Folios       : ${data.folioInicio} - ${data.folioFin}`)
   p.line(`Notas vend.  : ${data.foliosVendidos}`)

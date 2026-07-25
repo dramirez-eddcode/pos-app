@@ -80,6 +80,10 @@ export interface VentaTarjetaResumen {
 export interface CorteReceiptData {
   empresa: ReceiptEmpresa
   fecha: string // ISO
+  // Sólo corte FINAL: inicio del periodo (fecha de la primera venta cubierta).
+  // Permite ver que un corte abarca ventas de días anteriores (p. ej. si se
+  // fue la luz y el corte quedó pendiente hasta el día siguiente).
+  fechaInicio?: string // ISO
   tipo: CorteReceiptTipo
   cajero: string
   folioInicio: number

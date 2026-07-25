@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Eye, Printer } from 'lucide-react'
+import { CalendarDays, Eye, Printer, X } from 'lucide-react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
 import InfoTooltip from './InfoTooltip'
+import VentasDiaModal from './VentasDiaModal'
 import { folio as fmtFolio, money } from '../lib/format'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
@@ -17,6 +18,7 @@ import type {
   MetodoPagoTotal,
   VentaDetailDto
 } from '@shared/dto'
+import type { ReceiptData } from '@shared/receipt'
 
 interface Props {
   open: boolean
@@ -53,6 +55,14 @@ const TIPO_LABEL: Record<CorteTipo, string> = {
   CAMBIO_TURNO: 'Cambio de turno'
 }
 
+/** Día local 'AAAA-MM-DD' de una fecha ISO (para los filtros desde/hasta). */
+function ymdLocal(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`
+}
+
 const CORTE_TIPO_LABEL: Record<CorteTipo, string> = {
   PARCIAL: 'Parcial',
   FINAL: 'Final',
@@ -72,12 +82,21 @@ export default function CorteModal({ open, onClose }: Props) {
   const [cerrando, setCerrando] = useState<CorteTipo | null>(null)
   const [finales, setFinales] = useState<CorteFinalHistItem[]>([])
   const [reimprimiendo, setReimprimiendo] = useState<string | null>(null)
+  // Filtro desde/hasta de la lista de cortes finales ('' = sin filtro).
+  const [finalesDesde, setFinalesDesde] = useState('')
+  const [finalesHasta, setFinalesHasta] = useState('')
+  // Progreso de "imprimir todos" (null = no está corriendo).
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
   // Corte final abierto "en pantalla" (mismos datos que su ticket, sin imprimir)
   const [verCorte, setVerCorte] = useState<{
     item: CorteFinalHistItem
     d: CorteReimpresionDto
   } | null>(null)
   const [cargandoVer, setCargandoVer] = useState<string | null>(null)
+  // Consulta histórica de ventas por día (calendario) — sólo admin.
+  const [ventasDiaOpen, setVentasDiaOpen] = useState(false)
+  // Reimpresión del ticket de la venta seleccionada — sólo admin.
+  const [reimpVentaBusy, setReimpVentaBusy] = useState(false)
   // Corte parcial mostrado en pantalla (sin imprimir): el usuario lo cierra cuando quiere.
   const [corteEnPantalla, setCorteEnPantalla] = useState<CreateCorteResult | null>(null)
   const [imprimiendoPantalla, setImprimiendoPantalla] = useState(false)
@@ -95,7 +114,9 @@ export default function CorteModal({ open, onClose }: Props) {
       setDetail(null)
       setIdx(r.folios.length > 0 ? 0 : -1)
       if (user && esAdmin) {
-        setFinales(await window.api.corte.finales(user.id).catch(() => []))
+        // 200 (tope del backend) para que el filtro desde/hasta alcance
+        // cortes viejos, no sólo los últimos 30.
+        setFinales(await window.api.corte.finales(user.id, 200).catch(() => []))
       }
     } catch (e) {
       toast.error('No pude cargar el corte', { description: String(e) })
@@ -105,7 +126,13 @@ export default function CorteModal({ open, onClose }: Props) {
   }, [user, esAdmin])
 
   useEffect(() => {
-    if (open) load()
+    if (open) {
+      load()
+    } else {
+      // Al cerrar, limpiar el filtro de reimpresión para la próxima vez.
+      setFinalesDesde('')
+      setFinalesHasta('')
+    }
   }, [open, load])
 
   // Imprime el ticket de un corte recién creado (best-effort)
@@ -123,6 +150,7 @@ export default function CorteModal({ open, onClose }: Props) {
             cp: user.sucursal.cp ?? null
           },
           fecha: r.fecha,
+          fechaInicio: r.fechaInicio,
           tipo: r.tipo,
           cajero: user.nombre,
           folioInicio: r.folioInicio,
@@ -201,6 +229,71 @@ export default function CorteModal({ open, onClose }: Props) {
     }
   }, [corteEnPantalla, imprimirTicketCorte])
 
+  // Cortes finales visibles según el filtro desde/hasta (día local).
+  const finalesFiltrados = useMemo(() => {
+    if (!finalesDesde && !finalesHasta) return finales
+    return finales.filter((c) => {
+      const d = ymdLocal(c.fecha)
+      if (finalesDesde && d < finalesDesde) return false
+      if (finalesHasta && d > finalesHasta) return false
+      return true
+    })
+  }, [finales, finalesDesde, finalesHasta])
+
+  // Reimprime el ticket de la venta mostrada en el detalle (mismo formato que
+  // el original, con recibido/cambio guardados). NO abre el cajón.
+  const reimprimirTicketVenta = useCallback(async () => {
+    if (!detail || !user) return
+    if (!settings?.printerName) {
+      toast.error('No hay impresora configurada', {
+        description: 'Configúrala en Ajustes para poder reimprimir el ticket.'
+      })
+      return
+    }
+    setReimpVentaBusy(true)
+    try {
+      const receipt: ReceiptData = {
+        empresa: {
+          nombreComercial: user.sucursal?.nombreComercial ?? 'Farmacias MS',
+          rfc: user.sucursal?.rfc ?? null,
+          sucursalNombre: user.sucursal?.sucursalNombre ?? '—',
+          calle: user.sucursal?.calle ?? null,
+          colonia: user.sucursal?.colonia ?? null,
+          cp: user.sucursal?.cp ?? null
+        },
+        folio: detail.folioLocal,
+        fecha: detail.fecha,
+        cajero: detail.cajero,
+        items: detail.items.map((it) => ({
+          nombre: it.nombre,
+          cantidad: it.cantidad,
+          precio: it.cantidad > 0 ? +(it.total / it.cantidad).toFixed(2) : it.precioUnitario,
+          total: it.total
+        })),
+        subtotal: detail.subtotal,
+        iva: detail.iva,
+        total: detail.total,
+        pagos: detail.pagos.map((p) => ({ metodo: p.metodo, monto: p.monto })),
+        cambio: detail.cambio,
+        openDrawer: false,
+        showTime: settings.showTimeOnReceipt ?? false,
+        footer: settings.receiptFooter ?? null
+      }
+      const pr = await window.api.printer.printReceipt(settings.printerName, receipt)
+      if (pr.ok) {
+        toast.success(`Ticket del folio ${fmtFolio(detail.folioLocal)} reimpreso`)
+      } else {
+        toast.error('Falló la impresión', { description: (pr.stderr || pr.stdout).trim() })
+      }
+    } catch (e) {
+      toast.error('No se pudo reimprimir el ticket', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setReimpVentaBusy(false)
+    }
+  }, [detail, user, settings?.printerName, settings?.showTimeOnReceipt, settings?.receiptFooter])
+
   // Ver en pantalla lo que imprimió (o imprimiría) un corte final registrado.
   const verCorteFinal = useCallback(
     async (c: CorteFinalHistItem) => {
@@ -266,6 +359,66 @@ export default function CorteModal({ open, onClose }: Props) {
     [user, settings?.printerName]
   )
 
+  // Imprime en secuencia TODOS los cortes visibles con el filtro desde/hasta
+  // (del más viejo al más nuevo, para que salgan en orden cronológico).
+  const imprimirTodosFiltrados = useCallback(async () => {
+    if (!user) return
+    if (!settings?.printerName) {
+      toast.error('No hay impresora configurada', {
+        description: 'Configúrala en Ajustes para poder reimprimir los cortes.'
+      })
+      return
+    }
+    if (!user.sucursal) {
+      toast.error('Sin datos de la sucursal para el encabezado del ticket')
+      return
+    }
+    const lista = [...finalesFiltrados].sort((a, b) => a.fecha.localeCompare(b.fecha))
+    if (lista.length === 0) return
+    setBatchProgress({ done: 0, total: lista.length })
+    let ok = 0
+    let fallas = 0
+    for (const c of lista) {
+      try {
+        const d = await window.api.corte.reimpresion(user.id, c.id)
+        const pr = await window.api.printer.printCorte(settings.printerName, {
+          empresa: {
+            nombreComercial: user.sucursal.nombreComercial,
+            rfc: user.sucursal.rfc ?? null,
+            sucursalNombre: user.sucursal.sucursalNombre,
+            calle: user.sucursal.calle ?? null,
+            colonia: user.sucursal.colonia ?? null,
+            cp: user.sucursal.cp ?? null
+          },
+          ...d
+        })
+        if (pr.ok) ok++
+        else fallas++
+      } catch {
+        fallas++
+      }
+      setBatchProgress((p) => (p ? { ...p, done: p.done + 1 } : p))
+    }
+    setBatchProgress(null)
+    if (fallas === 0) {
+      toast.success(`${ok} corte${ok === 1 ? '' : 's'} reimpreso${ok === 1 ? '' : 's'}`)
+    } else {
+      toast.warning('Reimpresión terminada con errores', {
+        description: `${ok} impresos correctamente, ${fallas} fallaron.`
+      })
+    }
+  }, [user, settings?.printerName, finalesFiltrados])
+
+  const confirmarImprimirTodos = useCallback(() => {
+    const n = finalesFiltrados.length
+    toast.warning(`¿Imprimir los ${n} cortes de la lista?`, {
+      id: 'reimp-todos-confirm',
+      description: 'Se imprimirá un ticket por cada corte final, del más viejo al más nuevo.',
+      duration: 8000,
+      action: { label: 'Sí, imprimir todos', onClick: () => imprimirTodosFiltrados() }
+    })
+  }, [finalesFiltrados.length, imprimirTodosFiltrados])
+
   const confirmarCorte = useCallback(
     (tipo: CorteTipo) => {
       const esFinal = tipo === 'FINAL'
@@ -329,9 +482,10 @@ export default function CorteModal({ open, onClose }: Props) {
     return () => clearTimeout(t)
   }, [open, idx, data, showDetail])
 
-  // Navegación por teclado dentro del modal (capture phase → le gana al resto)
+  // Navegación por teclado dentro del modal (capture phase → le gana al resto).
+  // Se apaga mientras el modal de ventas por día está encima.
   useEffect(() => {
-    if (!open) return
+    if (!open || ventasDiaOpen) return
     const handler = (e: KeyboardEvent): void => {
       // Sólo si el foco no está en un input editable
       const tgt = e.target as HTMLElement | null
@@ -371,14 +525,27 @@ export default function CorteModal({ open, onClose }: Props) {
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [open, data, idx, load, showDetail])
+  }, [open, ventasDiaOpen, data, idx, load, showDetail])
 
-  // Auto-scroll de la fila seleccionada
+  // Auto-scroll de la fila seleccionada. Cálculo manual en lugar de
+  // scrollIntoView: el thead es sticky y tapaba la fila al navegar hacia
+  // arriba — el primer folio quedaba oculto tras el encabezado hasta mover
+  // el scroll a mano.
   useEffect(() => {
     const tbody = tableBodyRef.current
     if (!tbody || idx < 0) return
     const row = tbody.children[idx] as HTMLElement | undefined
-    row?.scrollIntoView({ block: 'nearest' })
+    const cont = tbody.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const rowTop = row.offsetTop
+    const rowBottom = rowTop + row.offsetHeight
+    if (rowTop - headerH < cont.scrollTop) {
+      // La fila quedaría debajo del encabezado sticky: súbela justo bajo él.
+      cont.scrollTop = Math.max(0, rowTop - headerH)
+    } else if (rowBottom > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = rowBottom - cont.clientHeight
+    }
   }, [idx])
 
   const fechaCabecera = data ? new Date(data.fechaHasta) : new Date()
@@ -552,7 +719,21 @@ export default function CorteModal({ open, onClose }: Props) {
                     </>
                   )}
                 </span>
-                {loadingDetail && <span className="text-[10px] normal-case">cargando…</span>}
+                <span className="flex items-center gap-2">
+                  {loadingDetail && <span className="text-[10px] normal-case">cargando…</span>}
+                  {esAdmin && detail && !loadingDetail && (
+                    <button
+                      type="button"
+                      onClick={reimprimirTicketVenta}
+                      disabled={reimpVentaBusy}
+                      title="Volver a imprimir el ticket de esta venta (no abre el cajón)"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 border border-border rounded cursor-pointer hover:bg-muted hover:border-primary/40 disabled:opacity-50 disabled:cursor-default text-[11px] normal-case font-normal"
+                    >
+                      {reimpVentaBusy ? <Spinner size={11} /> : <Printer className="size-3" />}
+                      Reimprimir
+                    </button>
+                  )}
+                </span>
               </header>
               <div className="p-3">
                 {!detail && !loadingDetail && (
@@ -613,6 +794,18 @@ export default function CorteModal({ open, onClose }: Props) {
                               <span>{money(p.monto)}</span>
                             </div>
                           ))}
+                          {detail.cambio > 0 && (
+                            <>
+                              <div className="flex justify-between border-t border-border/60 pt-0.5">
+                                <span>Recibido</span>
+                                <span>{money(detail.recibido)}</span>
+                              </div>
+                              <div className="flex justify-between text-green-700">
+                                <span>Cambio</span>
+                                <span>{money(detail.cambio)}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     )}
@@ -751,9 +944,71 @@ export default function CorteModal({ open, onClose }: Props) {
                 <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center">
                   <span>Reimprimir corte final</span>
                   <span className="text-[10px] text-muted-foreground normal-case">
-                    últimos {finales.length} · sólo administradores
+                    {finalesDesde || finalesHasta
+                      ? `${finalesFiltrados.length} de ${finales.length}`
+                      : `últimos ${finales.length}`}{' '}
+                    · sólo administradores
                   </span>
                 </header>
+
+                {/* Filtro desde/hasta + imprimir todos */}
+                <div className="px-3 py-2 border-b border-border flex items-center gap-2 flex-wrap text-xs">
+                  <label htmlFor="finales-desde" className="text-muted-foreground">
+                    Desde:
+                  </label>
+                  <input
+                    id="finales-desde"
+                    type="date"
+                    value={finalesDesde}
+                    onChange={(e) => setFinalesDesde(e.target.value)}
+                    className="border border-border rounded px-2 py-1 bg-background font-mono"
+                  />
+                  <label htmlFor="finales-hasta" className="text-muted-foreground">
+                    Hasta:
+                  </label>
+                  <input
+                    id="finales-hasta"
+                    type="date"
+                    value={finalesHasta}
+                    onChange={(e) => setFinalesHasta(e.target.value)}
+                    className="border border-border rounded px-2 py-1 bg-background font-mono"
+                  />
+                  {(finalesDesde || finalesHasta) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFinalesDesde('')
+                        setFinalesHasta('')
+                      }}
+                      className="p-1 border border-border rounded hover:bg-muted"
+                      title="Quitar filtro de fechas"
+                      aria-label="Quitar filtro de fechas"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
+                  {(finalesDesde || finalesHasta) && finalesFiltrados.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={confirmarImprimirTodos}
+                      disabled={reimprimiendo !== null || batchProgress !== null}
+                      className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 font-medium"
+                    >
+                      {batchProgress ? (
+                        <>
+                          <Spinner size={12} /> Imprimiendo {batchProgress.done}/
+                          {batchProgress.total}…
+                        </>
+                      ) : (
+                        <>
+                          <Printer className="size-3.5" />
+                          Imprimir todos ({finalesFiltrados.length})
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
                 <div className="overflow-auto max-h-[220px]">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-background border-b border-border z-10">
@@ -766,7 +1021,17 @@ export default function CorteModal({ open, onClose }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {finales.map((c) => (
+                      {finalesFiltrados.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="px-2 py-6 text-center text-muted-foreground italic"
+                          >
+                            Sin cortes finales en el rango de fechas.
+                          </td>
+                        </tr>
+                      )}
+                      {finalesFiltrados.map((c) => (
                         <tr key={c.id} className="border-b border-border/60">
                           <td className="px-2 py-1 font-mono">
                             {new Date(c.fecha).toLocaleString('es-MX')}
@@ -780,7 +1045,7 @@ export default function CorteModal({ open, onClose }: Props) {
                             <button
                               type="button"
                               onClick={() => verCorteFinal(c)}
-                              disabled={cargandoVer !== null}
+                              disabled={cargandoVer !== null || batchProgress !== null}
                               title="Ver en pantalla lo que imprime este corte"
                               className="inline-flex items-center gap-1 px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 text-[11px]"
                             >
@@ -794,7 +1059,7 @@ export default function CorteModal({ open, onClose }: Props) {
                             <button
                               type="button"
                               onClick={() => reimprimirCorte(c)}
-                              disabled={reimprimiendo !== null}
+                              disabled={reimprimiendo !== null || batchProgress !== null}
                               className="ml-1 inline-flex items-center gap-1 px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 text-[11px]"
                             >
                               {reimprimiendo === c.id ? (
@@ -824,6 +1089,17 @@ export default function CorteModal({ open, onClose }: Props) {
           <span className="font-mono">Esc</span> cerrar
         </div>
         <div className="flex gap-2">
+          {esAdmin && (
+            <button
+              type="button"
+              onClick={() => setVentasDiaOpen(true)}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1 border border-border rounded hover:bg-muted"
+              title="Consultar las ventas de cualquier día (calendario)"
+            >
+              <CalendarDays className="size-3.5" />
+              Otros días
+            </button>
+          )}
           <button
             type="button"
             onClick={load}
@@ -849,6 +1125,9 @@ export default function CorteModal({ open, onClose }: Props) {
       </footer>
     </Modal>
 
+    {/* Ventas de otros días (calendario) — sólo admin */}
+    <VentasDiaModal open={ventasDiaOpen} onClose={() => setVentasDiaOpen(false)} />
+
     {/* Corte final en pantalla: lo mismo que su ticket, sin imprimir a fuerzas */}
     {verCorte && (
       <Modal
@@ -859,8 +1138,24 @@ export default function CorteModal({ open, onClose }: Props) {
       >
         <div className="p-4 space-y-3 text-sm">
           <p className="text-xs text-muted-foreground">
-            {new Date(verCorte.d.fecha).toLocaleString('es-MX')} · Cajero {verCorte.d.cajero} —
-            las mismas cifras que imprime el ticket, en pantalla.
+            {verCorte.d.fechaInicio && (
+              <>
+                Inicio del periodo:{' '}
+                <span className="font-mono">
+                  {new Date(verCorte.d.fechaInicio).toLocaleString('es-MX')}
+                </span>
+                <br />
+                Corte final:{' '}
+                <span className="font-mono">
+                  {new Date(verCorte.d.fecha).toLocaleString('es-MX')}
+                </span>
+                {' · '}
+              </>
+            )}
+            {!verCorte.d.fechaInicio && (
+              <>{new Date(verCorte.d.fecha).toLocaleString('es-MX')} · </>
+            )}
+            Cajero {verCorte.d.cajero} — las mismas cifras que imprime el ticket, en pantalla.
           </p>
           <div className="space-y-1.5 font-mono text-xs">
             <Row label="Notas vendidas" value={String(verCorte.d.foliosVendidos)} />

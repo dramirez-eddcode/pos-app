@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import { toast } from 'sonner'
 import { Trash2 } from 'lucide-react'
 import Modal from './Modal'
@@ -253,8 +260,47 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
     setTimeout(() => cantRef.current?.focus(), 30)
   }
 
-  const removeItem = useCallback((i: number) => {
-    setItems((prev) => prev.filter((_, idx) => idx !== i))
+  // La TABLA agrupa por producto: en FEFO automático una misma cantidad se
+  // reparte en varios lotes y verlos como filas separadas parecía producto
+  // duplicado. El guardado sigue siendo por lote (items), sólo cambia la vista.
+  interface GrupoSalida {
+    codigo: string
+    productoNombre: string
+    cantidad: number
+    saldo: number
+    idxs: number[]
+    caducidades: string[]
+  }
+  const grupos = useMemo<GrupoSalida[]>(() => {
+    const map = new Map<string, GrupoSalida>()
+    const lotesContados = new Set<string>()
+    items.forEach((it, i) => {
+      const ymd = isoToYmd(it.fechaCaducidad)
+      // El saldo del lote se suma una sola vez aunque haya 2 líneas del mismo lote.
+      const saldoLote = lotesContados.has(it.loteId) ? 0 : it.saldoActual
+      lotesContados.add(it.loteId)
+      const g = map.get(it.codigo)
+      if (g) {
+        g.cantidad += it.cantidad
+        g.saldo += saldoLote
+        g.idxs.push(i)
+        if (!g.caducidades.includes(ymd)) g.caducidades.push(ymd)
+      } else {
+        map.set(it.codigo, {
+          codigo: it.codigo,
+          productoNombre: it.productoNombre,
+          cantidad: it.cantidad,
+          saldo: saldoLote,
+          idxs: [i],
+          caducidades: [ymd]
+        })
+      }
+    })
+    return [...map.values()]
+  }, [items])
+
+  const removeGrupo = useCallback((g: GrupoSalida) => {
+    setItems((prev) => prev.filter((_, idx) => !g.idxs.includes(idx)))
   }, [])
 
   const save = useCallback(async () => {
@@ -324,23 +370,23 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   // genérica del modal se lleve el foco a otro campo.
   const onKeyTabla = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    if (items.length === 0) return
+    if (grupos.length === 0) return
     e.preventDefault()
     setSelRow((i) =>
-      e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+      e.key === 'ArrowDown' ? Math.min(grupos.length - 1, i + 1) : Math.max(0, i - 1)
     )
   }
 
   // Mantén visible el renglón activo y ajusta si la lista cambia.
   useEffect(() => {
     if (selRow < 0) return
-    if (selRow > items.length - 1) {
-      setSelRow(items.length - 1)
+    if (selRow > grupos.length - 1) {
+      setSelRow(grupos.length - 1)
       return
     }
     const row = tbodyRef.current?.children[selRow] as HTMLElement | undefined
     row?.scrollIntoView({ block: 'nearest' })
-  }, [selRow, items.length])
+  }, [selRow, grupos.length])
 
   // Abre el preview de confirmación (no registra todavía).
   const pedirConfirmacion = useCallback(() => {
@@ -354,12 +400,28 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   // Totales
   const totalUnidades = items.reduce((s, i) => s + i.cantidad, 0)
 
+  // Salir (Esc, X o Cancelar) con líneas capturadas pide confirmación: un
+  // clic accidental perdería toda la captura de la salida.
+  const requestClose = useCallback(() => {
+    if (saving) return
+    if (items.length === 0) {
+      onClose()
+      return
+    }
+    toast.warning('¿Salir y cancelar esta salida?', {
+      id: 'salida-descartar',
+      description: `Se perderán las ${items.length} línea(s) capturadas (aún no se ha guardado nada).`,
+      duration: 8000,
+      action: { label: 'Sí, salir', onClick: () => onClose() }
+    })
+  }, [saving, items.length, onClose])
+
   return (
     <>
       <Modal
         open={open && !searchOpen}
         title="Registro de salidas de inventario"
-        onClose={onClose}
+        onClose={requestClose}
         maxWidth="max-w-4xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
@@ -619,8 +681,8 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
             <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between">
               <span>Salidas a registrar</span>
               <span className="text-[10px] normal-case text-muted-foreground">
-                {items.length} línea{items.length === 1 ? '' : 's'}
-                {items.length > 0 && ` · ${totalUnidades} unidades`}
+                {grupos.length} producto{grupos.length === 1 ? '' : 's'}
+                {grupos.length > 0 && ` · ${totalUnidades} unidades`}
               </span>
             </header>
             <div
@@ -652,11 +714,11 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                       </td>
                     </tr>
                   )}
-                  {items.map((it, i) => {
-                    const queda = it.saldoActual - it.cantidad
+                  {grupos.map((g, i) => {
+                    const queda = g.saldo - g.cantidad
                     return (
                       <tr
-                        key={i}
+                        key={g.codigo}
                         onClick={() => {
                           setSelRow(i)
                           tablaRef.current?.focus()
@@ -666,25 +728,32 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                         }`}
                       >
                         <td className="px-2 py-1">
-                          <div>{it.productoNombre}</div>
+                          <div>{g.productoNombre}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">
-                            {it.codigo}
+                            {g.codigo}
                           </div>
                         </td>
-                        <td className="px-2 py-1 font-mono text-[11px]">
-                          {isoToYmd(it.fechaCaducidad)}
+                        <td
+                          className="px-2 py-1 font-mono text-[11px]"
+                          title={
+                            g.caducidades.length > 1 ? g.caducidades.join(' · ') : undefined
+                          }
+                        >
+                          {g.caducidades.length === 1
+                            ? g.caducidades[0]
+                            : `${g.caducidades.length} lotes (FEFO)`}
                         </td>
-                        <td className="px-2 py-1 text-right font-mono">{it.saldoActual}</td>
+                        <td className="px-2 py-1 text-right font-mono">{g.saldo}</td>
                         <td className="px-2 py-1 text-right font-mono font-semibold text-red-700">
-                          -{it.cantidad}
+                          -{g.cantidad}
                         </td>
                         <td className="px-2 py-1 text-right font-mono">{queda}</td>
                         <td className="px-2 py-1 text-center">
                           <button
                             type="button"
-                            onClick={() => removeItem(i)}
+                            onClick={() => removeGrupo(g)}
                             className="p-1 hover:bg-red-50 rounded text-red-700"
-                            title="Quitar"
+                            title="Quitar el producto completo (todos sus lotes)"
                           >
                             <Trash2 className="size-3.5" />
                           </button>
@@ -706,7 +775,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={saving}
               className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
             >
@@ -748,11 +817,16 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
               {nota.trim() && <span className="text-muted-foreground"> · {nota.trim()}</span>}
             </span>
           }
-          lineas={items.map((it) => ({
-            codigo: it.codigo,
-            nombre: it.productoNombre,
-            cantidad: it.cantidad,
-            detalle: isoToYmd(it.fechaCaducidad)
+          lineas={grupos.map((g) => ({
+            codigo: g.codigo,
+            nombre: g.productoNombre,
+            cantidad: g.cantidad,
+            // Una fila por producto también en la confirmación: con varios
+            // lotes se indica el reparto FEFO en lugar de repetir renglones.
+            detalle:
+              g.caducidades.length === 1
+                ? g.caducidades[0]
+                : `${g.caducidades.length} lotes (FEFO)`
           }))}
           detalleHeader="Caducidad"
           confirmLabel="Sí, registrar salida"

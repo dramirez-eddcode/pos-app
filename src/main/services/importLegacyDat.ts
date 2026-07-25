@@ -130,11 +130,22 @@ export async function pickDat(window: BrowserWindow | null): Promise<PickDatResu
 
     const sqlite = getSqlite()
     const sel = sqlite.prepare('SELECT 1 FROM producto WHERE codigo = ?')
+    // Mismo criterio que applyDat: un código que sólo difiere en ceros
+    // iniciales cuenta como actualización, no como alta (evita duplicados).
+    const selSinCeros = sqlite.prepare(
+      `SELECT 1 FROM producto
+        WHERE codigo NOT GLOB '*[^0-9]*' AND LTRIM(codigo, '0') = ?
+        LIMIT 2`
+    )
     let aCrear = 0
     let aActualizar = 0
     let aDesactivar = 0
     for (const r of parsed.rows) {
-      const existe = sel.get(r.codigo)
+      let existe = sel.get(r.codigo)
+      if (!existe && /^\d+$/.test(r.codigo)) {
+        const sinCeros = r.codigo.replace(/^0+/, '')
+        if (sinCeros && selSinCeros.all(sinCeros).length === 1) existe = 1
+      }
       if (existe) {
         aActualizar++
         if (r.baja) aDesactivar++
@@ -172,6 +183,16 @@ export function applyDat(viewerUserId: string, filePath: string): ApplyDatResult
   const sel = sqlite.prepare(
     'SELECT id, nombre, sustancia_activa AS sustancia, precio, activo FROM producto WHERE codigo = ?'
   )
+  // El legacy pierde los ceros iniciales del EAN. Si el código exacto no
+  // existe pero hay EXACTAMENTE un producto cuyo código sólo difiere en ceros
+  // iniciales (p. ej. viene "780083140588" y tenemos "0780083140588"), se
+  // actualiza ése en lugar de crear un duplicado.
+  const selSinCeros = sqlite.prepare(
+    `SELECT id, nombre, sustancia_activa AS sustancia, precio, activo
+       FROM producto
+      WHERE codigo NOT GLOB '*[^0-9]*' AND LTRIM(codigo, '0') = ?
+      LIMIT 2`
+  )
   // UPDATE suave: NO toca costo, stock_*, laboratorio, descripcion ni IVA.
   const upd = sqlite.prepare(
     `UPDATE producto
@@ -198,9 +219,22 @@ export function applyDat(viewerUserId: string, filePath: string): ApplyDatResult
   const run = sqlite.transaction(() => {
     const now = Date.now()
     for (const r of parsed.rows) {
-      const existente = sel.get(r.codigo) as
-        | { id: string; nombre: string; sustancia: string | null; precio: number; activo: number }
-        | undefined
+      type ProdMatch = {
+        id: string
+        nombre: string
+        sustancia: string | null
+        precio: number
+        activo: number
+      }
+      let existente = sel.get(r.codigo) as ProdMatch | undefined
+      if (!existente && /^\d+$/.test(r.codigo)) {
+        const sinCeros = r.codigo.replace(/^0+/, '')
+        if (sinCeros) {
+          const candidatos = selSinCeros.all(sinCeros) as ProdMatch[]
+          // Sólo si el match es inequívoco (1 producto); con 2+ se crea normal.
+          if (candidatos.length === 1) existente = candidatos[0]
+        }
+      }
 
       if (existente) {
         const igual =

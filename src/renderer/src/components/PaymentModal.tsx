@@ -56,10 +56,12 @@ export default function PaymentModal({ open, onClose, onConfirm, total, folioPre
 
   // Solo el efectivo genera cambio; tarjeta/transferencia se cobran exacto.
   const noEfectivo = +(nums.tarjeta + nums.transferencia).toFixed(2)
-  const cobertura = +(recibido - total).toFixed(2)
   const cambio = Math.max(0, +(nums.efectivo - Math.max(0, total - noEfectivo)).toFixed(2))
   const faltante = Math.max(0, +(total - recibido).toFixed(2))
-  const puedeCobrar = recibido >= total - 0.0049 && total > 0
+  // Tarjeta/transferencia NO pueden exceder el total (no dan cambio). Evita
+  // errores de captura: p. ej. teclear 3360 en una nota de 36.
+  const excesoNoEfectivo = noEfectivo > total + 0.0049 ? +(noEfectivo - total).toFixed(2) : 0
+  const puedeCobrar = recibido >= total - 0.0049 && total > 0 && excesoNoEfectivo === 0
 
   const tryConfirm = () => {
     if (!puedeCobrar || busy) return
@@ -103,7 +105,11 @@ export default function PaymentModal({ open, onClose, onConfirm, total, folioPre
                 ref={i === 0 ? efectivoRef : undefined}
                 type="text"
                 inputMode="decimal"
-                className="border border-border rounded px-2 py-1.5 font-mono text-right"
+                className={`border rounded px-2 py-1.5 font-mono text-right ${
+                  m.id !== 'efectivo' && excesoNoEfectivo > 0 && nums[m.id] > 0
+                    ? 'border-red-400 bg-red-50 text-red-900'
+                    : 'border-border'
+                }`}
                 value={amounts[m.id]}
                 onChange={(e) => setAmounts((a) => ({ ...a, [m.id]: e.target.value }))}
                 onKeyDown={onKeyAny}
@@ -122,10 +128,17 @@ export default function PaymentModal({ open, onClose, onConfirm, total, folioPre
             valueClass={cambio > 0 ? 'text-green-700' : 'text-muted-foreground'}
           />
           {faltante > 0 && <Row label="FALTAN" value={money(faltante)} valueClass="text-red-700" />}
-          {cobertura > 0 && nums.efectivo === 0 && (
-            <Row label="SOBRAN" value={money(cobertura)} valueClass="text-amber-700" />
+          {excesoNoEfectivo > 0 && (
+            <Row label="EXCEDE EL TOTAL" value={money(excesoNoEfectivo)} valueClass="text-red-700" />
           )}
         </div>
+
+        {excesoNoEfectivo > 0 && (
+          <p className="text-xs text-red-700 border border-red-300 bg-red-50 rounded px-3 py-2">
+            El monto con tarjeta/transferencia no puede ser mayor que el total a cobrar (esos
+            métodos no dan cambio). Corrige la cantidad para poder cobrar.
+          </p>
+        )}
       </div>
 
       <footer className="flex justify-between items-center px-4 py-3 border-t border-border bg-muted/20">

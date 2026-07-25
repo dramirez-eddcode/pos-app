@@ -329,6 +329,18 @@ function parcialesDelPeriodo(desde: number, hasta: number): CorteParcialResumen[
 }
 
 /**
+ * Fecha de la primera venta de un rango de folios (inicio real del periodo de
+ * un corte FINAL). Permite mostrar en el ticket que el corte abarca ventas de
+ * días anteriores (p. ej. quedó pendiente por un corte de luz).
+ */
+function inicioPeriodo(folioInicio: number, folioFin: number): string | undefined {
+  const row = getSqlite()
+    .prepare('SELECT MIN(fecha) AS f FROM venta WHERE folio_local BETWEEN ? AND ?')
+    .get(folioInicio, folioFin) as { f: number | null }
+  return row.f != null ? new Date(row.f).toISOString() : undefined
+}
+
+/**
  * Notas del rango cobradas (total o parcialmente) con TARJETA, para el detalle
  * del ticket del corte final. En pago mixto sólo se reporta la parte tarjeta —
  * es lo que debe cuadrar contra los vouchers de la terminal. Excluye canceladas
@@ -446,12 +458,14 @@ export function createCorte(cajeroId: string, tipo: CorteTipo): CreateCorteResul
     // combinado y el detalle de notas con tarjeta (pago puro o mixto).
     const parciales = tipo === 'FINAL' ? parcialesDelPeriodo(fechaDesdeCaja, now) : undefined
     const tarjetas = tipo === 'FINAL' ? ventasConTarjeta(folioInicio, folioFin) : undefined
+    const fechaInicio = tipo === 'FINAL' ? inicioPeriodo(folioInicio, folioFin) : undefined
 
     return {
       corteId,
       folioInicio,
       folioFin,
       fecha: nowDate.toISOString(),
+      ...(fechaInicio ? { fechaInicio } : {}),
       tipo,
       totales: {
         foliosVendidos: agg.folios_vendidos,
@@ -570,9 +584,11 @@ export function getCorteReimpresion(viewerUserId: string, corteId: string): Cort
   const parciales =
     c.tipo === 'FINAL' ? parcialesDelPeriodo((prevFinal?.f ?? -1) + 1, c.fecha) : undefined
   const tarjetas = c.tipo === 'FINAL' ? ventasConTarjeta(c.folioInicio, c.folioFin) : undefined
+  const fechaInicio = c.tipo === 'FINAL' ? inicioPeriodo(c.folioInicio, c.folioFin) : undefined
 
   return {
     fecha: new Date(c.fecha).toISOString(),
+    ...(fechaInicio ? { fechaInicio } : {}),
     tipo: c.tipo as CorteTipo,
     cajero: c.cajero ?? '—',
     folioInicio: c.folioInicio,

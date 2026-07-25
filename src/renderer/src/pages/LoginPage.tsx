@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const loginRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
@@ -30,9 +31,13 @@ export default function LoginPage() {
       } else {
         setError(r.error)
         setPassword('')
+        // Foco directo en la contraseña para reintentar sin usar el mouse
+        // (el timeout espera a que el input se re-habilite tras loading).
+        setTimeout(() => passwordRef.current?.focus(), 60)
       }
     } catch (err) {
       setError(`Error: ${err instanceof Error ? err.message : String(err)}`)
+      setTimeout(() => passwordRef.current?.focus(), 60)
     } finally {
       setLoading(false)
     }
@@ -77,6 +82,7 @@ export default function LoginPage() {
           </label>
           <PasswordInput
             id="password"
+            ref={passwordRef}
             autoComplete="current-password"
             className="w-full border border-border rounded px-2 py-1.5 bg-background"
             value={password}

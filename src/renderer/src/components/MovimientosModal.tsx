@@ -7,11 +7,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { toast } from 'sonner'
-import { ArrowRight, ChevronLeft, FileText, Printer } from 'lucide-react'
+import { ArrowRight, ChevronLeft, FileDown, FileText, Printer, X } from 'lucide-react'
 import Modal from './Modal'
 import SearchModal from './SearchModal'
 import Spinner from './Spinner'
 import { money } from '../lib/format'
+import { useSession } from '../stores/session'
+import { isFullAdmin } from '../lib/roles'
 import { folioMovimiento } from '@shared/dto'
 import type {
   KardexItem,
@@ -56,6 +58,14 @@ const KARDEX_BADGE: Record<KardexTipo, string> = {
   CANCELACION_VENTA: 'bg-violet-100 text-violet-900'
 }
 
+/** Día local 'AAAA-MM-DD' de una fecha (para comparar contra el input date). */
+function ymdLocal(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`
+}
+
 const KARDEX_LABEL: Record<KardexTipo, string> = {
   ENTRADA: 'Entrada',
   SALIDA: 'Salida',
@@ -68,10 +78,16 @@ export default function MovimientosModal({ open, onClose }: Props) {
   const [list, setList] = useState<MovimientoHistItem[]>([])
   const [loading, setLoading] = useState(false)
   const [filtro, setFiltro] = useState<Filtro>('TODOS')
+  // Filtro por día (calendario). '' = todas las fechas.
+  const [fechaFiltro, setFechaFiltro] = useState('')
   const [detalle, setDetalle] = useState<MovimientoDetalle | null>(null)
   const [loadingDet, setLoadingDet] = useState(false)
   const [pdfBusy, setPdfBusy] = useState<string | null>(null)
   const [printBusy, setPrintBusy] = useState<string | null>(null)
+  const [reexpBusy, setReexpBusy] = useState<string | null>(null)
+  const { user } = useSession()
+  // Regenerar .traspaso: sólo admin completo (mismo permiso que generarlo).
+  const puedeReexportar = isFullAdmin(user)
 
   // ── Kárdex por producto ────────────────────────────────────────────────
   const [vista, setVista] = useState<'documentos' | 'kardex'>('documentos')
@@ -82,12 +98,99 @@ export default function MovimientosModal({ open, onClose }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const kCodRef = useRef<HTMLInputElement>(null)
 
-  const busy = pdfBusy !== null || printBusy !== null
+  const busy = pdfBusy !== null || printBusy !== null || reexpBusy !== null
+
+  // ── Sombreado con ↑/↓ en el detalle de documento (revisión línea por línea) ─
+  const [detSelRow, setDetSelRow] = useState(-1)
+  const detSelRowRef = useRef(-1)
+  useEffect(() => {
+    detSelRowRef.current = detSelRow
+  }, [detSelRow])
+  const detTbodyRef = useRef<HTMLTableSectionElement>(null)
+
+  useEffect(() => {
+    setDetSelRow(-1)
+  }, [detalle])
+
+  useEffect(() => {
+    if (!open || !detalle) return
+    const total = detalleFilas.length
+    if (total === 0) return
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable === true
+      ) {
+        return
+      }
+      const cur = detSelRowRef.current
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        e.stopPropagation()
+        setDetSelRow(Math.min(total - 1, cur + 1))
+      } else if (cur >= 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        setDetSelRow(Math.max(0, cur - 1))
+      }
+    }
+    // Captura: le gana a la navegación genérica del Modal entre botones.
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [open, detalle])
+
+  // Mantén visible la fila sombreada (sin que el thead sticky la tape).
+  useEffect(() => {
+    if (detSelRow < 0) return
+    const tbody = detTbodyRef.current
+    const row = tbody?.children[detSelRow] as HTMLElement | undefined
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const rowTop = row.offsetTop
+    const rowBottom = rowTop + row.offsetHeight
+    if (rowTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, rowTop - headerH)
+    } else if (rowBottom > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = rowBottom - cont.clientHeight
+    }
+  }, [detSelRow])
+
+  // Vuelve a generar el archivo .traspaso de un traspaso a sucursal (por si el
+  // original se perdió). No toca inventario; conserva el mismo folio, así el
+  // anti-duplicado del receptor sigue aplicando.
+  const regenerarTraspaso = useCallback(
+    async (folio: string) => {
+      if (!user) return
+      setReexpBusy(folio)
+      try {
+        const r = await window.api.traspaso.reexportar(user.id, folio)
+        if (r.ok) {
+          toast.success('Archivo .traspaso regenerado', {
+            description: `${r.lineas} líneas · guardado en ${r.path}`
+          })
+        } else if (!r.cancelled) {
+          toast.error('No se pudo regenerar el archivo', { description: r.error })
+        }
+      } catch (e) {
+        toast.error('No se pudo regenerar el archivo', {
+          description: e instanceof Error ? e.message : String(e)
+        })
+      } finally {
+        setReexpBusy(null)
+      }
+    },
+    [user]
+  )
 
   useEffect(() => {
     if (!open) {
       setDetalle(null)
       setFiltro('TODOS')
+      setFechaFiltro('')
       setVista('documentos')
       setKCodigo('')
       setKProducto(null)
@@ -140,16 +243,28 @@ export default function MovimientosModal({ open, onClose }: Props) {
     }
   }
 
+  // Primero el filtro de fecha; los chips por tipo (y sus conteos) aplican
+  // sobre el día seleccionado.
+  const listFecha = useMemo(
+    () => (fechaFiltro ? list.filter((m) => ymdLocal(m.fecha) === fechaFiltro) : list),
+    [list, fechaFiltro]
+  )
+
   const filtered = useMemo(
-    () => (filtro === 'TODOS' ? list : list.filter((m) => m.tipo === filtro)),
-    [list, filtro]
+    () => (filtro === 'TODOS' ? listFecha : listFecha.filter((m) => m.tipo === filtro)),
+    [listFecha, filtro]
   )
 
   const counts = useMemo(() => {
-    const c: Record<Filtro, number> = { TODOS: list.length, ENTRADA: 0, SALIDA: 0, TRASPASO: 0 }
-    for (const m of list) c[m.tipo]++
+    const c: Record<Filtro, number> = {
+      TODOS: listFecha.length,
+      ENTRADA: 0,
+      SALIDA: 0,
+      TRASPASO: 0
+    }
+    for (const m of listFecha) c[m.tipo]++
     return c
-  }, [list])
+  }, [listFecha])
 
   const verDetalle = useCallback(async (folio: string) => {
     setLoadingDet(true)
@@ -210,6 +325,60 @@ export default function MovimientosModal({ open, onClose }: Props) {
   const provDeLinea = (l: { proveedor?: string | null }): string =>
     l.proveedor === undefined ? (detalle?.proveedor ?? '—') : (l.proveedor ?? '—')
 
+  // El detalle de SALIDAS y TRASPASOS agrupa POR PRODUCTO (el FEFO reparte en
+  // varios lotes y el código repetido confundía al revisar): cantidad e
+  // importe sumados; con varios lotes la caducidad dice "N lotes" (tooltip con
+  // fechas). Las ENTRADAS se quedan por lote: cada renglón es un lote
+  // capturado a propósito, con su costo/caducidad/proveedor propios.
+  interface FilaDetalle {
+    codigo: string
+    nombre: string
+    sustancia: string | null
+    proveedorTexto: string | null
+    motivoTexto: string | null
+    cantidad: number
+    importe: number
+    caducidades: string[]
+  }
+  const detalleFilas = useMemo<FilaDetalle[]>(() => {
+    if (!detalle) return []
+    if (detalle.tipo === 'ENTRADA') {
+      return detalle.items.map((l) => ({
+        codigo: l.codigo,
+        nombre: l.nombre,
+        sustancia: l.sustancia ?? null,
+        proveedorTexto: provDeLinea(l),
+        motivoTexto: null,
+        cantidad: l.cantidad,
+        importe: l.cantidad * l.costo,
+        caducidades: [l.caducidad || '—']
+      }))
+    }
+    const map = new Map<string, FilaDetalle>()
+    for (const l of detalle.items) {
+      const cad = l.caducidad || '—'
+      const g = map.get(l.codigo)
+      if (g) {
+        g.cantidad += l.cantidad
+        g.importe += l.cantidad * l.costo
+        if (!g.caducidades.includes(cad)) g.caducidades.push(cad)
+      } else {
+        map.set(l.codigo, {
+          codigo: l.codigo,
+          nombre: l.nombre,
+          sustancia: l.sustancia ?? null,
+          proveedorTexto: null,
+          motivoTexto: l.motivo ?? null,
+          cantidad: l.cantidad,
+          importe: l.cantidad * l.costo,
+          caducidades: [cad]
+        })
+      }
+    }
+    return [...map.values()]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detalle])
+
   return (
     <>
     <Modal
@@ -267,6 +436,31 @@ export default function MovimientosModal({ open, onClose }: Props) {
                     <span className="ml-1 opacity-70 font-mono">{counts[f.value]}</span>
                   </button>
                 ))}
+
+                {/* Filtro por día (calendario desplegable) */}
+                <div className="ml-auto flex items-center gap-1.5">
+                  <label htmlFor="mov-fecha" className="text-xs text-muted-foreground">
+                    Fecha:
+                  </label>
+                  <input
+                    id="mov-fecha"
+                    type="date"
+                    value={fechaFiltro}
+                    onChange={(e) => setFechaFiltro(e.target.value)}
+                    className="border border-border rounded px-2 py-1 text-xs bg-background font-mono"
+                  />
+                  {fechaFiltro && (
+                    <button
+                      type="button"
+                      onClick={() => setFechaFiltro('')}
+                      className="p-1 border border-border rounded hover:bg-muted"
+                      title="Quitar filtro de fecha (ver todas)"
+                      aria-label="Quitar filtro de fecha"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="border border-border rounded overflow-auto max-h-[58vh]">
@@ -297,7 +491,9 @@ export default function MovimientosModal({ open, onClose }: Props) {
                         <td colSpan={7} className="px-2 py-8 text-center text-muted-foreground italic">
                           {list.length === 0
                             ? 'Aún no hay movimientos registrados.'
-                            : 'Sin movimientos de este tipo.'}
+                            : fechaFiltro
+                              ? 'Sin movimientos con los filtros seleccionados.'
+                              : 'Sin movimientos de este tipo.'}
                         </td>
                       </tr>
                     )}
@@ -370,6 +566,24 @@ export default function MovimientosModal({ open, onClose }: Props) {
                               )}
                               Imprimir
                             </button>
+                            {puedeReexportar &&
+                              m.tipo === 'TRASPASO' &&
+                              m.destinoTipo === 'SUCURSAL' && (
+                                <button
+                                  type="button"
+                                  onClick={() => regenerarTraspaso(m.folio)}
+                                  disabled={busy}
+                                  title="Volver a generar el archivo .traspaso (por si el original se perdió). Conserva el mismo folio: si la sucursal ya lo aplicó, lo rechazará."
+                                  className="ml-1 px-2 py-1 border border-border rounded hover:bg-muted disabled:opacity-50 text-[11px] inline-flex items-center gap-1"
+                                >
+                                  {reexpBusy === m.folio ? (
+                                    <Spinner size={11} />
+                                  ) : (
+                                    <FileDown className="size-3" />
+                                  )}
+                                  .traspaso
+                                </button>
+                              )}
                           </td>
                         </tr>
                       ))}
@@ -612,9 +826,15 @@ export default function MovimientosModal({ open, onClose }: Props) {
                       <th className="px-2 py-1.5 w-28 text-center">Caducidad</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {detalle.items.map((l, i) => (
-                      <tr key={i} className="border-b border-border/60">
+                  <tbody ref={detTbodyRef}>
+                    {detalleFilas.map((l, i) => (
+                      <tr
+                        key={`${l.codigo}-${i}`}
+                        onClick={() => setDetSelRow(i)}
+                        className={`border-b border-border/60 cursor-pointer ${
+                          i === detSelRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                        }`}
+                      >
                         <td className="px-2 py-1 font-mono">{l.codigo}</td>
                         <td className="px-2 py-1">
                           {l.nombre}
@@ -623,17 +843,26 @@ export default function MovimientosModal({ open, onClose }: Props) {
                           )}
                         </td>
                         {esEntrada && (
-                          <td className="px-2 py-1 text-[11px]">{provDeLinea(l)}</td>
+                          <td className="px-2 py-1 text-[11px]">{l.proveedorTexto ?? '—'}</td>
                         )}
                         {esSalida && (
-                          <td className="px-2 py-1 text-[11px]">{l.motivo ?? '—'}</td>
+                          <td className="px-2 py-1 text-[11px]">{l.motivoTexto ?? '—'}</td>
                         )}
                         <td className="px-2 py-1 text-right font-mono">{l.cantidad}</td>
-                        <td className="px-2 py-1 text-right font-mono">${money(l.costo)}</td>
                         <td className="px-2 py-1 text-right font-mono">
-                          ${money(l.cantidad * l.costo)}
+                          ${money(l.cantidad > 0 ? l.importe / l.cantidad : 0)}
                         </td>
-                        <td className="px-2 py-1 text-center font-mono">{l.caducidad || '—'}</td>
+                        <td className="px-2 py-1 text-right font-mono">${money(l.importe)}</td>
+                        <td
+                          className="px-2 py-1 text-center font-mono"
+                          title={
+                            l.caducidades.length > 1 ? l.caducidades.join(' · ') : undefined
+                          }
+                        >
+                          {l.caducidades.length === 1
+                            ? l.caducidades[0]
+                            : `${l.caducidades.length} lotes`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

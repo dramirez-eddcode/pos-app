@@ -505,6 +505,51 @@ function ensureSchema(sqlite: Database.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS proveedor_nombre_unique ON proveedor (nombre);
   `)
 
+  // Pedidos de surtido a sucursal (matriz-que-vende): las cajeras los
+  // prellenan desde el POS (F11), el admin de la matriz los revisa y sólo al
+  // APROBAR se genera el traspaso real (descuento de stock). items_json =
+  // [{codigo, nombre, cantidad}].
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS pedido_traspaso (
+      id TEXT PRIMARY KEY NOT NULL,
+      numero INTEGER NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+      sucursal_id TEXT,
+      sucursal_codigo TEXT NOT NULL,
+      sucursal_nombre TEXT NOT NULL,
+      creado_por TEXT NOT NULL,
+      creado_nombre TEXT,
+      fecha_creado INTEGER NOT NULL,
+      revisado_por TEXT,
+      revisado_nombre TEXT,
+      fecha_revision INTEGER,
+      traspaso_folio TEXT,
+      notas TEXT,
+      items_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pedido_traspaso_estado_idx ON pedido_traspaso (estado, fecha_creado);
+  `)
+  // pedido_traspaso.tipo: SUCURSAL (surtir a otra farmacia → al aprobar genera
+  // traspaso) o PROVEEDOR (lista de faltantes para pedirle al proveedor → al
+  // aprobar sólo se marca; la mercancía entra después con una Entrada normal).
+  const hasPedidoTipo = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('pedido_traspaso') WHERE name = 'tipo'`)
+    .get() as { v: number } | undefined
+  if (!hasPedidoTipo) {
+    sqlite.exec(
+      `ALTER TABLE pedido_traspaso ADD COLUMN tipo TEXT NOT NULL DEFAULT 'SUCURSAL';
+       ALTER TABLE pedido_traspaso ADD COLUMN proveedor_id TEXT;`
+    )
+  }
+  // pedido_traspaso.bodega_id: bodega elegida al capturar el pedido (matrices
+  // con varias bodegas) — al aprobar es la bodega preseleccionada para surtir.
+  const hasPedidoBodega = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('pedido_traspaso') WHERE name = 'bodega_id'`)
+    .get() as { v: number } | undefined
+  if (!hasPedidoBodega) {
+    sqlite.exec(`ALTER TABLE pedido_traspaso ADD COLUMN bodega_id TEXT`)
+  }
+
   // producto.iva_modo — agregado en Fase 3. ADD COLUMN es idempotente sólo si
   // validamos antes (SQLite no soporta IF NOT EXISTS en ALTER TABLE hasta 3.35).
   const hasIvaModo = sqlite
@@ -534,6 +579,23 @@ function ensureSchema(sqlite: Database.Database): void {
   sqlite
     .prepare(`UPDATE pago SET metodo = 'TARJETA' WHERE metodo IN ('TARJETA_DEBITO', 'TARJETA_CREDITO')`)
     .run()
+
+  // venta.cambio: cambio entregado al cliente (el pago EFECTIVO se guarda
+  // neto; recibido = pagos + cambio). Antes sólo iba en el ticket.
+  const hasCambio = sqlite
+    .prepare(`SELECT 1 AS v FROM pragma_table_info('venta') WHERE name = 'cambio'`)
+    .get() as { v: number } | undefined
+  if (!hasCambio) {
+    sqlite.exec(`ALTER TABLE venta ADD COLUMN cambio REAL NOT NULL DEFAULT 0`)
+  }
+
+  // RFC siempre en MAYÚSCULAS: versiones previas guardaban lo tecleado (el
+  // input sólo lo mostraba uppercase por CSS) y el ticket salía en minúsculas.
+  sqlite.exec(
+    `UPDATE empresa   SET rfc = UPPER(rfc) WHERE rfc IS NOT NULL AND rfc <> UPPER(rfc);
+     UPDATE sucursal  SET rfc = UPPER(rfc) WHERE rfc IS NOT NULL AND rfc <> UPPER(rfc);
+     UPDATE proveedor SET rfc = UPPER(rfc) WHERE rfc IS NOT NULL AND rfc <> UPPER(rfc);`
+  )
 }
 
 /**

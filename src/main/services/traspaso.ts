@@ -1,14 +1,15 @@
 import { BrowserWindow, dialog } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { getSqlite } from '../db/connection'
-import { requireAdminOrSupervisor } from './permisos'
 import type {
   AplicarTraspasoResult,
   CrearTraspasoInput,
   CrearTraspasoResult,
   MovimientoLinea,
   PickTraspasoResult,
+  ResumenSurtidoDto,
+  ResumenSurtidoItem,
   TraspasoBodegasInput,
   TraspasoFaltante,
   TraspasoFile,
@@ -53,6 +54,18 @@ function requireAdmin(userId: string): void {
   }
 }
 
+// Recibir traspasos lo puede hacer el SUPERVISOR en CUALQUIER modo de
+// instalación (a diferencia de requireAdminOrSupervisor, que lo limita a
+// SUCURSAL): también hay bodegas en modo MATRIZ que venden directo y reciben
+// mercancía con un supervisor a cargo.
+function requireRecibirTraspaso(userId: string): void {
+  const rol = rolOf(userId)
+  if (!rol) throw new Error('Usuario no identificado')
+  if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO' && rol !== 'SUPERVISOR') {
+    throw new Error('Requiere permisos de administrador o supervisor')
+  }
+}
+
 interface InstalRow {
   tipo: string
   sucursalActivaId: string | null
@@ -76,6 +89,57 @@ function getInstalacion(): InstalRow {
 
 function toYmd(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10)
+}
+
+/**
+ * Nombre de archivo legible para el .traspaso:
+ *   traspaso-21-07-2026-de-Matriz-a-Prueba_001-parte-2.traspaso
+ * (día - origen - destino - número de parte). Sólo nombres, sin códigos: el
+ * nombre del archivo es cosmético — las validaciones del receptor usan el
+ * payload interno (código de sucursal, checksum, folio anti-duplicado). La
+ * "parte" evita que el diálogo pida reemplazar un traspaso anterior del día.
+ */
+function nombreArchivoTraspaso(
+  fechaMs: number,
+  origen: string,
+  sucNombre: string,
+  parte: number
+): string {
+  const d = new Date(fechaMs)
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const fecha = `${dd}-${mm}-${d.getFullYear()}`
+  const limpia = (s: string): string =>
+    s.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '')
+  return `traspaso-${fecha}-de-${limpia(origen)}-a-${limpia(sucNombre)}-parte-${parte}.traspaso`
+}
+
+/** Etiqueta del origen para el nombre del archivo: la matriz o la sucursal local. */
+function etiquetaOrigenLocal(instal: InstalRow): string {
+  if (instal.tipo !== 'SUCURSAL') return 'Matriz'
+  if (!instal.sucursalActivaId) return 'Sucursal'
+  const s = getSqlite()
+    .prepare('SELECT nombre FROM sucursal WHERE id = ?')
+    .get(instal.sucursalActivaId) as { nombre: string } | undefined
+  return s?.nombre ?? 'Sucursal'
+}
+
+/**
+ * Número de parte del día para un destino: cuántos traspasos a esa sucursal se
+ * han registrado desde las 00:00 locales hasta `hastaMs` (inclusive). Para un
+ * traspaso NUEVO pasa `hastaMs = ahora` y suma 1; para reexportar uno viejo
+ * pasa su propia fecha y obtienes la parte que le tocó ese día.
+ */
+function traspasosDelDiaHasta(sucursalCodigo: string, hastaMs: number): number {
+  const d = new Date(hastaMs)
+  const inicioDia = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const row = getSqlite()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM traspaso
+        WHERE destino_tipo = 'SUCURSAL' AND sucursal_codigo = ? AND fecha >= ? AND fecha <= ?`
+    )
+    .get(sucursalCodigo, inicioDia, hastaMs) as { n: number }
+  return Number(row.n) || 0
 }
 
 function caducidadToMs(ymd: string): number {
@@ -152,11 +216,13 @@ export async function crearTraspaso(
     if (faltantes.length > 0) return { ok: false, faltantes }
 
     // ── Diálogo de guardado (antes de tocar la BD) ─────────────────────────────
-    const stamp = toYmd(Date.now()).replace(/-/g, '')
-    const base = `${sucursal.codigo}-${sucursal.nombre}`.replace(/[^a-zA-Z0-9._-]+/g, '_')
+    // Parte del día: traspasos previos de HOY a este destino + 1. Así el
+    // segundo traspaso del día no pide reemplazar el archivo del primero.
+    const ahora = Date.now()
+    const parte = traspasosDelDiaHasta(sucursal.codigo, ahora) + 1
     const opts = {
-      title: `Generar traspaso a "${sucursal.nombre}"`,
-      defaultPath: `traspaso-${base}-${stamp}.traspaso`,
+      title: `Generar traspaso a "${sucursal.nombre}" (parte ${parte} de hoy)`,
+      defaultPath: nombreArchivoTraspaso(ahora, etiquetaOrigenLocal(instal), sucursal.nombre, parte),
       filters: [
         { name: 'Archivo .traspaso', extensions: ['traspaso'] },
         { name: 'JSON', extensions: ['json'] },
@@ -276,6 +342,247 @@ export async function crearTraspaso(
     return { ok: true, path: filePath, folio, numero, lineas: lineas.length, unidades }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * Vuelve a generar el archivo `.traspaso` de un traspaso YA registrado (por si
+ * el original se perdió antes de llegar a la sucursal). NO toca inventario: el
+ * stock ya se descontó al crearlo; sólo reconstruye el archivo desde el
+ * historial (tabla `traspaso`, con las líneas y caducidades tal como salieron).
+ * Conserva el MISMO folio UUID, así el anti-duplicado del receptor sigue
+ * funcionando: si la sucursal ya lo aplicó, rechazará la copia.
+ */
+export async function reexportarTraspaso(
+  viewerUserId: string,
+  folio: string,
+  window: BrowserWindow | null
+): Promise<CrearTraspasoResult> {
+  try {
+    requireAdmin(viewerUserId)
+    const instal = getInstalacion()
+    const sqlite = getSqlite()
+
+    const t = sqlite
+      .prepare(
+        `SELECT folio, numero, fecha,
+                bodega_origen_id     AS bodegaOrigenId,
+                bodega_origen_nombre AS bodegaOrigenNombre,
+                sucursal_id          AS sucursalId,
+                sucursal_codigo      AS sucursalCodigo,
+                sucursal_nombre      AS sucursalNombre,
+                destino_tipo         AS destinoTipo,
+                unidades,
+                items_json           AS itemsJson
+           FROM traspaso WHERE folio = ?`
+      )
+      .get(folio) as
+      | {
+          folio: string
+          numero: number
+          fecha: number
+          bodegaOrigenId: string
+          bodegaOrigenNombre: string
+          sucursalId: string | null
+          sucursalCodigo: string
+          sucursalNombre: string
+          destinoTipo: string
+          unidades: number
+          itemsJson: string | null
+        }
+      | undefined
+    if (!t) throw new Error('Traspaso no encontrado')
+    if (t.destinoTipo !== 'SUCURSAL') {
+      throw new Error('Este traspaso fue interno entre bodegas: no usa archivo .traspaso')
+    }
+    const items = JSON.parse(t.itemsJson ?? '[]') as TraspasoLineaFile[]
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('El traspaso no tiene líneas guardadas en el historial')
+    }
+
+    const bodega = sqlite
+      .prepare('SELECT codigo FROM bodega WHERE id = ?')
+      .get(t.bodegaOrigenId) as { codigo: string } | undefined
+
+    // Misma nomenclatura que al generarlo: la parte que le tocó ese día.
+    const parte = Math.max(1, traspasosDelDiaHasta(t.sucursalCodigo, t.fecha))
+    const opts = {
+      title: `Volver a generar traspaso T-${t.numero} a "${t.sucursalNombre}"`,
+      defaultPath: nombreArchivoTraspaso(
+        t.fecha,
+        etiquetaOrigenLocal(instal),
+        t.sucursalNombre,
+        parte
+      ),
+      filters: [
+        { name: 'Archivo .traspaso', extensions: ['traspaso'] },
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'Todos', extensions: ['*'] }
+      ]
+    }
+    const dlg = window ? await dialog.showSaveDialog(window, opts) : await dialog.showSaveDialog(opts)
+    if (dlg.canceled || !dlg.filePath) return { ok: false, cancelled: true }
+
+    const payload: TraspasoPayload = {
+      folio: t.folio,
+      matriz: { id: instal.matrizId, propietario: instal.propietarioNombre },
+      bodegaOrigen: {
+        id: t.bodegaOrigenId,
+        codigo: bodega?.codigo ?? '',
+        nombre: t.bodegaOrigenNombre
+      },
+      sucursal: { id: t.sucursalId ?? '', codigo: t.sucursalCodigo, nombre: t.sucursalNombre },
+      items
+    }
+    const checksum = createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+    const fileObject: TraspasoFile = {
+      tipo: 'TRASPASO_BODEGA_SUCURSAL',
+      version: 1,
+      generadoEn: new Date(t.fecha).toISOString(),
+      checksum,
+      payload
+    }
+    writeFileSync(dlg.filePath, JSON.stringify(fileObject, null, 2), 'utf8')
+
+    return {
+      ok: true,
+      path: dlg.filePath,
+      folio: t.folio,
+      numero: t.numero,
+      lineas: items.length,
+      unidades: t.unidades
+    }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * Resumen de surtido: consolida TODOS los traspasos a SUCURSAL de un rango de
+ * fechas en una lista de productos SIN repetir — total enviado + existencia
+ * actual. Es la base para la lista de faltantes / pedido a proveedor semanal.
+ * La agrupación tolera ceros iniciales (traspasos viejos pueden traer el
+ * código largo y el catálogo ya usa el corto).
+ */
+export function resumenSurtido(
+  viewerUserId: string,
+  desdeYmd: string,
+  hastaYmd: string
+): ResumenSurtidoDto {
+  requireAdmin(viewerUserId)
+  const sqlite = getSqlite()
+
+  const parse = (ymd: string, fin: boolean): number => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+    if (!m) throw new Error('Fecha inválida (se espera AAAA-MM-DD)')
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+    return fin ? d.getTime() + 24 * 60 * 60 * 1000 - 1 : d.getTime()
+  }
+  const desdeMs = parse(desdeYmd, false)
+  const hastaMs = parse(hastaYmd, true)
+  if (hastaMs < desdeMs) throw new Error('El rango de fechas está invertido')
+
+  const rows = sqlite
+    .prepare(
+      `SELECT numero, fecha, sucursal_nombre AS destino, unidades, items_json AS itemsJson
+         FROM traspaso
+        WHERE destino_tipo = 'SUCURSAL' AND fecha >= ? AND fecha <= ?
+        ORDER BY fecha ASC`
+    )
+    .all(desdeMs, hastaMs) as Array<{
+    numero: number
+    fecha: number
+    destino: string
+    unidades: number
+    itemsJson: string | null
+  }>
+
+  const selProdExacto = sqlite.prepare(
+    'SELECT id, codigo, nombre FROM producto WHERE codigo = ?'
+  )
+  const selProdSinCeros = sqlite.prepare(
+    `SELECT id, codigo, nombre FROM producto
+      WHERE codigo NOT GLOB '*[^0-9]*' AND LTRIM(codigo, '0') = ? LIMIT 2`
+  )
+  const selExistencia = sqlite.prepare(
+    'SELECT COALESCE(SUM(saldo), 0) AS s FROM caducidad_lote WHERE producto_id = ?'
+  )
+
+  interface Acc {
+    codigo: string
+    nombre: string
+    enviado: number
+    productoId: string | null
+    destinos: Set<string>
+  }
+  const acc = new Map<string, Acc>()
+  let totalUnidades = 0
+
+  for (const t of rows) {
+    let lineas: TraspasoLineaFile[] = []
+    try {
+      lineas = JSON.parse(t.itemsJson ?? '[]') as TraspasoLineaFile[]
+    } catch {
+      lineas = []
+    }
+    for (const l of lineas) {
+      const codigoRaw = String(l.codigo ?? '').trim()
+      const cantidad = Math.round(Number(l.cantidad)) || 0
+      if (!codigoRaw || cantidad <= 0) continue
+      const key = /^\d+$/.test(codigoRaw) ? codigoRaw.replace(/^0+/, '') || codigoRaw : codigoRaw
+
+      let a = acc.get(key)
+      if (!a) {
+        // Resolver el producto ACTUAL del catálogo (exacto o sin ceros).
+        let prod = selProdExacto.get(codigoRaw) as
+          | { id: string; codigo: string; nombre: string }
+          | undefined
+        if (!prod && /^\d+$/.test(codigoRaw)) {
+          const cands = selProdSinCeros.all(key) as Array<{
+            id: string
+            codigo: string
+            nombre: string
+          }>
+          if (cands.length === 1) prod = cands[0]
+        }
+        a = {
+          codigo: prod?.codigo ?? codigoRaw,
+          nombre: prod?.nombre ?? l.nombre ?? codigoRaw,
+          enviado: 0,
+          productoId: prod?.id ?? null,
+          destinos: new Set<string>()
+        }
+        acc.set(key, a)
+      }
+      a.enviado += cantidad
+      a.destinos.add(t.destino)
+      totalUnidades += cantidad
+    }
+  }
+
+  const items: ResumenSurtidoItem[] = [...acc.values()]
+    .map((a) => ({
+      codigo: a.codigo,
+      nombre: a.nombre,
+      enviado: a.enviado,
+      existencia: a.productoId
+        ? Number((selExistencia.get(a.productoId) as { s: number }).s) || 0
+        : 0,
+      destinos: a.destinos.size
+    }))
+    .sort((x, y) => x.nombre.localeCompare(y.nombre, 'es'))
+
+  return {
+    desde: desdeYmd,
+    hasta: hastaYmd,
+    traspasos: rows.map((t) => ({
+      numero: t.numero,
+      fecha: new Date(t.fecha).toISOString(),
+      destino: t.destino,
+      unidades: Number(t.unidades) || 0
+    })),
+    items,
+    totalUnidades
   }
 }
 
@@ -547,7 +854,7 @@ export function aplicarTraspaso(
   bodegaDestinoId?: string | null
 ): AplicarTraspasoResult {
   try {
-    requireAdminOrSupervisor(viewerUserId)
+    requireRecibirTraspaso(viewerUserId)
     const instal = getInstalacion()
 
     const file = leerYValidar(filePath)
@@ -655,12 +962,25 @@ export function aplicarTraspaso(
 
     run()
 
+    // Aplicado con éxito → borrar el archivo del origen (normalmente el USB):
+    // evita re-aplicarlo por error y deja la memoria limpia. Best-effort: si
+    // el USB está protegido o ya no está conectado, el traspaso queda aplicado
+    // igual (el anti-duplicado por folio protege de todos modos).
+    let archivoEliminado = false
+    try {
+      unlinkSync(filePath)
+      archivoEliminado = true
+    } catch {
+      /* sin permisos o USB retirado — no es error */
+    }
+
     return {
       ok: true,
       folio: p.folio,
       lotesCreados,
       unidades,
-      noEncontrados: [...new Set(noEncontrados)]
+      noEncontrados: [...new Set(noEncontrados)],
+      archivoEliminado
     }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

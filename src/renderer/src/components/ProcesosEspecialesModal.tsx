@@ -6,6 +6,7 @@ import {
   Download,
   FileUp,
   History,
+  Merge,
   PackageCheck,
   PackageMinus,
   PackagePlus,
@@ -48,6 +49,7 @@ interface Props {
   onCatalogo: () => void
   onImportar: () => void
   onImportarDat: () => void
+  onDedupCodigos: () => void
 }
 
 // El SUPERVISOR (de sucursal) sólo puede registrar entradas de mercancía,
@@ -63,7 +65,8 @@ const SUPERVISOR_PROCESOS = new Set([
   'precios',
   'catalogo',
   'importar',
-  'importar-dat'
+  'importar-dat',
+  'dedup-codigos'
 ])
 
 /**
@@ -86,7 +89,8 @@ export default function ProcesosEspecialesModal({
   onSucursal,
   onCatalogo,
   onImportar,
-  onImportarDat
+  onImportarDat,
+  onDedupCodigos
 }: Props) {
   const allOptions: Option[] = [
     {
@@ -228,6 +232,16 @@ export default function ProcesosEspecialesModal({
       handler: () => {
         onClose()
         onImportarDat()
+      }
+    },
+    {
+      id: 'dedup-codigos',
+      label: 'Corregir códigos duplicados',
+      hint: 'Fusiona productos repetidos con y sin cero inicial (suma existencias y unifica precio)',
+      icon: <Merge className="size-5 text-amber-600" />,
+      handler: () => {
+        onClose()
+        onDedupCodigos()
       }
     }
   ]

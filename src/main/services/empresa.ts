@@ -93,7 +93,9 @@ export function updateEmpresa(viewerUserId: string, input: UpdateEmpresaInput): 
   const nombreComercial = requireField('Nombre comercial', input.nombreComercial)
   const razonSocial = requireField('Razón social', input.razonSocial)
   const sucursalNombre = requireField('Sucursal', input.sucursalNombre)
-  const rfc = nullableTrim(input.rfc)
+  // El input lo muestra en mayúsculas por CSS; aquí se normaliza de verdad
+  // (el ticket imprime lo persistido).
+  const rfc = nullableTrim(input.rfc)?.toUpperCase() ?? null
   const calle = nullableTrim(input.calle)
   const colonia = nullableTrim(input.colonia)
   const cp = nullableTrim(input.cp)

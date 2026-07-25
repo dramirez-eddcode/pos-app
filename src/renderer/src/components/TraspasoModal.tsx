@@ -45,6 +45,13 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
   const [preview, setPreview] = useState(false)
   // cantidad a traspasar por código
   const [cant, setCant] = useState<Record<string, string>>({})
+  // códigos en el ORDEN en que se capturaron (la tabla y el documento lo respetan)
+  const [orden, setOrden] = useState<string[]>([])
+  // Renglón sombreado para cotejar contra la hoja manual (↑/↓ o clic).
+  const [selRow, setSelRow] = useState(-1)
+  const tablaRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
+  const generarRef = useRef<HTMLButtonElement>(null)
   const [filtro, setFiltro] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -63,6 +70,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
     if (!open) return
     setStock([])
     setCant({})
+    setOrden([])
     setFiltro('')
     setDestinoCodigo('')
     setDestinoNombre('')
@@ -84,7 +92,9 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
         window.api.sucursales.list(userId).then((ss) => {
           const sucActivas = ss.filter((s) => s.activa)
           setSucursales(sucActivas)
-          setDestinoKey(sucActivas[0] ? `suc:${sucActivas[0].id}` : '')
+          // A propósito SIN destino preseleccionado: obligar a elegirlo evita
+          // traspasos generados hacia la sucursal equivocada por descuido.
+          setDestinoKey('')
         })
       )
     }
@@ -115,6 +125,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
   useEffect(() => {
     if (open && bodegaId) {
       setCant({})
+      setOrden([])
       setCapCodigo('')
       setCapItem(null)
       setCapCantidad('')
@@ -133,23 +144,80 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
   const filtered = useMemo(() => {
     const q = filtro.trim().toLowerCase()
     let base = stock
-    if (soloSeleccion) base = base.filter((it) => cantDe(it.codigo) > 0)
+    if (soloSeleccion) {
+      // Vista de seleccionados: en el ORDEN de captura, no el alfabético.
+      const pos = new Map(orden.map((c, i) => [c, i]))
+      base = base
+        .filter((it) => cantDe(it.codigo) > 0)
+        .slice()
+        .sort(
+          (a, b) =>
+            (pos.get(a.codigo) ?? Number.MAX_SAFE_INTEGER) -
+            (pos.get(b.codigo) ?? Number.MAX_SAFE_INTEGER)
+        )
+    }
     if (!q) return base
     return base.filter(
       (it) => it.codigo.toLowerCase().includes(q) || it.nombre.toLowerCase().includes(q)
     )
-  }, [stock, filtro, soloSeleccion, cantDe])
+  }, [stock, filtro, soloSeleccion, cantDe, orden])
 
   useEffect(() => {
     setPage(1)
+    setSelRow(-1)
   }, [filtro, bodegaId, pageSize, soloSeleccion])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageSafe = Math.min(page, totalPages)
   const pageItems = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize)
 
+  // ↑/↓ recorren y sombrean los renglones de la tabla (para ir validando
+  // mientras dictan la hoja manual). Sólo cuando el foco NO está en un input:
+  // dentro del campo de cantidad las flechas siguen subiendo/bajando el número.
+  const onKeyTabla = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const tgt = e.target as HTMLElement | null
+    if (
+      tgt instanceof HTMLInputElement ||
+      tgt instanceof HTMLSelectElement ||
+      tgt instanceof HTMLTextAreaElement
+    ) {
+      return
+    }
+    if (pageItems.length === 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'ArrowDown' && selRow >= pageItems.length - 1) {
+      // Una ↓ más después de la última fila → el foco cae en "Generar traspaso".
+      generarRef.current?.focus()
+      return
+    }
+    setSelRow((i) =>
+      e.key === 'ArrowDown' ? Math.min(pageItems.length - 1, i + 1) : Math.max(0, i - 1)
+    )
+  }
+
+  // Mantén visible el renglón sombreado y ajusta si la lista cambia.
+  useEffect(() => {
+    if (selRow < 0) return
+    if (selRow > pageItems.length - 1) {
+      setSelRow(pageItems.length - 1)
+      return
+    }
+    const row = tbodyRef.current?.querySelector(`[data-fila="${selRow}"]`) as HTMLElement | null
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow, pageItems.length])
+
   const setCantidad = (codigo: string, value: string): void => {
     setCant((prev) => ({ ...prev, [codigo]: value }))
+    // Rastrea el ORDEN DE CAPTURA: la lista del traspaso respeta el orden en
+    // que se fueron agregando los productos (no el alfabético del stock).
+    const n = Math.round(Number(value))
+    if (Number.isFinite(n) && n > 0) {
+      setOrden((prev) => (prev.includes(codigo) ? prev : [...prev, codigo]))
+    } else if (value === '') {
+      setOrden((prev) => prev.filter((c) => c !== codigo))
+    }
   }
 
   const seleccion = useMemo(() => {
@@ -158,10 +226,15 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
     let unidades = 0
     let valor = 0
     const items: { codigo: string; cantidad: number }[] = []
-    for (const [codigo, val] of Object.entries(cant)) {
+    // Recorre en ORDEN de captura (Object.entries reordenaría los códigos
+    // numéricos de forma ascendente); el documento hereda este orden.
+    const codigos = [...orden, ...Object.keys(cant).filter((c) => !orden.includes(c))]
+    for (const codigo of codigos) {
+      const val = cant[codigo]
       const n = Math.round(Number(val))
       if (!Number.isFinite(n) || n <= 0) continue
       const item = byCodigo.get(codigo)
+      if (!item) continue
       const disp = item?.existencias ?? 0
       const cantidad = Math.min(n, disp) // nunca más que lo disponible
       if (cantidad <= 0) continue
@@ -171,7 +244,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
       items.push({ codigo, cantidad })
     }
     return { lineas, unidades, valor: +valor.toFixed(2), items }
-  }, [cant, stock])
+  }, [cant, stock, orden])
 
   const onFileCsv = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -186,12 +259,23 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
       })
       const rows = parsed.data.filter((r) => (r.codigo ?? '').trim())
       const next: Record<string, string> = {}
+      const codigosCsv: string[] = []
       for (const r of rows) {
         const c = (r.codigo ?? '').trim()
         const q = (r.cantidad ?? '').trim()
-        if (c && q) next[c] = q
+        if (c && q) {
+          if (!(c in next)) codigosCsv.push(c)
+          next[c] = q
+        }
       }
       setCant((prev) => ({ ...prev, ...next }))
+      // Conserva el orden de los renglones del CSV (un objeto reordenaría los
+      // códigos numéricos).
+      setOrden((prev) => {
+        const merged = [...prev]
+        for (const c of codigosCsv) if (!merged.includes(c)) merged.push(c)
+        return merged
+      })
       toast.success(`CSV aplicado: ${Object.keys(next).length} cantidades`)
     } catch (err) {
       toast.error('Error leyendo CSV', { description: err instanceof Error ? err.message : String(err) })
@@ -340,6 +424,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
       })
     }
     setCant((prev) => ({ ...prev, [capItem.codigo]: String(final) }))
+    setOrden((prev) => (prev.includes(capItem.codigo) ? prev : [...prev, capItem.codigo]))
     setCapItem(null)
     setCapCodigo('')
     setCapCantidad('')
@@ -383,12 +468,28 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
     setPreview(true)
   }, [bodegaId, destinoLibre, destinoCodigo, destinoNombre, destinoKey, seleccion.items])
 
+  // Salir (Esc, X o Cancelar) con cantidades capturadas pide confirmación:
+  // un clic accidental perdería toda la captura del traspaso.
+  const requestClose = useCallback(() => {
+    if (generando) return
+    if (seleccion.lineas === 0) {
+      onClose()
+      return
+    }
+    toast.warning('¿Salir y cancelar este traspaso?', {
+      id: 'traspaso-descartar',
+      description: `Se perderán las ${seleccion.lineas} línea(s) capturadas (aún no se ha generado nada).`,
+      duration: 8000,
+      action: { label: 'Sí, salir', onClick: () => onClose() }
+    })
+  }, [generando, seleccion.lineas, onClose])
+
   return (
     <>
     <Modal
       open={open && !searchOpen}
       title={destinoLibre ? 'Generar traspaso' : 'Traspaso de inventario'}
-      onClose={onClose}
+      onClose={requestClose}
       maxWidth="max-w-5xl"
     >
       <div className="relative">
@@ -468,13 +569,20 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
               </div>
             ) : (
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Destino</label>
+                <label className="block text-xs text-muted-foreground mb-1">
+                  Destino{' '}
+                  {!destinoKey && <span className="text-red-600 font-semibold">*</span>}
+                </label>
                 <select
                   value={destinoKey}
                   onChange={(e) => setDestinoKey(e.target.value)}
-                  className="w-full border border-border rounded px-2 py-1.5 bg-background"
+                  className={`w-full border rounded px-2 py-1.5 ${
+                    destinoKey
+                      ? 'border-border bg-background'
+                      : 'border-red-400 bg-red-50 text-red-900'
+                  }`}
                 >
-                  <option value="">— elige destino —</option>
+                  <option value="">— Seleccionar sucursal o bodega destino —</option>
                   {sucursales.length > 0 && (
                     <optgroup label="Sucursales (archivo .traspaso por USB)">
                       {sucursales.map((s) => (
@@ -497,6 +605,11 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
                     </optgroup>
                   )}
                 </select>
+                {!destinoKey && (
+                  <p className="text-[11px] text-red-700 mt-1 font-medium">
+                    Selecciona la sucursal o bodega destino antes de generar el traspaso.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -604,8 +717,15 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
             </label>
           </div>
 
-          {/* Tabla */}
-          <div className="border border-border rounded overflow-auto max-h-[45vh]">
+          {/* Tabla — enfocable: con el foco aquí, ↑/↓ sombrean renglones para
+              cotejar contra la hoja manual (clic en una fila también sombrea) */}
+          <div
+            ref={tablaRef}
+            tabIndex={0}
+            onKeyDown={onKeyTabla}
+            title="Con la tabla enfocada: ↑/↓ recorren y sombrean los renglones"
+            className="border border-border rounded overflow-auto max-h-[45vh] focus:outline-none focus:ring-2 focus:ring-primary/30"
+          >
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
                 <tr className="text-left">
@@ -616,7 +736,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
                   <th className="px-2 py-1.5 w-24 text-right">Importe</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={tbodyRef}>
                 {loading && (
                   <tr><td colSpan={5} className="px-2 py-8"><span className="flex items-center justify-center"><Spinner label="Cargando stock…" /></span></td></tr>
                 )}
@@ -629,12 +749,28 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
                         : 'Sin coincidencias.'}
                   </td></tr>
                 )}
-                {!loading && pageItems.map((it) => {
+                {!loading && pageItems.map((it, i) => {
                   const n = cantDe(it.codigo)
                   const raw = Math.round(Number(cant[it.codigo]))
                   const excede = Number.isFinite(raw) && raw > it.existencias
                   return (
-                    <tr key={it.productoId} className="border-b border-border/60">
+                    <tr
+                      key={it.productoId}
+                      data-fila={i}
+                      onClick={(e) => {
+                        setSelRow(i)
+                        // Enfoca la tabla para que ↑/↓ funcionen de inmediato
+                        // (como en Salidas) — salvo que el clic haya sido en el
+                        // campo de cantidad o un botón, que conservan su foco.
+                        const tgt = e.target as HTMLElement
+                        if (!(tgt instanceof HTMLInputElement) && !tgt.closest('button')) {
+                          tablaRef.current?.focus()
+                        }
+                      }}
+                      className={`border-b border-border/60 cursor-pointer ${
+                        i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                      }`}
+                    >
                       <td className="px-2 py-1 font-mono">{it.codigo}</td>
                       <td className="px-2 py-1">{it.nombre}</td>
                       <td className="px-2 py-1 text-right font-mono">{it.existencias.toLocaleString('es-MX')}</td>
@@ -709,8 +845,9 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
         </div>
 
         <footer className="flex justify-end gap-2 px-4 py-3 border-t border-border bg-muted/20">
-          <button type="button" onClick={onClose} disabled={generando} className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm">Cancelar</button>
+          <button type="button" onClick={requestClose} disabled={generando} className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm">Cancelar</button>
           <button
+            ref={generarRef}
             type="button"
             onClick={pedirConfirmacion}
             disabled={
@@ -719,7 +856,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
               seleccion.items.length === 0 ||
               (destinoLibre ? !destinoCodigo.trim() || !destinoNombre.trim() : !destinoKey)
             }
-            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+            className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 focus:ring-2 focus:ring-primary/50 focus:outline-none text-sm font-semibold"
           >
             {generando && <Spinner size={14} />}
             {generando ? 'Generando…' : 'Generar traspaso'}

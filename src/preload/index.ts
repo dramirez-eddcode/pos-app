@@ -26,6 +26,14 @@ import type {
   StockBodegaPdfInput,
   CrearTraspasoInput,
   CrearTraspasoResult,
+  CreatePedidoInput,
+  PedidoLinea,
+  PedidoTraspasoDto,
+  ProveedorBasicoDto,
+  SucursalBasicaDto,
+  PickActualizacionResult,
+  AplicarActualizacionResult,
+  ResumenSurtidoDto,
   TraspasoBodegasInput,
   PickTraspasoResult,
   AplicarTraspasoResult,
@@ -36,6 +44,8 @@ import type {
   CreateUsuarioInput,
   CreateVentaInput,
   CreateVentaResult,
+  DedupApplyResult,
+  DedupPreviewResult,
   ApplyFarmaResult,
   ApplyDatResult,
   PickDatResult,
@@ -71,7 +81,8 @@ import type {
   UpdateUsuarioInput,
   UpdateConfigInput,
   UsuarioListItem,
-  VentaDetailDto
+  VentaDetailDto,
+  VentasDiaDto
 } from '@shared/dto'
 import type { SucursalDto } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
@@ -257,7 +268,11 @@ const api = {
       viewerUserId: string,
       input: BulkUpsertProductosInput
     ): Promise<BulkUpsertProductosResult> =>
-      ipcRenderer.invoke('productos:bulk-upsert', viewerUserId, input)
+      ipcRenderer.invoke('productos:bulk-upsert', viewerUserId, input),
+    dedupPreview: (viewerUserId: string): Promise<DedupPreviewResult> =>
+      ipcRenderer.invoke('productos:dedup-preview', viewerUserId),
+    dedupApply: (viewerUserId: string): Promise<DedupApplyResult> =>
+      ipcRenderer.invoke('productos:dedup-apply', viewerUserId)
   },
 
   ventas: {
@@ -269,15 +284,17 @@ const api = {
     cancel: (ventaId: string, userId: string, motivo?: string | null): Promise<CancelVentaResult> =>
       ipcRenderer.invoke('ventas:cancel', ventaId, userId, motivo ?? null),
     totalesRecientes: (): Promise<{ antier: number; ayer: number; hoy: number }> =>
-      ipcRenderer.invoke('ventas:totales-recientes')
+      ipcRenderer.invoke('ventas:totales-recientes'),
+    dia: (viewerUserId: string, dia: string): Promise<VentasDiaDto> =>
+      ipcRenderer.invoke('ventas:dia', viewerUserId, dia)
   },
 
   corte: {
     hoy: (): Promise<CorteHoyDto> => ipcRenderer.invoke('corte:hoy'),
     create: (cajeroId: string, tipo: CorteTipo): Promise<CreateCorteResult> =>
       ipcRenderer.invoke('corte:create', cajeroId, tipo),
-    finales: (viewerUserId: string): Promise<CorteFinalHistItem[]> =>
-      ipcRenderer.invoke('corte:finales', viewerUserId),
+    finales: (viewerUserId: string, limit?: number): Promise<CorteFinalHistItem[]> =>
+      ipcRenderer.invoke('corte:finales', viewerUserId, limit),
     reimpresion: (viewerUserId: string, corteId: string): Promise<CorteReimpresionDto> =>
       ipcRenderer.invoke('corte:reimpresion', viewerUserId, corteId)
   },
@@ -337,6 +354,16 @@ const api = {
     ): Promise<CrearTraspasoResult> =>
       ipcRenderer.invoke('traspaso:entre-bodegas', viewerUserId, input),
     pick: (): Promise<PickTraspasoResult> => ipcRenderer.invoke('traspaso:pick'),
+    reexportar: (viewerUserId: string, folio: string): Promise<CrearTraspasoResult> =>
+      ipcRenderer.invoke('traspaso:reexportar', viewerUserId, folio),
+    resumenSurtido: (viewerUserId: string, desde: string, hasta: string): Promise<ResumenSurtidoDto> =>
+      ipcRenderer.invoke('traspaso:resumen-surtido', viewerUserId, desde, hasta),
+    resumenImprimir: (
+      viewerUserId: string,
+      desde: string,
+      hasta: string
+    ): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('traspaso:resumen-imprimir', viewerUserId, desde, hasta),
     aplicar: (
       viewerUserId: string,
       filePath: string,
@@ -344,6 +371,63 @@ const api = {
       bodegaDestinoId?: string | null
     ): Promise<AplicarTraspasoResult> =>
       ipcRenderer.invoke('traspaso:aplicar', viewerUserId, filePath, force, bodegaDestinoId ?? null)
+  },
+
+  actualizacion: {
+    pick: (viewerUserId: string): Promise<PickActualizacionResult> =>
+      ipcRenderer.invoke('actualizacion:pick', viewerUserId),
+    aplicar: (viewerUserId: string, filePath: string): Promise<AplicarActualizacionResult> =>
+      ipcRenderer.invoke('actualizacion:aplicar', viewerUserId, filePath)
+  },
+
+  pedidos: {
+    sucursales: (viewerUserId: string): Promise<SucursalBasicaDto[]> =>
+      ipcRenderer.invoke('pedidos:sucursales', viewerUserId),
+    proveedores: (viewerUserId: string): Promise<ProveedorBasicoDto[]> =>
+      ipcRenderer.invoke('pedidos:proveedores', viewerUserId),
+    create: (viewerUserId: string, input: CreatePedidoInput): Promise<PedidoTraspasoDto> =>
+      ipcRenderer.invoke('pedidos:create', viewerUserId, input),
+    list: (viewerUserId: string): Promise<PedidoTraspasoDto[]> =>
+      ipcRenderer.invoke('pedidos:list', viewerUserId),
+    pendientes: (viewerUserId: string): Promise<number> =>
+      ipcRenderer.invoke('pedidos:pendientes', viewerUserId),
+    update: (
+      viewerUserId: string,
+      pedidoId: string,
+      items: PedidoLinea[]
+    ): Promise<PedidoTraspasoDto> =>
+      ipcRenderer.invoke('pedidos:update', viewerUserId, pedidoId, items),
+    rechazar: (viewerUserId: string, pedidoId: string): Promise<PedidoTraspasoDto> =>
+      ipcRenderer.invoke('pedidos:rechazar', viewerUserId, pedidoId),
+    aprobar: (
+      viewerUserId: string,
+      pedidoId: string,
+      bodegaOrigenId: string
+    ): Promise<CrearTraspasoResult> =>
+      ipcRenderer.invoke('pedidos:aprobar', viewerUserId, pedidoId, bodegaOrigenId),
+    imprimir: (
+      viewerUserId: string,
+      pedidoId: string,
+      copia?: number
+    ): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('pedidos:imprimir', viewerUserId, pedidoId, copia ?? null),
+    pdf: (viewerUserId: string, pedidoId: string): Promise<PdfMovimientoResult> =>
+      ipcRenderer.invoke('pedidos:pdf', viewerUserId, pedidoId),
+    listasProveedor: (viewerUserId: string): Promise<PedidoTraspasoDto[]> =>
+      ipcRenderer.invoke('pedidos:listas-proveedor', viewerUserId),
+    guardarLista: (
+      viewerUserId: string,
+      pedidoId: string,
+      items: PedidoLinea[],
+      notas?: string | null
+    ): Promise<PedidoTraspasoDto> =>
+      ipcRenderer.invoke('pedidos:guardar-lista', viewerUserId, pedidoId, items, notas ?? null),
+    existenciaBodega: (
+      viewerUserId: string,
+      codigo: string,
+      bodegaId: string
+    ): Promise<number> =>
+      ipcRenderer.invoke('pedidos:existencia-bodega', viewerUserId, codigo, bodegaId)
   },
 
   movimientos: {

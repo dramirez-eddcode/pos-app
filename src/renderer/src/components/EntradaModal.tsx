@@ -195,6 +195,22 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
     setItems((prev) => prev.filter((_, idx) => idx !== i))
   }, [])
 
+  // Salir (Esc, X o Cancelar) con renglones capturados pide confirmación:
+  // un clic accidental perdería toda la captura de la entrada.
+  const requestClose = useCallback(() => {
+    if (saving) return
+    if (items.length === 0) {
+      onClose()
+      return
+    }
+    toast.warning('¿Salir y cancelar esta entrada?', {
+      id: 'entrada-descartar',
+      description: `Se perderán los ${items.length} renglón(es) capturados (aún no se ha guardado nada).`,
+      duration: 8000,
+      action: { label: 'Sí, salir', onClick: () => onClose() }
+    })
+  }, [saving, items.length, onClose])
+
   // ── CSV: descarga plantilla + carga bulk ─────────────────────────────────
   const escapeCsv = (v: string): string => {
     if (v.includes('"') || v.includes(',') || v.includes('\n') || v.includes('\r')) {
@@ -448,6 +464,15 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const onKeyCantidad = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
+      // No avanza al siguiente campo hasta capturar una cantidad válida (>0):
+      // evita renglones que se quedaban sin cantidad por dar Enter de largo.
+      const n = Math.round(Number(cantidad))
+      if (!Number.isFinite(n) || n <= 0) {
+        toast.error('Captura la cantidad antes de continuar')
+        cantRef.current?.focus()
+        cantRef.current?.select()
+        return
+      }
       costoRef.current?.focus()
     }
   }
@@ -501,7 +526,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
       <Modal
         open={open && !searchOpen && nuevoProvPara === null}
         title="Entrada de mercancía"
-        onClose={onClose}
+        onClose={requestClose}
         maxWidth="max-w-5xl"
       >
         <div className="p-4 text-sm space-y-4 max-h-[75vh] overflow-y-auto">
@@ -895,7 +920,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={saving}
               className="px-4 py-1.5 border border-border rounded hover:bg-muted text-sm"
             >

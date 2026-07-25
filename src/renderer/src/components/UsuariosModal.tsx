@@ -453,9 +453,10 @@ function CreateUsuarioSubModal({
           rol,
           puedeCancelar
         })
+        // Por seguridad la password NO se muestra: sólo la conoce quien la capturó.
         toast.success(`Usuario "${login}" creado`, {
-          description: `Password: ${password} · Avísale al usuario antes de cerrar esta ventana.`,
-          duration: 15000
+          description: 'Comparte la password con el usuario de forma segura.',
+          duration: 8000
         })
         console.log('[usuarios:create] id:', r.id)
         onCreated()
@@ -611,8 +612,9 @@ function ResetPasswordSubModal({
       setSaving(true)
       try {
         await window.api.usuarios.resetPassword(user.id, target.id, newPassword)
+        // Por seguridad la password NO se muestra: sólo la conoce quien la capturó.
         toast.success(`Password de "${target.login}" actualizada`, {
-          description: `Nueva password: ${newPassword} · Avísale antes de cerrar.`,
+          description: 'Comparte la nueva password con el usuario de forma segura.',
           duration: 15000
         })
         onDone()

@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import {
   Boxes,
   ArrowRightLeft,
+  Merge,
   ClipboardList,
   Download,
   History,
@@ -22,6 +23,8 @@ import {
   Warehouse
 } from 'lucide-react'
 import { useSession } from '../stores/session'
+import { useSettings } from '../stores/settings'
+import { useShortcut } from '../hooks/useShortcut'
 import { fechaTicket, horaTicket } from '../lib/format'
 import { formatRol } from '../lib/roles'
 import { arrowFieldNav } from '../lib/arrowNav'
@@ -42,6 +45,8 @@ import UsuariosModal from '../components/UsuariosModal'
 import RespaldoModal from '../components/RespaldoModal'
 import IvaConfigModal from '../components/IvaConfigModal'
 import BodegasModal from '../components/BodegasModal'
+import DedupCodigosModal from '../components/DedupCodigosModal'
+import PedidosRevisionModal from '../components/PedidosRevisionModal'
 import Spinner from '../components/Spinner'
 
 interface Props {
@@ -60,6 +65,7 @@ const EXIT_TOAST_ID = 'matriz-logout-confirm'
 
 export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: Props) {
   const { user, logout } = useSession()
+  const { settings } = useSettings()
   const menuRef = useRef<HTMLElement>(null)
   const [sucursalesOpen, setSucursalesOpen] = useState(false)
   const [catalogoOpen, setCatalogoOpen] = useState(false)
@@ -77,6 +83,9 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
   const [respaldoOpen, setRespaldoOpen] = useState(false)
   const [ivaOpen, setIvaOpen] = useState(false)
   const [bodegasOpen, setBodegasOpen] = useState(false)
+  const [dedupOpen, setDedupOpen] = useState(false)
+  const [pedidosOpen, setPedidosOpen] = useState(false)
+  const [pedidosPendientes, setPedidosPendientes] = useState<number | null>(null)
   const [now, setNow] = useState<Date>(() => new Date())
 
   const [sucursalesCount, setSucursalesCount] = useState<{ total: number; activas: number } | null>(
@@ -89,12 +98,14 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
   const refresh = useCallback(async () => {
     if (!user) return
     try {
-      const [sucs, bods, prods, users] = await Promise.all([
+      const [sucs, bods, prods, users, pendPedidos] = await Promise.all([
         window.api.sucursales.list(user.id).catch(() => []),
         window.api.bodegas.list().catch(() => []),
         window.api.productos.listCatalogo(user.id).catch(() => []),
-        window.api.usuarios.list(user.id).catch(() => [])
+        window.api.usuarios.list(user.id).catch(() => []),
+        window.api.pedidos.pendientes(user.id).catch(() => 0)
       ])
+      setPedidosPendientes(pendPedidos)
       setSucursalesCount({
         total: sucs.length,
         activas: sucs.filter((s) => s.activa).length
@@ -129,14 +140,33 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
     return () => clearInterval(t)
   }, [])
 
+  // F12 = cerrar sesión, igual que en el POS: el primer F12 pide confirmación
+  // y un segundo F12 (o el botón del toast) confirma.
+  const pendingLogoutRef = useRef(false)
+
+  const confirmLogout = useCallback(() => {
+    pendingLogoutRef.current = false
+    toast.dismiss(EXIT_TOAST_ID)
+    logout()
+  }, [logout])
+
   const requestLogout = useCallback(() => {
+    if (pendingLogoutRef.current) {
+      confirmLogout()
+      return
+    }
+    pendingLogoutRef.current = true
     toast.warning('¿Cerrar sesión?', {
       id: EXIT_TOAST_ID,
-      description: `Saldrás como ${user?.nombre ?? ''}.`,
+      description: `Saldrás como ${user?.nombre ?? ''}. Presiona F12 otra vez para confirmar, o ignóralo para continuar.`,
       duration: 6000,
-      action: { label: 'Cerrar sesión', onClick: () => logout() }
+      action: { label: 'Cerrar sesión', onClick: confirmLogout },
+      onAutoClose: () => (pendingLogoutRef.current = false),
+      onDismiss: () => (pendingLogoutRef.current = false)
     })
-  }, [user?.nombre, logout])
+  }, [confirmLogout, user?.nombre])
+
+  useShortcut([{ key: 'F12', handler: requestLogout }])
 
   if (!user) return null
 
@@ -176,7 +206,7 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
               type="button"
               onClick={requestLogout}
               className="p-1.5 rounded hover:bg-muted"
-              title="Cerrar sesión"
+              title="Cerrar sesión (F12)"
               aria-label="Cerrar sesión"
             >
               <LogOut className="size-4" />
@@ -200,16 +230,19 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Punto de venta (equipo único: gestión + ventas) */}
-          <DashCard
-            icon={<ShoppingCart className="size-5 text-green-700" />}
-            titulo="Punto de venta"
-            subtitulo="Vender en este equipo"
-            descripcion="Abre la pantalla de ventas usando el inventario de esta matriz. Regresas al panel desde el botón de matriz."
-            cta="Abrir punto de venta"
-            onClick={onAbrirPos}
-            accent="green"
-          />
+          {/* Punto de venta (equipo único: gestión + ventas). Se puede ocultar
+              desde Configuración (matrizMostrarPuntoVenta). */}
+          {(settings?.matrizMostrarPuntoVenta ?? true) && (
+            <DashCard
+              icon={<ShoppingCart className="size-5 text-green-700" />}
+              titulo="Punto de venta"
+              subtitulo="Vender en este equipo"
+              descripcion="Abre la pantalla de ventas usando el inventario de esta matriz. Regresas al panel desde el botón de matriz."
+              cta="Abrir punto de venta"
+              onClick={onAbrirPos}
+              accent="green"
+            />
+          )}
 
           {/* Sucursales */}
           <DashCard
@@ -389,6 +422,39 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
             accent="indigo"
           />
 
+          {/* Pedidos de surtido prellenados por cajeras — revisión/aprobación */}
+          <DashCard
+            icon={<ClipboardList className="size-5 text-amber-700" />}
+            titulo="Pedidos de sucursales"
+            subtitulo={
+              pedidosPendientes != null ? (
+                pedidosPendientes > 0 ? (
+                  `${pedidosPendientes} pendiente${pedidosPendientes === 1 ? '' : 's'} de aprobar`
+                ) : (
+                  'Sin pendientes'
+                )
+              ) : (
+                <Spinner label="Cargando…" size={12} />
+              )
+            }
+            descripcion="Pedidos que prellenan las cajeras desde el punto de venta. Al aprobar se genera el traspaso y se descuenta el stock."
+            cta="Revisar y aprobar"
+            onClick={() => setPedidosOpen(true)}
+            accent="orange"
+            badge={pedidosPendientes ?? 0}
+          />
+
+          {/* Corregir códigos duplicados (cero inicial del legacy) */}
+          <DashCard
+            icon={<Merge className="size-5 text-amber-600" />}
+            titulo="Códigos duplicados"
+            subtitulo="Fusionar códigos con cero inicial"
+            descripcion="Une productos repetidos (con y sin cero inicial): suma existencias al código correcto y unifica el precio."
+            cta="Revisar y corregir"
+            onClick={() => setDedupOpen(true)}
+            accent="orange"
+          />
+
           {/* Exportar a sucursal — abre Sucursales con el botón Exportar por fila */}
           <DashCard
             icon={<Upload className="size-5 text-rose-600" />}
@@ -442,6 +508,15 @@ export default function MatrizPage({ propietarioNombre, matrizId, onAbrirPos }: 
         userId={user.id}
       />
       <StockBodegaModal open={stockBodegaOpen} onClose={() => setStockBodegaOpen(false)} />
+      <DedupCodigosModal open={dedupOpen} onClose={() => setDedupOpen(false)} onDone={refresh} />
+      <PedidosRevisionModal
+        open={pedidosOpen}
+        onClose={() => {
+          setPedidosOpen(false)
+          refresh()
+        }}
+        onDone={refresh}
+      />
       <TraspasoModal open={traspasoOpen} onClose={() => setTraspasoOpen(false)} userId={user.id} />
       <ProveedoresModal open={proveedoresOpen} onClose={() => setProveedoresOpen(false)} />
       <RecibirTraspasoModal
@@ -512,7 +587,8 @@ function DashCard({
   cta,
   onClick,
   disabled,
-  accent
+  accent,
+  badge
 }: {
   icon: ReactNode
   titulo: string
@@ -522,13 +598,23 @@ function DashCard({
   onClick?: () => void
   disabled?: boolean
   accent: Accent
+  /** Contador tipo notificación (esquina superior derecha). Oculto si es 0/undefined. */
+  badge?: number
 }) {
   return (
     <div
-      className={`flex flex-col bg-background border border-border rounded-lg p-4 transition-colors ${
+      className={`relative flex flex-col bg-background border border-border rounded-lg p-4 transition-colors ${
         disabled ? 'opacity-60' : `${ACCENT_BORDER[accent]} hover:shadow-sm`
       }`}
     >
+      {badge != null && badge > 0 && (
+        <span
+          className="absolute -top-2 -right-2 min-w-[22px] h-[22px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold flex items-center justify-center shadow"
+          title={`${badge} pendiente${badge === 1 ? '' : 's'}`}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
       <div className="flex items-start gap-3 mb-3">
         <div className={`shrink-0 size-10 rounded ${ACCENT_BG[accent]} flex items-center justify-center`}>
           {icon}

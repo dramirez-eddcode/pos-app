@@ -170,10 +170,30 @@ export function getAllActivos(): {
 
 export function getByCodigo(codigo: string): ProductoDto | null {
   const db = getSqlite()
-  const row = db
-    .prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`)
-    .get(codigo.trim()) as RawRow | undefined
-  return row ? rowToDto(row) : null
+  const c = codigo.trim()
+  const row = db.prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`).get(c) as
+    | RawRow
+    | undefined
+  if (row) return rowToDto(row)
+
+  // Tolerancia a CEROS INICIALES: el catálogo se maneja con el código corto
+  // (legacy), pero el escáner lee el EAN completo con cero(s) al frente. Si el
+  // código exacto no existe y hay EXACTAMENTE un producto cuyo código sólo
+  // difiere en ceros iniciales, se regresa ése.
+  if (/^\d+$/.test(c)) {
+    const sinCeros = c.replace(/^0+/, '')
+    if (sinCeros) {
+      const candidatos = db
+        .prepare(
+          `${SELECT_COMMON}
+            WHERE p.codigo NOT GLOB '*[^0-9]*' AND LTRIM(p.codigo, '0') = ?
+            LIMIT 2`
+        )
+        .all(sinCeros) as RawRow[]
+      if (candidatos.length === 1) return rowToDto(candidatos[0]!)
+    }
+  }
+  return null
 }
 
 /**

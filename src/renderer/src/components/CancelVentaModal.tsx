@@ -176,6 +176,14 @@ export default function CancelVentaModal({ open, onClose, onCancelled, currentUs
               </div>
             )}
 
+            {!detail.cancelada && detail.pagos.some((p) => p.metodo !== 'EFECTIVO') && (
+              <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded px-3 py-2 text-xs">
+                Esta venta tiene <strong>pago con tarjeta</strong>
+                {detail.pagos.length > 1 ? ' (pago mixto)' : ''}: recuerda gestionar la
+                devolución del cargo en la terminal bancaria.
+              </div>
+            )}
+
             <div className="border border-border rounded overflow-hidden">
               <table className="w-full text-xs">
                 <thead className="bg-muted/40 border-b border-border">
@@ -218,6 +226,18 @@ export default function CancelVentaModal({ open, onClose, onCancelled, currentUs
                       <span>{money(p.monto)}</span>
                     </div>
                   ))}
+                  {detail.cambio > 0 && (
+                    <>
+                      <div className="flex justify-between border-t border-border/60 pt-0.5">
+                        <span>Recibido</span>
+                        <span>{money(detail.recibido)}</span>
+                      </div>
+                      <div className="flex justify-between text-green-700">
+                        <span>Cambio</span>
+                        <span>{money(detail.cambio)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

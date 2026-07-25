@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { RotateCcw, FileText, Power, DatabaseBackup } from 'lucide-react'
+import { RotateCcw, FileText, Power, DatabaseBackup, ClipboardList } from 'lucide-react'
 import Modal from './Modal'
 
 interface Option {
@@ -14,8 +14,9 @@ interface Option {
 interface Props {
   open: boolean
   onClose: () => void
-  /** El respaldo de datos es exclusivo de admins (no supervisor/cajero). */
-  mostrarRespaldo: boolean
+  /** Sólo en instalaciones MATRIZ: prellenado de pedidos de surtido a sucursal. */
+  mostrarPedido: boolean
+  onPedido: () => void
   onCancelaciones: () => void
   onCorte: () => void
   onRespaldo: () => void
@@ -25,11 +26,14 @@ interface Props {
 /**
  * Menú "Funciones del Sistema" (F11 en el legacy).
  * Navegación teclado-first: ↑/↓ mueve selección, Enter activa, Esc cierra.
+ * El respaldo está disponible para cualquier rol (igual que desde
+ * Configuración): el cierre del día lo suele hacer el cajero.
  */
 export default function FunctionsModal({
   open,
   onClose,
-  mostrarRespaldo,
+  mostrarPedido,
+  onPedido,
   onCancelaciones,
   onCorte,
   onRespaldo,
@@ -57,6 +61,16 @@ export default function FunctionsModal({
       }
     },
     {
+      id: 'pedido',
+      label: 'Pedido de surtido a sucursal',
+      hint: 'Prellena lo que pide otra farmacia — se aprueba en la matriz antes de descontar',
+      icon: <ClipboardList className="size-5 text-muted-foreground" />,
+      handler: () => {
+        onClose()
+        onPedido()
+      }
+    },
+    {
       id: 'respaldo',
       label: 'Respaldo de datos',
       hint: 'Crear respaldo en USB o restaurar desde uno',
@@ -76,7 +90,7 @@ export default function FunctionsModal({
     }
   ]
 
-  const options = allOptions.filter((o) => o.id !== 'respaldo' || mostrarRespaldo)
+  const options = allOptions.filter((o) => o.id !== 'pedido' || mostrarPedido)
 
   const [idx, setIdx] = useState(0)
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([])

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Modal from './Modal'
 import Spinner from './Spinner'
 
@@ -43,13 +43,71 @@ export default function ConfirmMovimientoModal({
 
   // El foco entra al botón de confirmar: sin esto se queda en el botón del
   // modal padre (que sigue montado atrás) y ni Enter ni las flechas responden
-  // aquí. Con el foco dentro: Enter confirma, ↑/↓ mueven entre Cancelar y
-  // Confirmar (navegación genérica del Modal), Esc cancela.
+  // aquí. Con el foco dentro: Enter confirma, Esc cancela, y ↓/↑ recorren las
+  // filas (ver efecto de revisión más abajo).
   const confirmRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const t = setTimeout(() => confirmRef.current?.focus(), 80)
     return () => clearTimeout(t)
   }, [])
+
+  // Revisión fila por fila con ↓/↑: la primera ↓ sombrea la primera fila, cada
+  // ↓ avanza una, y al pasar de la última el foco cae en el botón de confirmar
+  // (Enter aplica). ↑ regresa. Listener en captura: le gana a la navegación
+  // genérica del Modal entre botones.
+  const [selRow, setSelRow] = useState(-1)
+  const selRowRef = useRef(-1)
+  useEffect(() => {
+    selRowRef.current = selRow
+  }, [selRow])
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (procesando) return
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable === true
+      ) {
+        return
+      }
+      const last = lineas.length - 1
+      if (last < 0) return
+      const cur = selRowRef.current
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        e.stopPropagation()
+        if (cur < last) setSelRow(cur + 1)
+        else confirmRef.current?.focus()
+      } else if (cur >= 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (cur > 0) setSelRow(cur - 1)
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [lineas.length, procesando])
+
+  // Mantén visible la fila sombreada (el thead sticky no debe taparla).
+  useEffect(() => {
+    if (selRow < 0) return
+    const tbody = tbodyRef.current
+    const row = tbody?.children[selRow] as HTMLElement | undefined
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const rowTop = row.offsetTop
+    const rowBottom = rowTop + row.offsetHeight
+    if (rowTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, rowTop - headerH)
+    } else if (rowBottom > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = rowBottom - cont.clientHeight
+    }
+  }, [selRow])
 
   return (
     <Modal
@@ -60,8 +118,10 @@ export default function ConfirmMovimientoModal({
     >
       <div className="p-4 space-y-3 text-sm">
         <p className="text-xs text-muted-foreground">
-          Revisa los productos y cantidades antes de aplicar. Si falta algo o hay un error, dale{' '}
-          <strong>Cancelar</strong> y podrás ajustarlo sin perder lo que ya capturaste.
+          Revisa los productos y cantidades antes de aplicar — con <span className="font-mono">↓</span>{' '}
+          recorres las filas una por una y, al pasar la última, el foco cae en el botón de
+          confirmar. Si falta algo o hay un error, dale <strong>Cancelar</strong> y podrás
+          ajustarlo sin perder lo que ya capturaste.
         </p>
         {encabezado && <div className="text-xs">{encabezado}</div>}
 
@@ -76,9 +136,15 @@ export default function ConfirmMovimientoModal({
                 <th className="px-2 py-1.5 w-24 text-right">Cantidad</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody ref={tbodyRef}>
               {lineas.map((l, i) => (
-                <tr key={`${l.codigo}-${i}`} className="border-b border-border/60">
+                <tr
+                  key={`${l.codigo}-${i}`}
+                  onClick={() => setSelRow(i)}
+                  className={`border-b border-border/60 cursor-pointer ${
+                    i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                  }`}
+                >
                   <td className="px-2 py-1 text-right text-muted-foreground">{i + 1}</td>
                   <td className="px-2 py-1 font-mono">{l.codigo}</td>
                   <td className="px-2 py-1">{l.nombre}</td>

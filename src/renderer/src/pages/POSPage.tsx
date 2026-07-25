@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings as SettingsIcon, Printer, LogOut, Warehouse } from 'lucide-react'
+import { Settings as SettingsIcon, Printer, LogOut, Warehouse, X } from 'lucide-react'
 import { useSession } from '../stores/session'
 import { useSettings } from '../stores/settings'
 import { useShortcut } from '../hooks/useShortcut'
@@ -27,6 +27,11 @@ import SucursalModal from '../components/SucursalModal'
 import CatalogoProductosModal from '../components/CatalogoProductosModal'
 import ImportarFarmaModal from '../components/ImportarFarmaModal'
 import RespaldoModal from '../components/RespaldoModal'
+import DedupCodigosModal from '../components/DedupCodigosModal'
+import PedidoSurtidoModal, {
+  nuevoPedidoDraft,
+  type PedidoDraft
+} from '../components/PedidoSurtidoModal'
 import Logo from '../components/Logo'
 import Spinner from '../components/Spinner'
 import { calcTotals, makeCartItem, precioConIva, type CartItem } from '../lib/cart'
@@ -79,7 +84,12 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
   const [catalogoOpen, setCatalogoOpen] = useState(false)
   const [importarOpen, setImportarOpen] = useState(false)
   const [importarDatOpen, setImportarDatOpen] = useState(false)
+  const [dedupOpen, setDedupOpen] = useState(false)
   const [respaldoOpen, setRespaldoOpen] = useState(false)
+  // Pedidos de surtido en proceso (borradores minimizables — sólo matriz).
+  const [esMatriz, setEsMatriz] = useState(false)
+  const [pedidoDrafts, setPedidoDrafts] = useState<PedidoDraft[]>([])
+  const [pedidoAbiertoId, setPedidoAbiertoId] = useState<string | null>(null)
   const [totalesRec, setTotalesRec] = useState<{
     antier: number
     ayer: number
@@ -89,6 +99,32 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
 
   const codeRef = useRef<HTMLInputElement>(null)
   const pendingLogoutRef = useRef<boolean>(false)
+
+  // ¿Es instalación MATRIZ? Habilita el prellenado de pedidos de surtido (F11).
+  useEffect(() => {
+    window.api.instalacion
+      .get()
+      .then((i) => setEsMatriz(i.configured === true && i.tipo === 'MATRIZ'))
+      .catch(() => setEsMatriz(false))
+  }, [])
+
+  const abrirNuevoPedido = useCallback(() => {
+    const d = nuevoPedidoDraft()
+    setPedidoDrafts((prev) => [...prev, d])
+    setPedidoAbiertoId(d.id)
+  }, [])
+
+  const descartarPedidoDraft = useCallback((id: string) => {
+    toast.warning('¿Descartar este pedido en proceso?', {
+      id: `pedido-descartar-${id}`,
+      description: 'Se perderá lo capturado (aún no se había registrado).',
+      duration: 8000,
+      action: {
+        label: 'Sí, descartar',
+        onClick: () => setPedidoDrafts((prev) => prev.filter((x) => x.id !== id))
+      }
+    })
+  }, [])
 
   const totals = useMemo(() => calcTotals(cart), [cart])
   const anyModalOpen =
@@ -114,7 +150,9 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
     catalogoOpen ||
     importarOpen ||
     importarDatOpen ||
-    respaldoOpen
+    dedupOpen ||
+    respaldoOpen ||
+    pedidoAbiertoId !== null
   const isAdmin = isAdminLike(user)
 
   // ── Folio + reloj ────────────────────────────────────────────────────────
@@ -638,6 +676,38 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         </div>
       </main>
 
+      {/* Pedidos de surtido en proceso (minimizados) — pestañas para retomarlos */}
+      {pedidoDrafts.length > 0 && (
+        <div className="border-t border-amber-300 bg-amber-50 px-4 py-1.5 flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-amber-900 font-semibold">Pedidos en proceso:</span>
+          {pedidoDrafts.map((d) => (
+            <span
+              key={d.id}
+              className="inline-flex items-center gap-1 border border-amber-300 bg-white rounded-full pl-3 pr-1 py-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => setPedidoAbiertoId(d.id)}
+                className="font-medium text-amber-900 hover:underline cursor-pointer"
+                title="Continuar llenando este pedido"
+              >
+                {d.sucursalNombre || 'Sin destino'} · {d.lineas.length} línea
+                {d.lineas.length === 1 ? '' : 's'}
+              </button>
+              <button
+                type="button"
+                onClick={() => descartarPedidoDraft(d.id)}
+                className="p-0.5 rounded-full text-amber-700 hover:bg-amber-100 cursor-pointer"
+                title="Descartar este pedido"
+                aria-label="Descartar pedido"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       <footer className="border-t border-border bg-muted/30">
         <div className="mx-auto max-w-[1200px] px-4 py-2 flex items-center justify-between text-[11px] font-mono">
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-muted-foreground">
@@ -685,10 +755,21 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         busy={charging}
       />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <PedidoSurtidoModal
+        open={pedidoAbiertoId !== null}
+        draft={pedidoDrafts.find((d) => d.id === pedidoAbiertoId) ?? null}
+        onChange={(d) => setPedidoDrafts((prev) => prev.map((x) => (x.id === d.id ? d : x)))}
+        onMinimizar={() => setPedidoAbiertoId(null)}
+        onTerminado={(id) => {
+          setPedidoDrafts((prev) => prev.filter((x) => x.id !== id))
+          setPedidoAbiertoId(null)
+        }}
+      />
       <FunctionsModal
         open={functionsOpen}
         onClose={() => setFunctionsOpen(false)}
-        mostrarRespaldo={isFullAdmin(user)}
+        mostrarPedido={esMatriz}
+        onPedido={abrirNuevoPedido}
         onCancelaciones={() => setCancelOpen(true)}
         onCorte={() => setCorteOpen(true)}
         onRespaldo={() => setRespaldoOpen(true)}
@@ -742,6 +823,14 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         onCatalogo={() => setCatalogoOpen(true)}
         onImportar={() => setImportarOpen(true)}
         onImportarDat={() => setImportarDatOpen(true)}
+        onDedupCodigos={() => setDedupOpen(true)}
+      />
+      <DedupCodigosModal
+        open={dedupOpen}
+        onClose={() => {
+          setDedupOpen(false)
+          setProcesosOpen(true)
+        }}
       />
       {/* Los modales lanzados desde F10 regresan al menú de Procesos Especiales
           al cerrarse (para encadenar tareas); Esc en el menú sí vuelve al POS. */}

@@ -48,8 +48,31 @@ import {
   updateIvaProductos,
   updateProductoBasico
 } from './services/productos'
+import { applyDedupCodigos, previewDedupCodigos } from './services/dedupCodigos'
+import { aplicarActualizacion, pickActualizacion } from './services/actualizacion'
+import {
+  aprobarPedido,
+  countPedidosPendientes,
+  createPedido,
+  existenciaEnBodega,
+  guardarListaProveedor,
+  imprimirPedido,
+  listListasProveedor,
+  listPedidos,
+  listProveedoresBasico,
+  listSucursalesBasico,
+  pdfPedido,
+  rechazarPedido,
+  updatePedidoItems
+} from './services/pedidos'
 import { peekNextFolio } from './services/folio'
-import { cancelVenta, createVenta, getTotalesRecientes, getVentaByFolio } from './services/ventas'
+import {
+  cancelVenta,
+  createVenta,
+  getTotalesRecientes,
+  getVentaByFolio,
+  getVentasDia
+} from './services/ventas'
 import { createCorte, getCorteHoy, getCorteReimpresion, listCortesFinales } from './services/corte'
 import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
@@ -60,8 +83,11 @@ import {
   aplicarTraspaso,
   crearTraspaso,
   pickTraspaso,
+  reexportarTraspaso,
+  resumenSurtido,
   traspasoEntreBodegas
 } from './services/traspaso'
+import { imprimirResumenSurtido } from './services/pdf'
 import { getKardexProducto, getMovimientoDetalle, listMovimientos } from './services/movimientos'
 import {
   exportMovimientoPdf,
@@ -101,6 +127,8 @@ import type {
   CargaInicialInput,
   CompleteWizardFromFarmaInput,
   CrearTraspasoInput,
+  CreatePedidoInput,
+  PedidoLinea,
   TraspasoBodegasInput,
   ExportFarmaStockLote,
   CreateAjustesInput,
@@ -206,6 +234,12 @@ export function registerIpcHandlers(): void {
     async (_e, viewerUserId: string, input: BulkUpsertProductosInput) =>
       bulkUpsertProductos(viewerUserId, input)
   )
+  ipcMain.handle('productos:dedup-preview', async (_e, viewerUserId: string) =>
+    previewDedupCodigos(viewerUserId)
+  )
+  ipcMain.handle('productos:dedup-apply', async (_e, viewerUserId: string) =>
+    applyDedupCodigos(viewerUserId)
+  )
 
   // ── ventas ───────────────────────────────────────────────────────────────
   ipcMain.handle('ventas:next-folio', async () => peekNextFolio())
@@ -215,6 +249,9 @@ export function registerIpcHandlers(): void {
     cancelVenta(ventaId, userId, motivo ?? null)
   )
   ipcMain.handle('ventas:totales-recientes', async () => getTotalesRecientes())
+  ipcMain.handle('ventas:dia', async (_e, viewerUserId: string, dia: string) =>
+    getVentasDia(viewerUserId, dia)
+  )
 
   // ── corte ────────────────────────────────────────────────────────────────
   ipcMain.handle('corte:hoy', async () => getCorteHoy())
@@ -223,8 +260,8 @@ export function registerIpcHandlers(): void {
   )
   // Días anteriores sin corte final + cierre retroactivo (cualquier usuario, una vez)
   // Reimpresión de cortes finales (sólo admin/superusuario)
-  ipcMain.handle('corte:finales', async (_e, viewerUserId: string) =>
-    listCortesFinales(viewerUserId)
+  ipcMain.handle('corte:finales', async (_e, viewerUserId: string, limit?: number) =>
+    listCortesFinales(viewerUserId, limit)
   )
   ipcMain.handle('corte:reimpresion', async (_e, viewerUserId: string, corteId: string) =>
     getCorteReimpresion(viewerUserId, corteId)
@@ -294,6 +331,28 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(e.sender)
     return pickTraspaso(win)
   })
+  ipcMain.handle('traspaso:reexportar', async (e, viewerUserId: string, folio: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return reexportarTraspaso(viewerUserId, folio, win)
+  })
+  ipcMain.handle(
+    'traspaso:resumen-surtido',
+    async (_e, viewerUserId: string, desde: string, hasta: string) =>
+      resumenSurtido(viewerUserId, desde, hasta)
+  )
+  ipcMain.handle(
+    'traspaso:resumen-imprimir',
+    async (_e, viewerUserId: string, desde: string, hasta: string) => {
+      const r = resumenSurtido(viewerUserId, desde, hasta)
+      return imprimirResumenSurtido({
+        desde: r.desde,
+        hasta: r.hasta,
+        traspasos: r.traspasos.map((t) => ({ numero: t.numero, destino: t.destino })),
+        items: r.items,
+        totalUnidades: r.totalUnidades
+      })
+    }
+  )
   ipcMain.handle(
     'traspaso:aplicar',
     async (
@@ -304,6 +363,67 @@ export function registerIpcHandlers(): void {
       bodegaDestinoId?: string | null
     ) => aplicarTraspaso(viewerUserId, filePath, Boolean(force), bodegaDestinoId ?? null)
   )
+  // ── actualización del sistema desde USB (admin) ─────────────────────────
+  ipcMain.handle('actualizacion:pick', async (e, viewerUserId: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pickActualizacion(viewerUserId, win)
+  })
+  ipcMain.handle('actualizacion:aplicar', async (_e, viewerUserId: string, filePath: string) =>
+    aplicarActualizacion(viewerUserId, filePath)
+  )
+
+  // ── pedidos de surtido a sucursal (prellenado cajera → aprobación admin) ─
+  ipcMain.handle('pedidos:sucursales', async (_e, viewerUserId: string) =>
+    listSucursalesBasico(viewerUserId)
+  )
+  ipcMain.handle('pedidos:proveedores', async (_e, viewerUserId: string) =>
+    listProveedoresBasico(viewerUserId)
+  )
+  ipcMain.handle('pedidos:create', async (_e, viewerUserId: string, input: CreatePedidoInput) =>
+    createPedido(viewerUserId, input)
+  )
+  ipcMain.handle('pedidos:list', async (_e, viewerUserId: string) => listPedidos(viewerUserId))
+  ipcMain.handle('pedidos:pendientes', async (_e, viewerUserId: string) =>
+    countPedidosPendientes(viewerUserId)
+  )
+  ipcMain.handle(
+    'pedidos:update',
+    async (_e, viewerUserId: string, pedidoId: string, items: PedidoLinea[]) =>
+      updatePedidoItems(viewerUserId, pedidoId, items)
+  )
+  ipcMain.handle('pedidos:rechazar', async (_e, viewerUserId: string, pedidoId: string) =>
+    rechazarPedido(viewerUserId, pedidoId)
+  )
+  ipcMain.handle(
+    'pedidos:aprobar',
+    async (e, viewerUserId: string, pedidoId: string, bodegaOrigenId: string) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      return aprobarPedido(viewerUserId, pedidoId, bodegaOrigenId, win)
+    }
+  )
+  ipcMain.handle(
+    'pedidos:imprimir',
+    async (_e, viewerUserId: string, pedidoId: string, copia?: number | null) =>
+      imprimirPedido(viewerUserId, pedidoId, copia ?? null)
+  )
+  ipcMain.handle('pedidos:listas-proveedor', async (_e, viewerUserId: string) =>
+    listListasProveedor(viewerUserId)
+  )
+  ipcMain.handle(
+    'pedidos:existencia-bodega',
+    async (_e, viewerUserId: string, codigo: string, bodegaId: string) =>
+      existenciaEnBodega(viewerUserId, codigo, bodegaId)
+  )
+  ipcMain.handle(
+    'pedidos:guardar-lista',
+    async (_e, viewerUserId: string, pedidoId: string, items: PedidoLinea[], notas?: string | null) =>
+      guardarListaProveedor(viewerUserId, pedidoId, items, notas ?? null)
+  )
+  ipcMain.handle('pedidos:pdf', async (e, viewerUserId: string, pedidoId: string) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    return pdfPedido(viewerUserId, pedidoId, win)
+  })
+
   // ── historial unificado de movimientos (entradas/salidas/traspasos) ─────
   ipcMain.handle('movimientos:list', async () => listMovimientos())
   ipcMain.handle('movimientos:detalle', async (_e, folio: string) => getMovimientoDetalle(folio))

@@ -17,6 +17,14 @@ import type {
   StockBodegaPdfInput,
   CrearTraspasoInput,
   CrearTraspasoResult,
+  CreatePedidoInput,
+  PedidoLinea,
+  PedidoTraspasoDto,
+  ProveedorBasicoDto,
+  SucursalBasicaDto,
+  PickActualizacionResult,
+  AplicarActualizacionResult,
+  ResumenSurtidoDto,
   TraspasoBodegasInput,
   PickTraspasoResult,
   AplicarTraspasoResult,
@@ -35,6 +43,8 @@ import type {
   CreateUsuarioInput,
   CreateVentaInput,
   CreateVentaResult,
+  DedupApplyResult,
+  DedupPreviewResult,
   ApplyFarmaResult,
   ApplyDatResult,
   PickDatResult,
@@ -72,6 +82,7 @@ import type {
   UpdateConfigInput,
   UsuarioListItem,
   VentaDetailDto,
+  VentasDiaDto,
   SucursalDto
 } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
@@ -220,6 +231,8 @@ declare global {
           viewerUserId: string,
           input: BulkUpsertProductosInput
         ) => Promise<BulkUpsertProductosResult>
+        dedupPreview: (viewerUserId: string) => Promise<DedupPreviewResult>
+        dedupApply: (viewerUserId: string) => Promise<DedupApplyResult>
       }
       ventas: {
         nextFolio: () => Promise<number>
@@ -227,11 +240,52 @@ declare global {
         byFolio: (folio: number) => Promise<VentaDetailDto | null>
         cancel: (ventaId: string, userId: string, motivo?: string | null) => Promise<CancelVentaResult>
         totalesRecientes: () => Promise<{ antier: number; ayer: number; hoy: number }>
+        dia: (viewerUserId: string, dia: string) => Promise<VentasDiaDto>
+      }
+      actualizacion: {
+        pick: (viewerUserId: string) => Promise<PickActualizacionResult>
+        aplicar: (viewerUserId: string, filePath: string) => Promise<AplicarActualizacionResult>
+      }
+      pedidos: {
+        sucursales: (viewerUserId: string) => Promise<SucursalBasicaDto[]>
+        proveedores: (viewerUserId: string) => Promise<ProveedorBasicoDto[]>
+        create: (viewerUserId: string, input: CreatePedidoInput) => Promise<PedidoTraspasoDto>
+        list: (viewerUserId: string) => Promise<PedidoTraspasoDto[]>
+        pendientes: (viewerUserId: string) => Promise<number>
+        update: (
+          viewerUserId: string,
+          pedidoId: string,
+          items: PedidoLinea[]
+        ) => Promise<PedidoTraspasoDto>
+        rechazar: (viewerUserId: string, pedidoId: string) => Promise<PedidoTraspasoDto>
+        aprobar: (
+          viewerUserId: string,
+          pedidoId: string,
+          bodegaOrigenId: string
+        ) => Promise<CrearTraspasoResult>
+        imprimir: (
+          viewerUserId: string,
+          pedidoId: string,
+          copia?: number
+        ) => Promise<PdfMovimientoResult>
+        pdf: (viewerUserId: string, pedidoId: string) => Promise<PdfMovimientoResult>
+        listasProveedor: (viewerUserId: string) => Promise<PedidoTraspasoDto[]>
+        guardarLista: (
+          viewerUserId: string,
+          pedidoId: string,
+          items: PedidoLinea[],
+          notas?: string | null
+        ) => Promise<PedidoTraspasoDto>
+        existenciaBodega: (
+          viewerUserId: string,
+          codigo: string,
+          bodegaId: string
+        ) => Promise<number>
       }
       corte: {
         hoy: () => Promise<CorteHoyDto>
         create: (cajeroId: string, tipo: CorteTipo) => Promise<CreateCorteResult>
-        finales: (viewerUserId: string) => Promise<CorteFinalHistItem[]>
+        finales: (viewerUserId: string, limit?: number) => Promise<CorteFinalHistItem[]>
         reimpresion: (viewerUserId: string, corteId: string) => Promise<CorteReimpresionDto>
       }
       entradas: {
@@ -271,6 +325,17 @@ declare global {
           input: TraspasoBodegasInput
         ) => Promise<CrearTraspasoResult>
         pick: () => Promise<PickTraspasoResult>
+        reexportar: (viewerUserId: string, folio: string) => Promise<CrearTraspasoResult>
+        resumenSurtido: (
+          viewerUserId: string,
+          desde: string,
+          hasta: string
+        ) => Promise<ResumenSurtidoDto>
+        resumenImprimir: (
+          viewerUserId: string,
+          desde: string,
+          hasta: string
+        ) => Promise<PdfMovimientoResult>
         aplicar: (
           viewerUserId: string,
           filePath: string,
