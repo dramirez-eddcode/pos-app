@@ -53,20 +53,19 @@ interface Props {
 }
 
 // El SUPERVISOR (de sucursal) sólo puede registrar entradas de mercancía,
-// recibir traspasos, consultar el historial de movimientos (reporte de sólo
-// lectura) y actualizar datos: catálogo, precios/IVA, aplicar la actualización
-// de la matriz (.farma) y el archivo legacy (.dat). El resto es exclusivo de
-// admins.
+// recibir traspasos, consultar el historial de movimientos y el folio de una
+// venta (reportes de sólo lectura) y APLICAR actualizaciones de datos: el
+// .farma de la matriz y el .dat del legacy (esos ya traen catálogo y precios
+// hechos). NO puede editar precios a mano, ni ver/editar el catálogo, ni
+// corregir códigos duplicados — eso es exclusivo de admins (el backend
+// también lo valida: requireAdmin en precios/productos/dedupCodigos).
 const SUPERVISOR_PROCESOS = new Set([
   'entrada',
   'recibir-traspaso',
   'movimientos',
   'consultar-folio',
-  'precios',
-  'catalogo',
   'importar',
-  'importar-dat',
-  'dedup-codigos'
+  'importar-dat'
 ])
 
 /**

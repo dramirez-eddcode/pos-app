@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getSqlite } from '../db/connection'
-import { requireAdminOrSupervisor } from './permisos'
+import { requireAdmin } from './permisos'
 import type { UpdatePreciosInput, UpdatePreciosResult } from '@shared/dto'
 
 /**
@@ -10,9 +10,12 @@ import type { UpdatePreciosInput, UpdatePreciosResult } from '@shared/dto'
  *
  * Si el nuevo precio es igual al actual, se silencia esa línea (no cuenta
  * como actualización ni genera historia).
+ *
+ * SÓLO admins: el supervisor no edita precios a mano (los recibe vía
+ * .farma/.dat, que corren por su propio camino).
  */
 export function updatePrecios(input: UpdatePreciosInput): UpdatePreciosResult {
-  requireAdminOrSupervisor(input.cajeroId)
+  requireAdmin(input.cajeroId)
   const sqlite = getSqlite()
   if (input.items.length === 0) throw new Error('Sin precios a actualizar')
 

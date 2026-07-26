@@ -12,7 +12,9 @@ import type {
   UpdateProductoInput
 } from '@shared/dto'
 import type { IvaModo } from '@shared/types'
-import { requireAdminOrSupervisor } from './permisos'
+// SÓLO admins: el supervisor no edita catálogo, precios ni IVA a mano (sus
+// actualizaciones llegan vía .farma/.dat, que corren en sus propios servicios).
+import { requireAdmin } from './permisos'
 
 function nullableTrim(value: string | null | undefined): string | null {
   if (value == null) return null
@@ -295,7 +297,7 @@ export function getLotesByProducto(
  * configuración fiscal, no un cambio con motivos comerciales.
  */
 export function updateIvaProductos(input: UpdateIvaInput): UpdateIvaResult {
-  requireAdminOrSupervisor(input.cajeroId)
+  requireAdmin(input.cajeroId)
   const sqlite = getSqlite()
   if (input.items.length === 0) throw new Error('Sin productos a actualizar')
 
@@ -351,7 +353,7 @@ export function updateIvaProductos(input: UpdateIvaInput): UpdateIvaResult {
  * Incluye stock min/max y existencias totales para visibilidad de gestión.
  */
 export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   const db = getSqlite()
   const rows = db
     .prepare(
@@ -428,7 +430,7 @@ export function listCatalogo(viewerUserId: string): ProductoCatalogoItem[] {
 }
 
 export function createProducto(viewerUserId: string, input: CreateProductoInput): { id: string } {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
 
   const codigo = (input.codigo ?? '').trim()
   const nombre = (input.nombre ?? '').trim()
@@ -490,7 +492,7 @@ export function updateProductoBasico(
   viewerUserId: string,
   input: UpdateProductoInput
 ): { ok: true } {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   if (!input.id) throw new Error('ID requerido')
 
   const codigo = (input.codigo ?? '').trim()
@@ -555,7 +557,7 @@ export function bulkUpsertProductos(
   viewerUserId: string,
   input: BulkUpsertProductosInput
 ): BulkUpsertProductosResult {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   if (!input.items || input.items.length === 0) throw new Error('Sin productos a importar')
 
   const sqlite = getSqlite()
@@ -657,7 +659,7 @@ export function toggleActivoProducto(
   productoId: string,
   activo: boolean
 ): { ok: true } {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   const sqlite = getSqlite()
   const target = sqlite.prepare('SELECT id FROM producto WHERE id = ?').get(productoId) as
     | { id: string }

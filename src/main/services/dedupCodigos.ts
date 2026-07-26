@@ -1,5 +1,6 @@
 import { getSqlite } from '../db/connection'
-import { requireAdminOrSupervisor } from './permisos'
+// SÓLO admins: la fusión toca catálogo, precios y lotes — el supervisor no.
+import { requireAdmin } from './permisos'
 import type { DedupApplyResult, DedupParItem, DedupPreviewResult } from '@shared/dto'
 
 /**
@@ -83,7 +84,7 @@ function existenciaDe(productoId: string): number {
 }
 
 export function previewDedupCodigos(viewerUserId: string): DedupPreviewResult {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   const pares: DedupParItem[] = []
   for (const grupo of gruposDuplicados()) {
     const queda = grupo[0]!
@@ -105,7 +106,7 @@ export function previewDedupCodigos(viewerUserId: string): DedupPreviewResult {
 }
 
 export function applyDedupCodigos(viewerUserId: string): DedupApplyResult {
-  requireAdminOrSupervisor(viewerUserId)
+  requireAdmin(viewerUserId)
   const sqlite = getSqlite()
   const grupos = gruposDuplicados()
 
