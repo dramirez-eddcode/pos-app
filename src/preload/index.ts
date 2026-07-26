@@ -125,7 +125,8 @@ const api = {
 
   backup: {
     export: (): Promise<BackupResultStub> => ipcRenderer.invoke('backup:export'),
-    import: (): Promise<RestoreResultStub> => ipcRenderer.invoke('backup:import')
+    import: (viewerUserId?: string | null): Promise<RestoreResultStub> =>
+      ipcRenderer.invoke('backup:import', viewerUserId ?? null)
   },
 
   settings: {

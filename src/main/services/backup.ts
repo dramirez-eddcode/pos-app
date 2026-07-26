@@ -1,6 +1,7 @@
 import { BrowserWindow, dialog } from 'electron'
 import { copyFileSync, existsSync, statSync, unlinkSync } from 'node:fs'
 import { closeDb, resolveDbPath } from '../db/connection'
+import { modoInstalacion, rolDeUsuario } from './permisos'
 
 /**
  * Backup local del POS: copia la base SQLite COMPLETA a un destino elegido por
@@ -85,9 +86,23 @@ export async function exportBackup(window: BrowserWindow | null): Promise<Backup
 }
 
 export async function importBackup(
-  window: BrowserWindow | null
+  window: BrowserWindow | null,
+  viewerUserId?: string | null
 ): Promise<RestoreResult> {
   try {
+    // Restaurar es destructivo: con la instalación ya configurada SÓLO el
+    // ADMINISTRADOR o SUPERUSUARIO pueden hacerlo (el supervisor y el cajero
+    // sólo crean respaldos). Sin instalación configurada (wizard de primer
+    // arranque, aún no hay usuarios) se permite sin sesión.
+    if (modoInstalacion() !== null) {
+      const rol = viewerUserId ? rolDeUsuario(viewerUserId) : null
+      if (rol !== 'ADMINISTRADOR' && rol !== 'SUPERUSUARIO') {
+        return {
+          ok: false,
+          error: 'Restaurar un respaldo sólo lo puede hacer un administrador o superusuario'
+        }
+      }
+    }
     const result = window
       ? await dialog.showOpenDialog(window, {
           title: 'Seleccionar respaldo a restaurar',

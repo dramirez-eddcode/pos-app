@@ -419,8 +419,19 @@ export default function SettingsModal({ open, onClose }: Props) {
         <section className="pt-3 border-t border-border space-y-2">
           <div className="font-medium text-xs">Respaldo de la base de datos</div>
           <div className="text-[11px] text-muted-foreground">
-            Guarda una copia completa del sistema en USB o restaura desde un respaldo. Hazlo al
-            cierre del día.
+            {isFullAdmin(user) ? (
+              <>
+                Guarda una copia completa del sistema en USB o restaura desde un respaldo. Hazlo
+                al cierre del día.
+              </>
+            ) : (
+              <>
+                Guarda una copia completa del sistema en USB. Hazlo al cierre del día.{' '}
+                <span className="font-medium">
+                  Restaurar un respaldo sólo lo puede hacer un administrador o superusuario.
+                </span>
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -429,7 +440,7 @@ export default function SettingsModal({ open, onClose }: Props) {
             className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 border border-border rounded hover:bg-muted disabled:opacity-50 text-sm"
           >
             <Database className="size-3.5" />
-            Respaldo y restauración…
+            {isFullAdmin(user) ? 'Respaldo y restauración…' : 'Respaldo…'}
           </button>
         </section>
 

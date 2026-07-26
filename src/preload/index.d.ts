@@ -113,7 +113,7 @@ declare global {
           error?: string
           cancelled?: boolean
         }>
-        import: () => Promise<{
+        import: (viewerUserId?: string | null) => Promise<{
           ok: boolean
           fromPath?: string
           error?: string

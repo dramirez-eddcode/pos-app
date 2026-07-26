@@ -182,9 +182,9 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(e.sender)
     return exportBackup(win)
   })
-  ipcMain.handle('backup:import', async (e) => {
+  ipcMain.handle('backup:import', async (e, viewerUserId?: string | null) => {
     const win = BrowserWindow.fromWebContents(e.sender)
-    return importBackup(win)
+    return importBackup(win, viewerUserId ?? null)
   })
   ipcMain.handle('app:reload', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)

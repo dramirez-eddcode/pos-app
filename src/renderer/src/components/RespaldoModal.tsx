@@ -5,7 +5,7 @@ import Modal from './Modal'
 import Spinner from './Spinner'
 import BusyOverlay from './BusyOverlay'
 import { useSession } from '../stores/session'
-import { isAdminLike } from '../lib/roles'
+import { isFullAdmin } from '../lib/roles'
 
 interface Props {
   open: boolean
@@ -19,11 +19,13 @@ interface Props {
  * POS y Configuración. El backend está en main/services/backup.ts.
  *
  *  - "Crear respaldo": cualquier usuario; copia la DB a una USB (.bak).
- *  - "Restaurar": solo admin; reemplaza la DB local y reinicia la app.
+ *  - "Restaurar": SÓLO administrador/superusuario (el supervisor y el cajero
+ *    no); reemplaza la DB local y reinicia la app. El backend valida el rol
+ *    de nuevo (backup.importBackup), la UI sólo esconde el botón.
  */
 export default function RespaldoModal({ open, onClose }: Props) {
   const { user } = useSession()
-  const userIsAdmin = isAdminLike(user)
+  const puedeRestaurar = isFullAdmin(user)
   const [busy, setBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
 
@@ -70,7 +72,7 @@ export default function RespaldoModal({ open, onClose }: Props) {
           </button>
 
           <div className="pt-3 border-t border-border">
-            {userIsAdmin ? (
+            {puedeRestaurar ? (
               <button
                 type="button"
                 onClick={() => setRestoreOpen(true)}
@@ -82,7 +84,9 @@ export default function RespaldoModal({ open, onClose }: Props) {
               </button>
             ) : (
               <p className="text-[11px] text-muted-foreground">
-                Restaurar un respaldo requiere permisos de administrador.
+                Con tu usuario sólo puedes <span className="font-semibold">crear respaldos</span>.
+                Restaurar uno (reemplaza toda la información) sólo lo puede hacer un{' '}
+                <span className="font-semibold">administrador o superusuario</span>.
               </p>
             )}
           </div>
@@ -99,13 +103,15 @@ export default function RespaldoModal({ open, onClose }: Props) {
         </footer>
       </Modal>
 
-      {restoreOpen && <RestoreSubModal onClose={() => setRestoreOpen(false)} />}
+      {restoreOpen && (
+        <RestoreSubModal userId={user?.id ?? null} onClose={() => setRestoreOpen(false)} />
+      )}
     </>
   )
 }
 
 // ── Sub-modal: confirmar restore desde respaldo ─────────────────────────
-function RestoreSubModal({ onClose }: { onClose: () => void }) {
+function RestoreSubModal({ userId, onClose }: { userId: string | null; onClose: () => void }) {
   const [phrase, setPhrase] = useState('')
   const [busy, setBusy] = useState(false)
   const expected = 'RESTAURAR'
@@ -118,7 +124,8 @@ function RestoreSubModal({ onClose }: { onClose: () => void }) {
     }
     setBusy(true)
     try {
-      const r = await window.api.backup.import()
+      // El backend valida el rol (sólo administrador/superusuario restauran).
+      const r = await window.api.backup.import(userId)
       if (r.cancelled) {
         setBusy(false)
         return

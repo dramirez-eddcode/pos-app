@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { RotateCcw, FileText, Power, DatabaseBackup, ClipboardList } from 'lucide-react'
 import Modal from './Modal'
+import { useSession } from '../stores/session'
+import { isFullAdmin } from '../lib/roles'
 
 interface Option {
   id: string
@@ -26,8 +28,9 @@ interface Props {
 /**
  * Menú "Funciones del Sistema" (F11 en el legacy).
  * Navegación teclado-first: ↑/↓ mueve selección, Enter activa, Esc cierra.
- * El respaldo está disponible para cualquier rol (igual que desde
- * Configuración): el cierre del día lo suele hacer el cajero.
+ * El respaldo (crear) está disponible para cualquier rol (el cierre del día lo
+ * suele hacer el cajero); RESTAURAR sólo administrador/superusuario — el hint
+ * lo refleja y RespaldoModal + backend lo validan.
  */
 export default function FunctionsModal({
   open,
@@ -39,6 +42,7 @@ export default function FunctionsModal({
   onRespaldo,
   onSalir
 }: Props) {
+  const { user } = useSession()
   const allOptions: Option[] = [
     {
       id: 'corte',
@@ -73,7 +77,9 @@ export default function FunctionsModal({
     {
       id: 'respaldo',
       label: 'Respaldo de datos',
-      hint: 'Crear respaldo en USB o restaurar desde uno',
+      hint: isFullAdmin(user)
+        ? 'Crear respaldo en USB o restaurar desde uno'
+        : 'Crear respaldo en USB (restaurar: sólo administrador o superusuario)',
       icon: <DatabaseBackup className="size-5 text-muted-foreground" />,
       handler: () => {
         onClose()
