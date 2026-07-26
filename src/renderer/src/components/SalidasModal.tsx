@@ -149,13 +149,14 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
   const lookupByCode = useCallback(async () => {
     const c = codigo.trim()
     if (!c) return
-    const p = await window.api.productos.byCodigo(c)
+    // Con bodega origen elegida, las existencias mostradas son de ESA bodega
+    const p = await window.api.productos.byCodigo(c, bodegaId || null)
     if (!p) {
       toast.error(`Producto "${c}" no encontrado`)
       return
     }
     await setFromProduct(p)
-  }, [codigo, setFromProduct])
+  }, [codigo, bodegaId, setFromProduct])
 
   const currentLote = lotes.find((l) => l.id === loteId)
 
@@ -535,7 +536,9 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
                 <span className="font-semibold">{current.nombre}</span>
                 <span className="text-muted-foreground ml-2 font-mono">{current.codigo}</span>
                 <span className="text-muted-foreground ml-3">
-                  Existencias totales:{' '}
+                  {bodegas.length > 1
+                    ? `Existencias en ${bodegas.find((b) => b.id === bodegaId)?.nombre ?? 'la bodega'}: `
+                    : 'Existencias: '}
                   <span className="font-mono font-semibold">{current.existenciasTotal}</span>
                 </span>
               </div>
@@ -804,6 +807,7 @@ export default function SalidasModal({ open, onClose, userId, userNombre, onSave
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
+        bodegaId={bodegaId || null}
         returnFocus={() => setTimeout(() => codRef.current?.focus(), 100)}
       />
 

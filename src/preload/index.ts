@@ -225,8 +225,8 @@ const api = {
   productos: {
     search: (query: ProductoSearchQuery): Promise<ProductoDto[]> =>
       ipcRenderer.invoke('productos:search', query),
-    byCodigo: (codigo: string): Promise<ProductoDto | null> =>
-      ipcRenderer.invoke('productos:by-codigo', codigo),
+    byCodigo: (codigo: string, bodegaId?: string | null): Promise<ProductoDto | null> =>
+      ipcRenderer.invoke('productos:by-codigo', codigo, bodegaId ?? null),
     getLotes: (productoId: string, bodegaId?: string | null): Promise<LoteInfo[]> =>
       ipcRenderer.invoke('productos:get-lotes', productoId, bodegaId ?? null),
     getAllActivos: (): Promise<

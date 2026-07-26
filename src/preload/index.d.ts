@@ -194,7 +194,7 @@ declare global {
       }
       productos: {
         search: (query: ProductoSearchQuery) => Promise<ProductoDto[]>
-        byCodigo: (codigo: string) => Promise<ProductoDto | null>
+        byCodigo: (codigo: string, bodegaId?: string | null) => Promise<ProductoDto | null>
         getLotes: (productoId: string, bodegaId?: string | null) => Promise<LoteInfo[]>
         getAllActivos: () => Promise<
           Array<{

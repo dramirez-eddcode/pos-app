@@ -197,13 +197,15 @@ export default function PedidoSurtidoModal({
   const buscar = useCallback(async () => {
     const c = codigo.trim()
     if (!c) return
-    const p = await window.api.productos.byCodigo(c)
+    // Pedido a sucursal: existencias de la bodega que surtirá; a proveedor:
+    // la foto es del stock global (todas las bodegas).
+    const p = await window.api.productos.byCodigo(c, esProveedor ? null : bodegaSel || null)
     if (!p) {
       toast.error(`Producto "${c}" no encontrado`)
       return
     }
     await fijarProducto(p)
-  }, [codigo, fijarProducto])
+  }, [codigo, esProveedor, bodegaSel, fijarProducto])
 
   const onKeyCodigo = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
@@ -230,6 +232,22 @@ export default function PedidoSurtidoModal({
       toast.error('Cantidad inválida (debe ser 1 o mayor)')
       return
     }
+    // No pedir más de lo que la bodega que surtirá tiene (contando lo ya
+    // capturado del mismo producto en esta lista).
+    const yaPedido = draft.lineas.find((l) => l.codigo === producto.codigo)?.cantidad ?? 0
+    if (n + yaPedido > producto.existencias) {
+      const disp = Math.max(0, producto.existencias - yaPedido)
+      toast.error(
+        `Sólo hay ${producto.existencias} en ${bodegaNombreSel || 'la bodega que surtirá'}`,
+        {
+          description:
+            yaPedido > 0
+              ? `Ya llevas ${yaPedido} en la lista — disponible: ${disp}.`
+              : 'No puedes pedir más de lo que esa bodega tiene.'
+        }
+      )
+      return
+    }
     const idx = draft.lineas.findIndex((l) => l.codigo === producto.codigo)
     const lineas =
       idx >= 0
@@ -240,7 +258,7 @@ export default function PedidoSurtidoModal({
     setCodigo('')
     setCantidad('')
     setTimeout(() => codigoRef.current?.focus(), 50)
-  }, [draft, producto, cantidad, onChange, esProveedor, agregarConExistencia])
+  }, [draft, producto, cantidad, onChange, esProveedor, agregarConExistencia, bodegaNombreSel])
 
   const onKeyCantidad = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
@@ -563,7 +581,37 @@ export default function PedidoSurtidoModal({
                 </label>
                 <select
                   value={draft.bodegaId ?? ''}
-                  onChange={(e) => onChange({ ...draft, bodegaId: e.target.value })}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === (draft.bodegaId ?? '')) return
+                    // Con líneas capturadas, cambiar de bodega REINICIA la
+                    // lista: lo validado era contra el stock de la otra bodega.
+                    if (draft.lineas.length > 0) {
+                      toast.warning('¿Cambiar la bodega que surtirá?', {
+                        id: 'pedido-cambio-bodega',
+                        description:
+                          'La lista capturada se reinicia — las existencias validadas eran de la otra bodega.',
+                        duration: 8000,
+                        action: {
+                          label: 'Sí, cambiar y reiniciar',
+                          onClick: () => {
+                            onChange({ ...draft, bodegaId: v, lineas: [] })
+                            setProducto(null)
+                            setCodigo('')
+                            setCantidad('')
+                            setSelRow(-1)
+                            setTimeout(() => codigoRef.current?.focus(), 50)
+                          }
+                        }
+                      })
+                      return
+                    }
+                    onChange({ ...draft, bodegaId: v })
+                    // El producto a medio capturar traía existencias de la otra bodega
+                    setProducto(null)
+                    setCodigo('')
+                    setCantidad('')
+                  }}
                   className={`w-full border rounded px-2 py-1.5 ${
                     draft.bodegaId
                       ? 'border-border bg-background'
@@ -658,6 +706,14 @@ export default function PedidoSurtidoModal({
             {producto && (
               <div className="text-[11px] text-muted-foreground mt-1.5 truncate">
                 Producto: <span className="text-foreground font-medium">{producto.nombre}</span>
+                {!esProveedor && (
+                  <>
+                    {' '}· disponible{bodegaNombreSel ? ` en ${bodegaNombreSel}` : ''}:{' '}
+                    <span className="font-mono font-semibold text-foreground">
+                      {producto.existencias}
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </section>
@@ -802,6 +858,9 @@ export default function PedidoSurtidoModal({
         // Proveedor: la lista de faltantes incluye productos en cero.
         // Sucursal: sólo con existencia (no hay qué surtir sin stock).
         allowZeroStock={esProveedor}
+        // Pedido a sucursal: "Exist." = stock de la bodega que surtirá;
+        // a proveedor: stock global (la foto es de todo el negocio).
+        bodegaId={esProveedor ? null : bodegaSel || null}
         returnFocus={() => setTimeout(() => cantidadRef.current?.focus(), 100)}
       />
     </>

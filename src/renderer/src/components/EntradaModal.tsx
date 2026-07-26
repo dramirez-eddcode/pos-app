@@ -155,13 +155,14 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
   const lookupByCode = useCallback(async () => {
     const c = codigo.trim()
     if (!c) return
-    const p = await window.api.productos.byCodigo(c)
+    // Con bodega elegida, las existencias mostradas son de ESA bodega
+    const p = await window.api.productos.byCodigo(c, bodegaId || null)
     if (!p) {
       toast.error(`Producto "${c}" no encontrado`)
       return
     }
     setFromProduct(p)
-  }, [codigo, setFromProduct])
+  }, [codigo, bodegaId, setFromProduct])
 
   const addItem = useCallback(() => {
     if (!current) {
@@ -542,7 +543,33 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
                 <select
                   className="border border-border rounded px-2 py-1.5 bg-background text-sm"
                   value={bodegaId}
-                  onChange={(e) => setBodegaId(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === bodegaId) return
+                    // Con lotes capturados, cambiar de bodega REINICIA la
+                    // tabla: la entrada es de UNA bodega y lo mostrado/validado
+                    // era contra las existencias de la otra.
+                    if (items.length > 0) {
+                      toast.warning('¿Cambiar la bodega destino?', {
+                        id: 'entrada-cambio-bodega',
+                        description: `Los ${items.length} lote${items.length === 1 ? '' : 's'} capturado${items.length === 1 ? '' : 's'} se reinician — habrá que capturarlos de nuevo para la otra bodega.`,
+                        duration: 8000,
+                        action: {
+                          label: 'Sí, cambiar y reiniciar',
+                          onClick: () => {
+                            setBodegaId(v)
+                            setItems([])
+                            setSelRow(-1)
+                            resetRow()
+                          }
+                        }
+                      })
+                      return
+                    }
+                    setBodegaId(v)
+                    // El producto a medio capturar traía existencias de la otra bodega
+                    resetRow()
+                  }}
                 >
                   {bodegas.map((b) => (
                     <option key={b.id} value={b.id}>
@@ -949,6 +976,7 @@ export default function EntradaModal({ open, onClose, userId, onSaved }: Props) 
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => setFromProduct(p)}
         allowZeroStock
+        bodegaId={bodegaId || null}
         returnFocus={() => setTimeout(() => codRef.current?.focus(), 100)}
       />
 

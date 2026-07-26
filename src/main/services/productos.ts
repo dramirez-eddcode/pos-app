@@ -55,6 +55,10 @@ interface RawRow {
   existenciasTotal: number
 }
 
+// existenciasTotal: global, o de UNA bodega si se pasa bodegaId (matriz
+// multi-bodega: entradas/salidas/traspasos muestran el stock de la bodega
+// elegida, no la suma de todas). Los DOS primeros parámetros posicionales de
+// cada statement que use SELECT_COMMON son (bodegaId, bodegaId).
 const SELECT_COMMON = `
   SELECT
     p.id               AS id,
@@ -67,7 +71,8 @@ const SELECT_COMMON = `
     p.iva_porcentaje   AS ivaPorcentaje,
     p.iva_modo         AS ivaModo,
     COALESCE(
-      (SELECT SUM(cl.saldo) FROM caducidad_lote cl WHERE cl.producto_id = p.id),
+      (SELECT SUM(cl.saldo) FROM caducidad_lote cl
+        WHERE cl.producto_id = p.id AND (? IS NULL OR cl.bodega_id = ?)),
       0
     ) AS existenciasTotal
   FROM producto p
@@ -92,6 +97,8 @@ export function searchProductos(q: ProductoSearchQuery): ProductoDto[] {
   const db = getSqlite()
   const limit = Math.max(1, Math.min(500, q.limit ?? 100))
   const term = q.term.trim()
+  // Con bodegaId, existenciasTotal = stock de ESA bodega (no la suma global).
+  const b = q.bodegaId ?? null
 
   let rows: RawRow[]
 
@@ -99,28 +106,30 @@ export function searchProductos(q: ProductoSearchQuery): ProductoDto[] {
     const stmt = db.prepare(
       `${SELECT_COMMON} WHERE p.activo = 1 ORDER BY p.nombre LIMIT ?`
     )
-    rows = stmt.all(limit) as RawRow[]
+    rows = stmt.all(b, b, limit) as RawRow[]
   } else if (q.mode === 'codigo') {
-    const exact = db.prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`).all(term) as RawRow[]
+    const exact = db
+      .prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`)
+      .all(b, b, term) as RawRow[]
     if (exact.length > 0) {
       rows = exact
     } else {
       const stmt = db.prepare(
         `${SELECT_COMMON} WHERE p.codigo LIKE ? ORDER BY p.codigo LIMIT ?`
       )
-      rows = stmt.all(`${term}%`, limit) as RawRow[]
+      rows = stmt.all(b, b, `${term}%`, limit) as RawRow[]
     }
   } else if (q.mode === 'sustancia') {
     const stmt = db.prepare(
       `${SELECT_COMMON} WHERE p.sustancia_activa LIKE ? ORDER BY p.nombre LIMIT ?`
     )
-    rows = stmt.all(`%${term}%`, limit) as RawRow[]
+    rows = stmt.all(b, b, `%${term}%`, limit) as RawRow[]
   } else {
     // default: nombre
     const stmt = db.prepare(
       `${SELECT_COMMON} WHERE p.nombre LIKE ? ORDER BY p.nombre LIMIT ?`
     )
-    rows = stmt.all(`%${term}%`, limit) as RawRow[]
+    rows = stmt.all(b, b, `%${term}%`, limit) as RawRow[]
   }
 
   return rows.map(rowToDto)
@@ -170,10 +179,12 @@ export function getAllActivos(): {
   }))
 }
 
-export function getByCodigo(codigo: string): ProductoDto | null {
+export function getByCodigo(codigo: string, bodegaId?: string | null): ProductoDto | null {
   const db = getSqlite()
   const c = codigo.trim()
-  const row = db.prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`).get(c) as
+  // Con bodegaId, existenciasTotal = stock de ESA bodega (no la suma global).
+  const b = bodegaId ?? null
+  const row = db.prepare(`${SELECT_COMMON} WHERE p.codigo = ? LIMIT 1`).get(b, b, c) as
     | RawRow
     | undefined
   if (row) return rowToDto(row)
@@ -191,7 +202,7 @@ export function getByCodigo(codigo: string): ProductoDto | null {
             WHERE p.codigo NOT GLOB '*[^0-9]*' AND LTRIM(p.codigo, '0') = ?
             LIMIT 2`
         )
-        .all(sinCeros) as RawRow[]
+        .all(b, b, sinCeros) as RawRow[]
       if (candidatos.length === 1) return rowToDto(candidatos[0]!)
     }
   }

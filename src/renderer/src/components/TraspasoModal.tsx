@@ -518,7 +518,30 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2 items-end">
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Bodega origen</label>
-              <select value={bodegaId} onChange={(e) => setBodegaId(e.target.value)} className="w-full border border-border rounded px-2 py-1.5 bg-background">
+              <select
+                value={bodegaId}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === bodegaId) return
+                  // Con cantidades capturadas, cambiar de bodega REINICIA la
+                  // captura (antes se borraba en silencio): lo validado era
+                  // contra el stock de la otra bodega.
+                  if (seleccion.lineas > 0) {
+                    toast.warning('¿Cambiar la bodega origen?', {
+                      id: 'traspaso-cambio-bodega',
+                      description: `Las cantidades capturadas (${seleccion.lineas} producto${seleccion.lineas === 1 ? '' : 's'}) se reinician — eran contra el stock de la otra bodega.`,
+                      duration: 8000,
+                      action: {
+                        label: 'Sí, cambiar y reiniciar',
+                        onClick: () => setBodegaId(v)
+                      }
+                    })
+                    return
+                  }
+                  setBodegaId(v)
+                }}
+                className="w-full border border-border rounded px-2 py-1.5 bg-background"
+              >
                 {bodegas.length === 0 && <option value="">(sin bodegas)</option>}
                 {bodegas.map((b) => (
                   <option key={b.id} value={b.id}>{b.nombre}{b.esPrincipal ? ' (principal)' : ''}</option>
@@ -872,6 +895,7 @@ export default function TraspasoModal({ open, onClose, userId, destinoLibre = fa
       onClose={() => setSearchOpen(false)}
       onSelect={onProductoBuscado}
       allowZeroStock
+      bodegaId={bodegaId || null}
       returnFocus={() => setTimeout(() => capCodigoRef.current?.focus(), 100)}
     />
 

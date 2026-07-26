@@ -23,6 +23,12 @@ interface Props {
    * El padre debe usar un setTimeout: su modal se re-monta al cerrarse éste.
    */
   returnFocus?: () => void
+  /**
+   * Si se indica, la columna "Exist." muestra el stock de ESA bodega (matriz
+   * multi-bodega: entradas/salidas/traspasos con bodega elegida), no la suma
+   * global de todas las bodegas.
+   */
+  bodegaId?: string | null
 }
 
 const MODE_LABEL: Record<ProductoSearchMode, string> = {
@@ -39,7 +45,8 @@ export default function SearchModal({
   onClose,
   onSelect,
   allowZeroStock = false,
-  returnFocus
+  returnFocus,
+  bodegaId
 }: Props) {
   const [mode, setMode] = useState<ProductoSearchMode>('nombre')
   const [term, setTerm] = useState('')
@@ -82,7 +89,12 @@ export default function SearchModal({
     const t = setTimeout(async () => {
       setLoading(true)
       try {
-        const r = await window.api.productos.search({ mode, term, limit: SEARCH_LIMIT })
+        const r = await window.api.productos.search({
+          mode,
+          term,
+          limit: SEARCH_LIMIT,
+          bodegaId: bodegaId ?? null
+        })
         setResults(r)
         setIdx(0)
       } finally {
@@ -90,7 +102,7 @@ export default function SearchModal({
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [term, mode, open])
+  }, [term, mode, open, bodegaId])
 
   // Auto-scroll a la fila seleccionada (índice relativo a la página visible)
   useEffect(() => {

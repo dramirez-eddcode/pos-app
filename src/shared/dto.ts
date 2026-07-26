@@ -427,6 +427,9 @@ export interface ProductoSearchQuery {
   mode: ProductoSearchMode
   term: string
   limit?: number
+  // Si se indica, existenciasTotal de los resultados = stock de ESA bodega
+  // (matriz multi-bodega); si no, es la suma global.
+  bodegaId?: string | null
 }
 
 export interface CartItemDto {

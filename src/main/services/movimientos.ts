@@ -1,4 +1,5 @@
 import { getSqlite } from '../db/connection'
+import { folioMovimiento } from '@shared/dto'
 import type {
   KardexItem,
   KardexTipo,
@@ -169,12 +170,14 @@ export function getKardexProducto(productoId: string): KardexItem[] {
               cl.fecha_caducidad AS caducidadMs,
               b.nombre           AS bodega,
               v.folio_local      AS ventaFolio,
-              COALESCE(
-                (SELECT m2.folio FROM movimiento m2
-                  WHERE m2.fecha = ms.fecha AND m2.tipo = ms.tipo LIMIT 1),
-                (SELECT t2.folio FROM traspaso t2
-                  WHERE t2.fecha = ms.fecha LIMIT 1)
-              ) AS docFolio
+              (SELECT m2.folio  FROM movimiento m2
+                WHERE m2.fecha = ms.fecha AND m2.tipo = ms.tipo LIMIT 1) AS movFolio,
+              (SELECT m2.numero FROM movimiento m2
+                WHERE m2.fecha = ms.fecha AND m2.tipo = ms.tipo LIMIT 1) AS movNumero,
+              (SELECT t2.folio  FROM traspaso t2
+                WHERE t2.fecha = ms.fecha LIMIT 1) AS trasFolio,
+              (SELECT t2.numero FROM traspaso t2
+                WHERE t2.fecha = ms.fecha LIMIT 1) AS trasNumero
          FROM mov_stock ms
          JOIN caducidad_lote cl ON cl.id = ms.lote_id
          LEFT JOIN bodega b     ON b.id = cl.bodega_id
@@ -191,11 +194,16 @@ export function getKardexProducto(productoId: string): KardexItem[] {
     caducidadMs: number
     bodega: string | null
     ventaFolio: number | null
-    docFolio: string | null
+    movFolio: string | null
+    movNumero: number | null
+    trasFolio: string | null
+    trasNumero: number | null
   }>
 
   // El motivo guarda "… por <uuid>" para auditoría; se limpia para mostrar.
   const UUID_SUFFIX = / por [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  // "TRASPASO <uuid-completo> …" → "Traspaso <8 chars>… …" (legible, rastreable)
+  const TRASPASO_UUID = /TRASPASO ([0-9a-f]{8})[0-9a-f-]{28}/i
 
   let saldo = 0
   return rows.map((r) => {
@@ -206,31 +214,45 @@ export function getKardexProducto(productoId: string): KardexItem[] {
         ? r.tipo
         : 'AJUSTE'
     ) as KardexTipo
-    const referencia =
-      tipo === 'VENTA'
-        ? r.ventaFolio != null
-          ? `Venta #${r.ventaFolio}`
-          : 'Venta'
-        : tipo === 'CANCELACION_VENTA'
-          ? r.ventaFolio != null
-            ? `Cancelación venta #${r.ventaFolio}`
-            : 'Cancelación de venta'
-          : null
+
+    // Documento al que pertenece el renglón (sólo entradas/salidas; en
+    // ventas/ajustes/carga inicial un match casual por fecha sería un falso
+    // positivo). La referencia muestra su folio corto: E-12 / S-4 / T-7 —
+    // p. ej. una entrada por traspaso recibido enlaza a su documento E-n con
+    // TODAS las líneas que venían en ese traspaso.
+    let docFolio: string | null = null
+    let referencia: string | null = null
+    if (tipo === 'ENTRADA' || tipo === 'SALIDA') {
+      if (r.movFolio) {
+        docFolio = r.movFolio
+        referencia = folioMovimiento(tipo, Number(r.movNumero) || 0)
+      } else if (r.trasFolio) {
+        docFolio = r.trasFolio
+        referencia = folioMovimiento('TRASPASO', Number(r.trasNumero) || 0)
+      }
+    } else if (tipo === 'VENTA') {
+      referencia = r.ventaFolio != null ? `Venta #${r.ventaFolio}` : 'Venta'
+    } else if (tipo === 'CANCELACION_VENTA') {
+      referencia = r.ventaFolio != null ? `Cancelación venta #${r.ventaFolio}` : 'Cancelación de venta'
+    }
+
+    const motivo = r.motivo
+      ? r.motivo.replace(UUID_SUFFIX, '').replace(TRASPASO_UUID, 'Traspaso $1…')
+      : null
+
     return {
       fecha: new Date(r.fecha).toISOString(),
       tipo,
       cantidad,
       saldo,
-      motivo: r.motivo ? r.motivo.replace(UUID_SUFFIX, '') : null,
+      motivo,
       referencia,
       caducidad:
         Number(r.caducidadMs) === SIN_CADUCIDAD_MS
           ? null
           : new Date(Number(r.caducidadMs)).toISOString().slice(0, 10),
       bodega: r.bodega ?? null,
-      // Sólo entradas/salidas tienen documento; en ventas/ajustes/carga
-      // inicial un match casual por fecha sería un falso positivo.
-      docFolio: tipo === 'ENTRADA' || tipo === 'SALIDA' ? (r.docFolio ?? null) : null
+      docFolio
     }
   })
 }

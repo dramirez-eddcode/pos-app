@@ -700,7 +700,14 @@ export default function MovimientosModal({ open, onClose }: Props) {
                             </span>
                           </td>
                           <td className="px-2 py-1 text-[11px]">
-                            {k.referencia ?? k.motivo ?? '—'}
+                            {k.referencia && (
+                              <span className="font-mono font-semibold">{k.referencia}</span>
+                            )}
+                            {k.referencia && k.motivo && (
+                              <span className="text-muted-foreground"> · </span>
+                            )}
+                            {k.motivo}
+                            {!k.referencia && !k.motivo && '—'}
                           </td>
                           <td
                             className={`px-2 py-1 text-right font-mono font-semibold ${

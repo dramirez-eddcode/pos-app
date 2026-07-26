@@ -206,7 +206,9 @@ export function registerIpcHandlers(): void {
 
   // ── productos ────────────────────────────────────────────────────────────
   ipcMain.handle('productos:search', async (_e, query: ProductoSearchQuery) => searchProductos(query))
-  ipcMain.handle('productos:by-codigo', async (_e, codigo: string) => getByCodigo(codigo))
+  ipcMain.handle('productos:by-codigo', async (_e, codigo: string, bodegaId?: string | null) =>
+    getByCodigo(codigo, bodegaId ?? null)
+  )
   ipcMain.handle('productos:get-lotes', async (_e, productoId: string, bodegaId?: string | null) =>
     getLotesByProducto(productoId, bodegaId ?? null)
   )

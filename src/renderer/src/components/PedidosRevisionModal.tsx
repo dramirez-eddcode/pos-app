@@ -172,13 +172,17 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
   const buscarCap = useCallback(async () => {
     const c = capCodigo.trim()
     if (!c) return
-    const p = await window.api.productos.byCodigo(c)
+    // Sucursal: existencias de la bodega que surtirá; proveedor: global.
+    const p = await window.api.productos.byCodigo(
+      c,
+      detalle?.tipo === 'PROVEEDOR' ? null : bodegaId || null
+    )
     if (!p) {
       toast.error(`Producto "${c}" no encontrado`)
       return
     }
     await fijarProd(p)
-  }, [capCodigo, fijarProd])
+  }, [capCodigo, detalle?.tipo, bodegaId, fijarProd])
 
   const agregarCapturado = useCallback(() => {
     if (!capProducto) {
@@ -190,8 +194,24 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
       toast.error('Cantidad inválida (debe ser 1 o mayor)')
       return
     }
+    // No pedir más de lo que la bodega que surtirá tiene (contando lo que el
+    // pedido ya trae del mismo producto). Sólo aplica a pedidos de sucursal.
+    if (detalle?.tipo !== 'PROVEEDOR') {
+      const yaPedido = items.find((l) => l.codigo === capProducto.codigo)?.cantidad ?? 0
+      if (n + yaPedido > capProducto.existencias) {
+        const bodegaNombre = bodegas.find((b) => b.id === bodegaId)?.nombre ?? 'la bodega que surte'
+        const disp = Math.max(0, capProducto.existencias - yaPedido)
+        toast.error(`Sólo hay ${capProducto.existencias} en ${bodegaNombre}`, {
+          description:
+            yaPedido > 0
+              ? `El pedido ya trae ${yaPedido} — disponible: ${disp}.`
+              : 'No puedes pedir más de lo que esa bodega tiene.'
+        })
+        return
+      }
+    }
     agregarLinea(capProducto.codigo, capProducto.nombre, n)
-  }, [capProducto, capCantidad, agregarLinea])
+  }, [capProducto, capCantidad, agregarLinea, detalle?.tipo, items, bodegas, bodegaId])
 
   // ↑/↓ con la tabla del detalle enfocada: sombrea renglones para revisar.
   const onKeyTabla = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -778,7 +798,14 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                   </label>
                   <select
                     value={bodegaId}
-                    onChange={(e) => setBodegaId(e.target.value)}
+                    onChange={(e) => {
+                      setBodegaId(e.target.value)
+                      // El producto a medio capturar traía existencias de la
+                      // otra bodega — se descarta la captura en curso.
+                      setCapProducto(null)
+                      setCapCodigo('')
+                      setCapCantidad('')
+                    }}
                     className="border border-border rounded px-2 py-1 bg-background"
                   >
                     {bodegas.map((b) => (
@@ -892,6 +919,8 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
       // Proveedor: la lista de faltantes incluye productos en cero; sucursal
       // sólo con existencia (igual que la captura del cajero).
       allowZeroStock={detalle?.tipo === 'PROVEEDOR'}
+      // Sucursal: "Exist." = stock de la bodega que surtirá; proveedor: global.
+      bodegaId={detalle?.tipo === 'PROVEEDOR' ? null : bodegaId || null}
       returnFocus={() =>
         setTimeout(
           () =>
