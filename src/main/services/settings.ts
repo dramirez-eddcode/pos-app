@@ -16,6 +16,8 @@ export interface AppSettings {
   docPrinterName: string | null
   /** Documentos a doble cara (si la impresora lo soporta). */
   docPrinterDuplex: boolean
+  /** Tamaño de letra de los documentos impresos/PDF. Default: chico. */
+  docFontSize: 'chico' | 'mediano' | 'grande'
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
   receiptFooter: string | null
@@ -35,6 +37,7 @@ const DEFAULTS: AppSettings = {
   printerName: null,
   docPrinterName: null,
   docPrinterDuplex: false,
+  docFontSize: 'chico',
   openDrawerOnCash: true,
   showTimeOnReceipt: false,
   receiptFooter: null,

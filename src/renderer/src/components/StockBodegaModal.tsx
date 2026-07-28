@@ -551,7 +551,7 @@ function Fila({
                     ) : (
                       <>
                         {(l.vencido || l.porVencer) && <Clock className="size-3" />}
-                        {l.caducidad} · {l.saldo.toLocaleString('es-MX')}
+                        {fechaDMA(l.caducidad)} · {l.saldo.toLocaleString('es-MX')}
                         {userId && (
                           <button
                             type="button"
@@ -578,11 +578,18 @@ function Fila({
   )
 }
 
+// 'YYYY-MM-DD' → 'DD-MM-YYYY': las fechas de caducidad SIEMPRE se muestran
+// día-mes-año, igual que el editor de fecha (que usa el orden del locale).
+function fechaDMA(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd)
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : ymd
+}
+
 function CaducidadBadge({ item }: { item: StockBodegaItem }) {
   if (!item.proximaCaducidad) return <span className="text-muted-foreground">—</span>
   const prox = item.lotes[0]
   const cls = prox?.vencido ? 'text-red-700 font-semibold' : prox?.porVencer ? 'text-amber-700' : ''
-  return <span className={cls}>{item.proximaCaducidad}</span>
+  return <span className={cls}>{fechaDMA(item.proximaCaducidad)}</span>
 }
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: 'amber' | 'red' }) {

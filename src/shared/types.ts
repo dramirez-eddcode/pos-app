@@ -43,6 +43,9 @@ export interface PrintResultLike {
   exitCode: number | null
 }
 
+/** Tamaño de letra de los documentos impresos/PDF (carta). */
+export type DocFontSize = 'chico' | 'mediano' | 'grande'
+
 export interface AppSettings {
   /** Impresora TÉRMICA (ESC/POS): SÓLO tickets de venta, cortes y cancelaciones. */
   printerName: string | null
@@ -57,6 +60,12 @@ export interface AppSettings {
    * ahorrar papel. Sólo lo cambian SUPERUSUARIO/ADMINISTRADOR.
    */
   docPrinterDuplex: boolean
+  /**
+   * Tamaño de letra de los documentos que se imprimen/exportan (pedidos,
+   * resumen de surtido, historial). 'chico' = el tamaño original; mediano y
+   * grande escalan las fuentes (usan más hojas — el paginador se ajusta solo).
+   */
+  docFontSize: DocFontSize
   openDrawerOnCash: boolean
   showTimeOnReceipt: boolean
   receiptFooter: string | null

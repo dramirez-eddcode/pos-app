@@ -175,7 +175,7 @@ async function renderEnVentanaOculta<T>(
  */
 async function printDoc(
   win: BrowserWindow,
-  opts: { header: string; footer: string; forzarSimplex?: boolean }
+  opts: { forzarSimplex?: boolean } = {}
 ): Promise<PdfMovimientoResult> {
   const { docPrinterName: docPrinter, docPrinterDuplex } = getSettings()
   // Doble cara (borde largo) si el admin lo habilitó; si la impresora no lo
@@ -189,13 +189,20 @@ async function printDoc(
   // que es con lo que mide el paginador en contenido. NO pasar `margins` aquí:
   // print() los interpreta en otra unidad y deja el área de contenido vacía
   // ("content size is empty") — la impresión falla y se cuelga.
+  // TAMPOCO pasar `header`/`footer`: activan el encabezado/pie NATIVO de
+  // Chromium, que cambia los márgenes reales del trabajo — el área impresa
+  // queda más chica que la medida por el paginador y las hojas se desbordan
+  // (la última fila de una hoja se imprimía ENCIMA de la primera de la
+  // siguiente, y se cortaba la columna derecha). El pie del paginador ya trae
+  // título · folio y "Página i de N" en cada hoja.
   const doPrint = (extra: Electron.WebContentsPrintOptions): Promise<{ success: boolean; reason: string }> =>
     new Promise((resolve) => {
       win.webContents.print(
         {
           printBackground: true,
-          header: opts.header,
-          footer: opts.footer,
+          // Carta explícito: si el driver está configurado en A4, la geometría
+          // medida (8.5×11in) no coincidiría con el papel.
+          pageSize: 'Letter',
           ...duplex,
           ...extra
         },
@@ -306,7 +313,7 @@ function buildStockHtml(input: StockBodegaPdfInput): string {
         <td class="num">${entero(it.existencias)}</td>
         <td class="num">${it.stockMinimo ? entero(it.stockMinimo) : '—'}</td>
         <td class="num">$${money(it.valorCosto)}</td>
-        <td class="mono center ${cadClase}">${esc(it.proximaCaducidad ?? '—')}</td>
+        <td class="mono center ${cadClase}">${esc(fechaDMA(it.proximaCaducidad) ?? '—')}</td>
       </tr>`
     })
     .join('\n')
@@ -316,7 +323,7 @@ function buildStockHtml(input: StockBodegaPdfInput): string {
 <head>
 <meta charset="utf-8">
 <title>Stock por bodega — ${esc(input.bodegaNombre)}</title>
-<style>${ESTILOS_DOC}${ESTILOS_STOCK_COMPACTO}</style>
+<style>${estilosDoc()}${estilosStockCompacto()}</style>
 </head>
 <body>
   <header>
@@ -423,7 +430,7 @@ export async function imprimirStockBodega(input: StockBodegaPdfInput): Promise<P
   try {
     return await renderEnVentanaOculta(
       buildStockHtml(input),
-      (win) => printDoc(win, { header: 'Stock por bodega', footer: input.bodegaNombre }),
+      (win) => printDoc(win),
       `Stock por bodega · ${input.bodegaNombre}`
     )
   } catch (e) {
@@ -448,11 +455,7 @@ export async function imprimirMovimiento(folio: string): Promise<PdfMovimientoRe
 
     return await renderEnVentanaOculta(
       buildHtml(det),
-      (win) =>
-        printDoc(win, {
-          header: TITULOS[det.tipo],
-          footer: `Folio ${folioMovimiento(det.tipo, det.numero)}`
-        }),
+      (win) => printDoc(win),
       `${TITULOS[det.tipo]} · folio ${folioMovimiento(det.tipo, det.numero)}`
     )
   } catch (e) {
@@ -582,7 +585,7 @@ function buildPedidoHtml(p: PedidoPrintData, copiaIdx?: number): string {
 <head>
 <meta charset="utf-8">
 <title>${esc(TITULO_PEDIDO[p.tipo])} P-${p.numero}</title>
-<style>${ESTILOS_DOC}</style>
+<style>${estilosDoc()}</style>
 </head>
 <body>
 ${copias}
@@ -655,8 +658,6 @@ export async function imprimirPedidoSurtido(
       buildPedidoHtml(p, copiaIdx),
       (win) =>
         printDoc(win, {
-          header: TITULO_PEDIDO[p.tipo],
-          footer: `Folio P-${p.numero}`,
           // Sin copiaIdx (las 3 juntas en un trabajo): a UNA cara para que dos
           // copias no compartan hoja. Por copia separada el dúplex sí aplica.
           forzarSimplex: copiaIdx == null && total > 1
@@ -705,7 +706,7 @@ function buildResumenSurtidoHtml(r: ResumenSurtidoPrintData): string {
 <head>
 <meta charset="utf-8">
 <title>Resumen de surtido ${esc(fmt(r.desde))} a ${esc(fmt(r.hasta))}</title>
-<style>${ESTILOS_DOC}</style>
+<style>${estilosDoc()}</style>
 </head>
 <body>
   <header>
@@ -764,11 +765,7 @@ export async function imprimirResumenSurtido(
   try {
     return await renderEnVentanaOculta(
       buildResumenSurtidoHtml(r),
-      (win) =>
-        printDoc(win, {
-          header: 'Resumen de surtido a sucursales',
-          footer: `Periodo ${r.desde} a ${r.hasta}`
-        }),
+      (win) => printDoc(win),
       `Resumen de surtido · ${r.desde} a ${r.hasta}`
     )
   } catch (e) {
@@ -778,68 +775,90 @@ export async function imprimirResumenSurtido(
 
 // ── Construcción del HTML ────────────────────────────────────────────────────
 
-// Estilos compartidos por todos los documentos imprimibles (carta).
-const ESTILOS_DOC = `
+// Tamaño de letra configurable (Configuración → "Tamaño de letra de
+// documentos"): chico = el tamaño original; mediano/grande escalan TODAS las
+// fuentes de los documentos. El paginador en contenido mide el DOM ya
+// escalado, así que las hojas y la numeración se ajustan solas (letra más
+// grande = más hojas).
+const ESCALA_DOC = { chico: 1, mediano: 1.2, grande: 1.4 } as const
+
+function escalaDoc(): number {
+  const { docFontSize } = getSettings()
+  return ESCALA_DOC[docFontSize] ?? 1
+}
+
+// Estilos compartidos por todos los documentos imprimibles (carta), con las
+// fuentes escaladas al tamaño configurado.
+function estilosDoc(): string {
+  const k = escalaDoc()
+  const fs = (n: number): string => `${Math.round(n * k * 10) / 10}px`
+  return `
   @page { size: letter; margin: 14mm 12mm 16mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 10px; color: #111; margin: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: ${fs(10)}; color: #111; margin: 0; }
   header { display: flex; justify-content: space-between; align-items: flex-start;
            border-bottom: 2px solid #111; padding-bottom: 5px; margin-bottom: 6px; }
-  .negocio { font-size: 14px; font-weight: 700; }
+  .negocio { font-size: ${fs(14)}; font-weight: 700; }
   .negocio-sub { color: #555; margin-top: 1px; }
-  .doc-titulo { text-align: right; font-size: 13px; font-weight: 700; text-transform: uppercase; }
+  .doc-titulo { text-align: right; font-size: ${fs(13)}; font-weight: 700; text-transform: uppercase; }
   .doc-tipo { display: inline-block; margin-top: 3px; padding: 1px 7px; border: 1px solid #111;
-              border-radius: 3px; font-size: 9px; letter-spacing: 1px; }
+              border-radius: 3px; font-size: ${fs(9)}; letter-spacing: 1px; }
   .datos { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
   .datos td { padding: 1px 6px; vertical-align: top; }
-  .datos .k { color: #555; white-space: nowrap; width: 110px; }
+  .datos .k { color: #555; white-space: nowrap; width: ${Math.round(110 * k)}px; }
   .datos .v { font-weight: 600; }
   .mono { font-family: Consolas, 'Courier New', monospace; }
   table.items { width: 100%; border-collapse: collapse; }
   table.items th { background: #f0f0f0; border: 1px solid #999; padding: 2px 5px;
-                   font-size: 9px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; }
+                   font-size: ${fs(9)}; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; }
   table.items td { border: 1px solid #bbb; padding: 2px 5px; }
   table.items tr { page-break-inside: avoid; }
   .num { text-align: right; font-family: Consolas, 'Courier New', monospace; white-space: nowrap; }
   .center { text-align: center; }
-  .sec { font-size: 10px; color: #444; }
+  .sec { font-size: ${fs(10)}; color: #444; }
   .warn { color: #b45309; font-weight: 600; }
   .bad { color: #b91c1c; font-weight: 700; }
-  tfoot td { border: none !important; padding-top: 8px; font-size: 12px; }
+  tfoot td { border: none !important; padding-top: 8px; font-size: ${fs(12)}; }
   .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 12px; }
   .kpi { border: 1px solid #ccc; border-radius: 4px; padding: 5px 8px; background: #f8f8f8; }
-  .kpi .label { color: #555; font-size: 8px; text-transform: uppercase; letter-spacing: 0.4px; }
-  .kpi .value { font-size: 12px; font-weight: 700; font-family: Consolas, monospace; }
+  .kpi .label { color: #555; font-size: ${fs(8)}; text-transform: uppercase; letter-spacing: 0.4px; }
+  .kpi .value { font-size: ${fs(12)}; font-weight: 700; font-family: Consolas, monospace; }
   .totales { display: flex; justify-content: flex-end; gap: 24px; margin-top: 6px;
              padding: 5px 8px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 4px; }
   .totales div { text-align: right; }
-  .totales .label { color: #555; font-size: 10px; text-transform: uppercase; }
-  .totales .value { font-size: 13px; font-weight: 700; font-family: Consolas, monospace; }
+  .totales .label { color: #555; font-size: ${fs(10)}; text-transform: uppercase; }
+  .totales .value { font-size: ${fs(13)}; font-weight: 700; font-family: Consolas, monospace; }
   .firmas { display: flex; justify-content: space-around; gap: 40px; margin-top: 30px;
             page-break-inside: avoid; }
   .firma { flex: 1; max-width: 220px; text-align: center; }
   .firma .linea { border-top: 1px solid #111; margin-bottom: 4px; }
-  .firma .rol { font-size: 10px; color: #555; }
-  footer { margin-top: 14px; text-align: center; color: #888; font-size: 9px; }
+  .firma .rol { font-size: ${fs(10)}; color: #555; }
+  footer { margin-top: 14px; text-align: center; color: #888; font-size: ${fs(9)}; }
 `
+}
 
 // Compactación EXTRA para el reporte de stock (suele tener cientos de filas).
-// Reduce alto de fila al máximo razonable para usar menos hojas.
-const ESTILOS_STOCK_COMPACTO = `
-  table.items td { padding: 0.5px 4px; font-size: 8px; line-height: 1.12; }
-  table.items th { padding: 1.5px 4px; font-size: 7.5px; }
-  table.items .sec { font-size: 7.5px; }
+// Reduce alto de fila al máximo razonable para usar menos hojas. También
+// escala con el tamaño configurado (relativo a sus valores compactos).
+function estilosStockCompacto(): string {
+  const k = escalaDoc()
+  const fs = (n: number): string => `${Math.round(n * k * 10) / 10}px`
+  return `
+  table.items td { padding: 0.5px 4px; font-size: ${fs(8)}; line-height: 1.12; }
+  table.items th { padding: 1.5px 4px; font-size: ${fs(7.5)}; }
+  table.items .sec { font-size: ${fs(7.5)}; }
   .kpis { gap: 4px; margin-bottom: 5px; }
   .kpi { padding: 3px 6px; }
-  .kpi .label { font-size: 7px; }
-  .kpi .value { font-size: 11px; }
+  .kpi .label { font-size: ${fs(7)}; }
+  .kpi .value { font-size: ${fs(11)}; }
   header { margin-bottom: 5px; padding-bottom: 4px; }
-  .negocio { font-size: 13px; }
+  .negocio { font-size: ${fs(13)}; }
   .datos { margin-bottom: 5px; }
   .datos td { padding: 0.5px 6px; }
   .totales { margin-top: 6px; padding: 4px 8px; }
   footer { margin-top: 8px; }
 `
+}
 
 const TITULOS: Record<MovimientoDetalle['tipo'], string> = {
   ENTRADA: 'Entrada de mercancía',
@@ -870,6 +889,14 @@ function money(n: number): string {
 
 function entero(n: number): string {
   return (Number(n) || 0).toLocaleString('es-MX')
+}
+
+// 'YYYY-MM-DD' → 'DD-MM-YYYY': las caducidades se imprimen día-mes-año (igual
+// que en pantalla). Si la fecha viene en otro formato, se deja tal cual.
+function fechaDMA(s: string | null | undefined): string | null {
+  if (!s) return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : s
 }
 
 interface EncabezadoNegocio {
@@ -941,7 +968,7 @@ function buildHtml(det: MovimientoDetalle): string {
         <td class="mono">${esc(l.codigo)}</td>
         <td>${esc(l.nombre)}</td>
         <td class="sec">${esc(l.sustancia ?? '—')}</td>
-        <td class="mono center">${esc(l.caducidad ?? '—')}</td>
+        <td class="mono center">${esc(fechaDMA(l.caducidad) ?? '—')}</td>
         ${conProveedorLinea ? `<td class="sec">${esc(provDeLinea(l))}</td>` : ''}
         ${conMotivoLinea ? `<td>${esc(l.motivo ?? '—')}</td>` : ''}
         <td class="num">${entero(l.cantidad)}</td>
@@ -957,7 +984,7 @@ function buildHtml(det: MovimientoDetalle): string {
 <head>
 <meta charset="utf-8">
 <title>${esc(TITULOS[det.tipo])} ${esc(folioMovimiento(det.tipo, det.numero))}</title>
-<style>${ESTILOS_DOC}</style>
+<style>${estilosDoc()}</style>
 </head>
 <body>
   <header>

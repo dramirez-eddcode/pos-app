@@ -1,6 +1,6 @@
 # CLAUDE.md — Farmacias MS POS
 
-Contexto para trabajar en este proyecto. **Versión actual: v1.1.17.**
+Contexto para trabajar en este proyecto. **Versión actual: v1.1.18.**
 
 ## Qué es
 Punto de venta (POS) de escritorio para una cadena de farmacias, **100% local/offline** (sin nube). Matriz y sucursales se sincronizan **por USB**.

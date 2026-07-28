@@ -22,6 +22,7 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [selected, setSelected] = useState<string>('')
   const [docPrinter, setDocPrinter] = useState<string>('')
   const [docDuplex, setDocDuplex] = useState<boolean>(false)
+  const [docFontSize, setDocFontSize] = useState<'chico' | 'mediano' | 'grande'>('chico')
   const [drawerOnCash, setDrawerOnCash] = useState<boolean>(true)
   const [showTime, setShowTime] = useState<boolean>(false)
   const [receiptFooter, setReceiptFooter] = useState<string>('')
@@ -61,6 +62,7 @@ export default function SettingsModal({ open, onClose }: Props) {
     setSelected(settings?.printerName ?? '')
     setDocPrinter(settings?.docPrinterName ?? '')
     setDocDuplex(settings?.docPrinterDuplex ?? false)
+    setDocFontSize(settings?.docFontSize ?? 'chico')
     setDrawerOnCash(settings?.openDrawerOnCash ?? true)
     setShowTime(settings?.showTimeOnReceipt ?? false)
     setReceiptFooter(settings?.receiptFooter ?? '')
@@ -159,6 +161,7 @@ export default function SettingsModal({ open, onClose }: Props) {
         printerName: selected || null,
         docPrinterName: docPrinter || null,
         docPrinterDuplex: docDuplex,
+        docFontSize,
         openDrawerOnCash: drawerOnCash,
         showTimeOnReceipt: showTime,
         receiptFooter: receiptFooter.trim() || null,
@@ -250,6 +253,50 @@ export default function SettingsModal({ open, onClose }: Props) {
               Imprimir documentos a <strong>doble cara</strong> (si la impresora lo soporta) —
               ahorra papel
             </label>
+          </div>
+
+          {/* Tamaño de letra de los documentos impresos/PDF */}
+          <div className="pt-1">
+            <label className="block text-xs font-medium mb-1">
+              Tamaño de letra de los documentos
+            </label>
+            <div className="flex gap-2">
+              {(
+                [
+                  ['chico', 'Chico (actual)'],
+                  ['mediano', 'Mediano'],
+                  ['grande', 'Grande']
+                ] as const
+              ).map(([valor, etiqueta]) => (
+                <button
+                  key={valor}
+                  type="button"
+                  onClick={() => setDocFontSize(valor)}
+                  className={`flex-1 px-3 py-1.5 border rounded text-sm cursor-pointer ${
+                    docFontSize === valor
+                      ? 'border-primary bg-primary/10 font-semibold'
+                      : 'border-border hover:bg-muted'
+                  }`}
+                >
+                  <span
+                    className={
+                      valor === 'grande'
+                        ? 'text-base'
+                        : valor === 'mediano'
+                          ? 'text-sm'
+                          : 'text-xs'
+                    }
+                  >
+                    {etiqueta}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Aplica a las hojas de pedidos, resumen de surtido e historial (impresos y PDF). Con
+              letra más grande los documentos pueden usar más hojas — la numeración se ajusta
+              sola.
+            </p>
           </div>
         </section>
 
