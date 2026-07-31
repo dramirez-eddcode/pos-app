@@ -136,14 +136,22 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
   p.bold(true).line(labelValue('TOTAL', formatMoney(data.total))).bold(false)
 
   // ── Pagos ─────────────────────────────────────────────────────────────────
+  // OJO: en `pagos` el EFECTIVO va NETO (lo que se queda en la caja, ya sin el
+  // cambio) porque así lo necesitan el corte y el arqueo. En el TICKET hay que
+  // imprimir lo que el cliente ENTREGÓ = neto + cambio; si no, con una venta de
+  // $5 pagada con $10 salía "EFECTIVO 5.00 / CAMBIO 5.00" y no cuadraba.
+  const recibidoEfectivo = (montoNeto: number): number => +(montoNeto + data.cambio).toFixed(2)
   if (data.pagos.length === 1 && data.pagos[0]!.metodo === 'EFECTIVO') {
-    // Caso legacy clásico: EFECTIVO + CAMBIO
-    p.line(labelValue('EFECTIVO', formatMoney(data.pagos[0]!.monto)))
+    // Caso legacy clásico: EFECTIVO RECIBIDO + CAMBIO
+    p.line(labelValue('EFECTIVO RECIBIDO', formatMoney(recibidoEfectivo(data.pagos[0]!.monto))))
     p.line(labelValue('CAMBIO', formatMoney(data.cambio)))
   } else {
     for (const pago of data.pagos) {
-      const label = pago.referencia ? `${metodoLabel(pago.metodo)} ${pago.referencia}` : metodoLabel(pago.metodo)
-      p.line(labelValue(label, formatMoney(pago.monto)))
+      const esEfectivo = pago.metodo === 'EFECTIVO'
+      const base = esEfectivo ? 'EFECTIVO RECIBIDO' : metodoLabel(pago.metodo)
+      const label = pago.referencia ? `${base} ${pago.referencia}` : base
+      const monto = esEfectivo ? recibidoEfectivo(pago.monto) : pago.monto
+      p.line(labelValue(label, formatMoney(monto)))
     }
     if (data.cambio > 0) p.line(labelValue('CAMBIO', formatMoney(data.cambio)))
   }
@@ -395,7 +403,9 @@ export function buildTestReceiptBytes(opts?: {
     subtotal: 23.28,
     iva: 3.72,
     total: 27.0,
-    pagos: [{ metodo: 'EFECTIVO', monto: 50 }],
+    // El monto del pago es el efectivo NETO (27 se queda en caja); con el
+    // cambio de 23 el ticket imprime "EFECTIVO RECIBIDO 50.00".
+    pagos: [{ metodo: 'EFECTIVO', monto: 27.0 }],
     cambio: 23.0,
     openDrawer: false
   })
