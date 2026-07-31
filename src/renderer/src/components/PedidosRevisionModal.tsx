@@ -33,7 +33,9 @@ const ESTADO_BADGE: Record<string, string> = {
 /**
  * Revisión de pedidos de surtido (matriz, sólo admin): la cajera los prellena
  * desde el POS y aquí se aprueban (ejecuta el traspaso real y descuenta stock),
- * se rechazan o se editan. Las 3 hojas se pueden reimprimir tras editar.
+ * se rechazan o se editan. Al aprobar se imprime la hoja de ARCHIVO (la de la
+ * sucursal y el ORIGINAL ya salieron al capturar); tras editar se pueden
+ * reimprimir las hojas que correspondan.
  */
 export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
   const { user } = useSession()
@@ -267,8 +269,8 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
   // Imprime copias del pedido UNA POR UNA (trabajos separados: el dúplex no
   // mezcla copias y cada hoja se numera por sí sola), con progreso. `copias`
   // son los ÍNDICES de copia a imprimir (SUCURSAL: 0 = sucursal destino,
-  // 1 = bodega matriz, 2 = evidencia/propietario); undefined = la hoja única
-  // del proveedor.
+  // 1 = ORIGINAL del propietario —ambas se imprimen al capturar—, 2 = ARCHIVO,
+  // que sale al aprobar); undefined = la hoja única del proveedor.
   const imprimirHojas = useCallback(
     async (pedidoId: string, copias?: number[]): Promise<void> => {
       if (!user) return
@@ -310,14 +312,14 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
             description: 'La hoja del proveedor se imprime al aprobar.'
           })
         } else {
-          // Pedido corregido → la hoja de la sucursal impresa al capturar ya
-          // no sirve (las otras 2 copias salen hasta aprobar, ya corregidas).
-          toast.warning('Cambios guardados — hay que reimprimir la hoja de la sucursal', {
+          // Pedido corregido → las 2 hojas impresas al capturar (sucursal y
+          // ORIGINAL) ya no sirven. La de ARCHIVO sale al aprobar, ya corregida.
+          toast.warning('Cambios guardados — hay que reimprimir las 2 hojas', {
             id: `reimp-aviso-${r.id}`,
             description:
-              'La hoja impresa antes de la corrección ya no coincide. Las copias de bodega y evidencia se imprimen al aprobar, ya corregidas.',
+              'Las hojas impresas antes de la corrección (sucursal y ORIGINAL) ya no coinciden. La de ARCHIVO se imprime al aprobar, ya corregida.',
             duration: 12000,
-            action: { label: 'Imprimir hoja', onClick: () => imprimirHojas(r.id, [0]) }
+            action: { label: 'Imprimir 2 hojas', onClick: () => imprimirHojas(r.id, [0, 1]) }
           })
         }
       }
@@ -341,14 +343,15 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
         if (!r) return
       }
       // Proveedor: hoja única. Sucursal APROBADA: las 3 copias. Sucursal sin
-      // aprobar: sólo la hoja de la sucursal (las otras 2 salen al aprobar).
+      // aprobar: las 2 que ya salieron al capturar (la de ARCHIVO se imprime
+      // hasta la aprobación).
       await imprimirHojas(
         detalle.id,
         detalle.tipo === 'PROVEEDOR'
           ? undefined
           : detalle.estado === 'APROBADO'
             ? [0, 1, 2]
-            : [0]
+            : [0, 1]
       )
     } catch (e) {
       toast.error('No se pudo imprimir', {
@@ -440,14 +443,14 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                 {
                   description: esProveedor
                     ? 'Imprimiendo la hoja del proveedor · registra la Entrada cuando surta.'
-                    : `Imprimiendo las 2 copias pendientes (bodega y evidencia).${res.path ? ` · Archivo: ${res.path}` : ''}`,
+                    : `Imprimiendo la hoja de ARCHIVO.${res.path ? ` · Archivo: ${res.path}` : ''}`,
                   duration: 10000
                 }
               )
-              // Las hojas que se imprimen HASTA aprobar: proveedor → su hoja
-              // única; sucursal → las copias de bodega matriz y evidencia (la
-              // de la sucursal ya se imprimió al capturar el pedido).
-              await imprimirHojas(detalle.id, esProveedor ? undefined : [1, 2])
+              // Lo que se imprime HASTA aprobar: proveedor → su hoja única;
+              // sucursal → la copia de ARCHIVO (la de la sucursal y el
+              // ORIGINAL ya se imprimieron al capturar el pedido).
+              await imprimirHojas(detalle.id, esProveedor ? undefined : [2])
               setDetalle(null)
               await load()
               onDone?.()
@@ -853,7 +856,7 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                     ? 'Reimprimir hoja'
                     : detalle.estado === 'APROBADO'
                       ? 'Reimprimir 3 hojas'
-                      : 'Reimprimir hoja de sucursal'}
+                      : 'Reimprimir 2 hojas'}
                 </button>
               </span>
             )

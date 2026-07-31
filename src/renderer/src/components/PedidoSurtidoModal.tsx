@@ -29,6 +29,14 @@ export interface PedidoDraft {
   numero?: number
 }
 
+/**
+ * Copias que se imprimen AL TERMINAR la captura (índices de COPIAS_PEDIDO en
+ * main/services/pdf.ts): 0 = sucursal destino, 1 = ORIGINAL del propietario.
+ * La 2 (ARCHIVO) la imprime el admin al aprobar. Fuera del componente: así no
+ * entra en las deps de los useCallback.
+ */
+const COPIAS_CAPTURA = [0, 1]
+
 /** Valor del selector para "destino externo — escribir nombre". */
 export const EXTERNO_ID = '__externo__'
 /** Valor del selector para "proveedor escrito a mano". */
@@ -61,8 +69,9 @@ interface Props {
  * Prellenado de pedido de surtido a sucursal (cajeras de una matriz-que-vende,
  * vía F11). NO toca inventario: al terminar queda PENDIENTE de revisión en el
  * panel de matriz, y sólo al aprobarse ahí se genera el traspaso real. Se
- * puede minimizar para atender clientes. Al terminar se imprime SÓLO la copia
- * de la sucursal; las otras 2 (bodega y evidencia) salen al aprobarse.
+ * puede minimizar para atender clientes. Al terminar se imprimen 2 copias: la
+ * de la sucursal destino y el ORIGINAL del propietario; la de ARCHIVO sale
+ * cuando el admin aprueba.
  */
 export default function PedidoSurtidoModal({
   open,
@@ -386,7 +395,7 @@ export default function PedidoSurtidoModal({
       id: 'pedido-confirm',
       description: esProveedor
         ? `${lineas.length} producto(s). Quedará ABIERTA: pueden seguir agregándole desde F11 hasta que el administrador la autorice (ahí se imprime).`
-        : `${lineas.length} producto(s). Se imprime la hoja para la sucursal y queda pendiente de aprobación en la matriz (el stock NO se descuenta todavía; las otras 2 copias se imprimen al aprobarse).`,
+        : `${lineas.length} producto(s). Se imprimen 2 hojas (la de la sucursal y el ORIGINAL del propietario) y queda pendiente de aprobación en la matriz — el stock NO se descuenta todavía; la hoja de ARCHIVO se imprime al aprobarse.`,
       duration: 10000,
       action: {
         label: esProveedor ? 'Sí, guardar' : 'Sí, terminar',
@@ -415,31 +424,38 @@ export default function PedidoSurtidoModal({
                   : 'Queda pendiente de aprobación en la matriz.'
               }
             )
-            // Sucursal: al terminar SÓLO se imprime la copia 0 (SUCURSAL
-            // DESTINO) — las otras 2 (bodega y evidencia) se imprimen hasta
-            // que el admin apruebe el pedido. Proveedor: la hoja única también
-            // se imprime HASTA la aprobación.
+            // Sucursal: al terminar salen 2 hojas — la de la SUCURSAL DESTINO
+            // (copia 0) y el ORIGINAL del propietario (copia 1). La de ARCHIVO
+            // (copia 2) se imprime hasta que el admin apruebe el pedido.
+            // Proveedor: su hoja única también sale HASTA la aprobación.
+            // Cada copia va como trabajo de impresión SEPARADO: el dúplex no
+            // mezcla copias y cada una se numera "Página i de N" por sí sola.
             if (!esProveedor) {
               const idToast = `imp-${p.id}`
-              toast.loading('Imprimiendo la hoja para la sucursal…', { id: idToast })
-              const pr = await window.api.pedidos.imprimir(user.id, p.id, 0)
-              if (!pr.ok) {
-                toast.dismiss(idToast)
-                if (pr.cancelled) {
-                  toast.info('Impresión cancelada', {
-                    description: 'Puedes reimprimir la hoja desde la revisión en matriz.'
-                  })
-                } else {
-                  toast.warning('Falló la impresión de la hoja', {
-                    description: `${pr.error ?? ''} · Puedes reimprimir desde la revisión en matriz.`
+              const TOTAL = COPIAS_CAPTURA.length
+              for (let n = 0; n < TOTAL; n++) {
+                toast.loading(`Imprimiendo hoja ${n + 1} de ${TOTAL}…`, { id: idToast })
+                const pr = await window.api.pedidos.imprimir(user.id, p.id, COPIAS_CAPTURA[n])
+                if (!pr.ok) {
+                  toast.dismiss(idToast)
+                  const resto = ` · Puedes reimprimir las ${TOTAL} hojas desde la revisión en matriz.`
+                  if (pr.cancelled) {
+                    toast.info(`Impresión cancelada en la hoja ${n + 1} de ${TOTAL}`, {
+                      description: `Faltó imprimir${n === 0 ? ' todo' : ' el resto'}.${resto}`
+                    })
+                  } else {
+                    toast.warning(`Falló la hoja ${n + 1} de ${TOTAL}`, {
+                      description: `${pr.error ?? ''}${resto}`
+                    })
+                  }
+                  break
+                }
+                if (n === TOTAL - 1) {
+                  toast.success(`${TOTAL} hojas impresas (sucursal y original)`, {
+                    id: idToast,
+                    description: 'La hoja de ARCHIVO se imprime cuando se apruebe el pedido.'
                   })
                 }
-              } else {
-                toast.success('Hoja de la sucursal impresa', {
-                  id: idToast,
-                  description:
-                    'Las otras 2 copias (bodega y evidencia) se imprimen cuando se apruebe el pedido.'
-                })
               }
             }
             onTerminado(draft.id)
@@ -471,9 +487,9 @@ export default function PedidoSurtidoModal({
             Prellena lo que pide otra <strong>sucursal</strong> (se surte de tus existencias al
             aprobarse) o la lista de faltantes para tu <strong>proveedor</strong> (la mercancía
             entra después con una Entrada). <strong>No descuenta inventario</strong>: al terminar
-            se imprime la hoja para la sucursal y el pedido queda{' '}
-            <strong>pendiente de aprobación</strong> en el panel de matriz (las otras 2 copias se
-            imprimen al aprobarse). Puedes <strong>minimizarlo</strong> si llega un cliente — queda como
+            se imprimen <strong>2 hojas</strong> (la de la sucursal y el ORIGINAL del propietario)
+            y el pedido queda <strong>pendiente de aprobación</strong> en el panel de matriz (la
+            hoja de ARCHIVO se imprime al aprobarse). Puedes <strong>minimizarlo</strong> si llega un cliente — queda como
             pestaña abajo y lo retomas cuando quieras.
           </p>
 
@@ -807,8 +823,9 @@ export default function PedidoSurtidoModal({
               </>
             ) : (
               <>
-                Al terminar se imprime <strong>1 hoja</strong> (la de la sucursal); las otras{' '}
-                <strong>2 copias</strong> se imprimen al aprobarse.
+                Al terminar se imprimen <strong>2 hojas</strong> (sucursal y{' '}
+                <strong>ORIGINAL</strong>); la de <strong>ARCHIVO</strong> se imprime al
+                aprobarse.
               </>
             )}
           </div>

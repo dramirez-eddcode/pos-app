@@ -11,10 +11,25 @@ import type { MovimientoDetalle, PdfMovimientoResult, StockBodegaPdfInput } from
 
 /**
  * Paginador EN CONTENIDO: mide el documento con el ancho real de impresión,
- * parte la tabla en hojas que caben completas y antepone a cada hoja la línea
- * "Página i de N" (arriba a la derecha). Así la numeración aparece SIEMPRE —
- * tanto al imprimir (webContents.print, cuyo header/footer nativo no es
- * confiable) como al guardar PDF — sin depender de plantillas de Chromium.
+ * parte la tabla en hojas que caben completas y le pone a cada hoja un pie con
+ * "Página i de N". Así la numeración aparece SIEMPRE — tanto al imprimir
+ * (webContents.print, cuyo header/footer nativo no es confiable) como al
+ * guardar PDF — sin depender de plantillas de Chromium.
+ *
+ * GEOMETRÍA — por qué estos números:
+ *  - Con `@page { margin: 12mm }` la caja de página mide 725.29 × 965.29 px y
+ *    es DETERMINISTA en cualquier impresora: 12mm es mayor que el área no
+ *    imprimible de cualquier láser (~6.4mm máx), así que Chromium nunca la
+ *    recorta contra el área imprimible del driver.
+ *  - Cada hoja que arma el paginador mide 940px: 25px MENOS que la caja, para
+ *    que ningún redondeo pueda fragmentarla.
+ *  - Aquí se MIDE con el layout de pantalla (96dpi) pero se IMPRIME con el del
+ *    driver (600/1200dpi), donde las alturas de línea y de fila redondean
+ *    hacia arriba: el impreso sale ~5% más alto que lo medido. Ese error era
+ *    la causa de los renglones encimados (la cola de una hoja se pintaba sobre
+ *    la primera fila de la siguiente, y el pie sobre la última fila). Se
+ *    neutraliza con el COLCHÓN + el `overflow:hidden` de `.hoja`.
+ *
  * Estructura esperada: <body> con bloques (header, .datos, table.items,
  * .totales, .firmas, footer) o <section> por copia (pedidos).
  */
@@ -23,13 +38,32 @@ const PAGINADOR_JS = String.raw`
   const PIE_IZQUIERDO = "__PIE__";
   const DPI = 96;
   const mm = (v) => (v / 25.4) * DPI;
-  // Debe coincidir con @page (14mm 12mm 16mm) y con los márgenes que se pasan
-  // a print()/printToPDF. Colchón para redondeos de fragmentación.
-  const ANCHO = 8.5 * DPI - 2 * mm(12);
-  const ALTO_UTIL = 11 * DPI - mm(14) - mm(16) - 16;
-  // El contenido deja espacio libre al fondo para el pie anclado.
-  const ALTO_CONTENIDO = ALTO_UTIL - 22;
+  // Caja de @page { size: letter; margin: 12mm } — la misma que se le pasa a
+  // printToPDF (0.4724in por lado), así PDF e impresión componen igual.
+  const ANCHO = 8.5 * DPI - 2 * mm(12);        // 725.29
+  const CAJA_ALTO = 11 * DPI - 2 * mm(12);     // 965.29
+  const ALTO_HOJA = 940;                       // 25px de aire contra la caja
   document.body.style.width = ANCHO.toFixed(2) + 'px';
+
+  // Redondeo SIEMPRE hacia arriba: el error de medición se acumula a favor del
+  // colchón. El -0.01 evita sumar 1px de más en valores ya enteros.
+  const ceil = (n) => Math.ceil(n - 0.01);
+
+  // Alto REAL del pie (escala con "Tamaño de letra de documentos"): una
+  // constante fija se quedaba corta con letra grande.
+  const pieRef = document.createElement('div');
+  pieRef.className = 'pie';
+  pieRef.style.cssText = 'position:static;visibility:hidden;';
+  pieRef.textContent = PIE_IZQUIERDO + ' — Página 88 de 88';
+  document.body.appendChild(pieRef);
+  const ALTO_PIE = ceil(pieRef.getBoundingClientRect().height) + 6;
+  pieRef.remove();
+
+  // Colchón anti-deriva: ~5% de la hoja (la deriva medida en campo fue ~5%,
+  // 2 filas de 43). Con overflow:hidden como red de seguridad la tolerancia
+  // total ronda el 7.8%.
+  const COLCHON = Math.max(48, Math.round(ALTO_HOJA * 0.05));
+  const ALTO_CONTENIDO = ALTO_HOJA - ALTO_PIE - COLCHON;
 
   const hijos = Array.from(document.body.children);
   const esSecciones = hijos.length > 0 && hijos.every((el) => el.tagName === 'SECTION');
@@ -37,10 +71,10 @@ const PAGINADOR_JS = String.raw`
 
   const alturaDe = (el) => {
     const cs = getComputedStyle(el);
-    return (
+    return ceil(
       el.getBoundingClientRect().height +
-      (parseFloat(cs.marginTop) || 0) +
-      (parseFloat(cs.marginBottom) || 0)
+      Math.max(parseFloat(cs.marginTop) || 0, 0) +
+      Math.max(parseFloat(cs.marginBottom) || 0, 0)
     );
   };
 
@@ -65,6 +99,8 @@ const PAGINADOR_JS = String.raw`
     for (const b of bloques) {
       if (b.matches('table.items')) {
         // La tabla grande se parte por filas; cada trozo lleva su thead.
+        // (table-layout:fixed en el CSS garantiza que las columnas midan igual
+        // en la tabla original —donde medimos— y en estos clones.)
         const thead = b.querySelector('thead');
         const filas = Array.from(b.querySelectorAll('tbody > tr'));
         const hThead = thead ? alturaDe(thead) : 0;
@@ -80,7 +116,7 @@ const PAGINADOR_JS = String.raw`
         };
         abrirTabla();
         for (const fila of filas) {
-          const hFila = fila.getBoundingClientRect().height;
+          const hFila = ceil(fila.getBoundingClientRect().height);
           if (usado + hTabla + hFila > ALTO_CONTENIDO && (tbody.children.length || actual.length)) {
             if (tbody.children.length) {
               actual.push(tabla);
@@ -105,16 +141,14 @@ const PAGINADOR_JS = String.raw`
     const total = paginas.length;
     unidad.innerHTML = '';
     paginas.forEach((nodos, i) => {
+      // Sin page-break-inside:avoid: en un box del tamaño de la hoja es un
+      // no-op en el mejor caso y fuerza fragmentación en el peor.
       const pag = document.createElement('div');
-      pag.style.cssText =
-        'page-break-after:always;page-break-inside:avoid;position:relative;height:' +
-        ALTO_UTIL.toFixed(2) + 'px;';
+      pag.className = 'hoja';
       for (const n of nodos) pag.appendChild(n);
       // Pie anclado al fondo de la hoja: documento/folio + "Página i de N".
       const pie = document.createElement('div');
-      pie.style.cssText =
-        'position:absolute;bottom:0;left:0;right:0;display:flex;justify-content:space-between;' +
-        'font-size:10px;color:#333;font-family:Segoe UI,Arial,sans-serif;';
+      pie.className = 'pie';
       const izq = document.createElement('span');
       izq.textContent = PIE_IZQUIERDO;
       const der = document.createElement('span');
@@ -126,10 +160,16 @@ const PAGINADOR_JS = String.raw`
       unidad.appendChild(pag);
     });
     // La última hoja de la unidad no fuerza salto (el <section> ya trae el
-    // suyo entre copias); evita hojas en blanco.
-    if (unidad.lastElementChild) unidad.lastElementChild.style.pageBreakAfter = 'auto';
+    // suyo entre copias); evita hojas en blanco. Hay que limpiar las DOS
+    // propiedades porque el CSS declara page-break-after Y break-after.
+    const ultima = unidad.lastElementChild;
+    if (ultima) {
+      ultima.style.pageBreakAfter = 'auto';
+      ultima.style.breakAfter = 'auto';
+    }
   }
-  return true;
+  return { hojas: document.querySelectorAll('.hoja').length, altoHoja: ALTO_HOJA,
+           cajaAlto: CAJA_ALTO, altoContenido: ALTO_CONTENIDO, altoPie: ALTO_PIE };
 })();
 `
 
@@ -151,6 +191,10 @@ async function renderEnVentanaOculta<T>(
   })
   try {
     await win.loadFile(tmpPath)
+    // Las fuentes del sistema deben estar resueltas ANTES de medir: si el
+    // paginador midiera con la fuente de reemplazo, todas las alturas de fila
+    // saldrían falsas y las hojas quedarían mal cortadas.
+    await win.webContents.executeJavaScript('document.fonts.ready.then(() => true)')
     await win.webContents.executeJavaScript(
       PAGINADOR_JS.replace('"__PIE__"', JSON.stringify(pieIzquierdo))
     )
@@ -185,10 +229,11 @@ async function printDoc(
   const duplex =
     docPrinterDuplex && !opts.forzarSimplex ? { duplexMode: 'longEdge' as const } : {}
 
-  // Los márgenes de página los define el @page CSS del documento (14/12/16mm),
-  // que es con lo que mide el paginador en contenido. NO pasar `margins` aquí:
-  // print() los interpreta en otra unidad y deja el área de contenido vacía
-  // ("content size is empty") — la impresión falla y se cuelga.
+  // Los márgenes los define el @page CSS del documento (12mm por lado), que es
+  // con lo que mide el paginador: sin la opción `margins`, Chromium usa
+  // marginType 'default' y SÍ honra el @page. NO pasarla aquí — print() la
+  // interpreta en otra unidad y deja el área de contenido vacía ("content size
+  // is empty"): la impresión falla y se cuelga.
   // TAMPOCO pasar `header`/`footer`: activan el encabezado/pie NATIVO de
   // Chromium, que cambia los márgenes reales del trabajo — el área impresa
   // queda más chica que la medida por el paginador y las hojas se desbordan
@@ -269,9 +314,9 @@ export async function exportMovimientoPdf(
         const pdf = await win.webContents.printToPDF({
           pageSize: 'Letter',
           printBackground: true,
-          // Mismos márgenes que el @page (14mm/12mm/16mm, en pulgadas): el
-          // paginador en contenido mide con estas medidas exactas.
-          margins: { marginType: 'custom', top: 0.5512, bottom: 0.6299, left: 0.4724, right: 0.4724 }
+          // MISMA geometría que el @page (12mm = 0.4724in por lado) y que la
+          // que mide el paginador: el PDF y lo impreso componen idéntico.
+          margins: { marginType: 'custom', top: 0.4724, bottom: 0.4724, left: 0.4724, right: 0.4724 }
         })
         writeFileSync(filePath, pdf)
       },
@@ -409,9 +454,9 @@ export async function exportStockBodegaPdf(
         const pdf = await win.webContents.printToPDF({
           pageSize: 'Letter',
           printBackground: true,
-          // Mismos márgenes que el @page (14mm/12mm/16mm, en pulgadas): el
-          // paginador en contenido mide con estas medidas exactas.
-          margins: { marginType: 'custom', top: 0.5512, bottom: 0.6299, left: 0.4724, right: 0.4724 }
+          // MISMA geometría que el @page (12mm = 0.4724in por lado) y que la
+          // que mide el paginador: el PDF y lo impreso componen idéntico.
+          margins: { marginType: 'custom', top: 0.4724, bottom: 0.4724, left: 0.4724, right: 0.4724 }
         })
         writeFileSync(filePath, pdf)
       },
@@ -463,7 +508,9 @@ export async function imprimirMovimiento(folio: string): Promise<PdfMovimientoRe
   }
 }
 
-// ── Pedido de surtido a sucursal: 3 hojas (destino / bodega / evidencia) ─────
+// ── Pedido de surtido a sucursal: 3 copias ──────────────────────────────────
+// 2 al capturar (sucursal destino + ORIGINAL del propietario) y 1 al aprobar
+// (ARCHIVO). Cada copia se manda como trabajo de impresión separado.
 
 export interface PedidoPrintData {
   numero: number
@@ -478,11 +525,25 @@ export interface PedidoPrintData {
   items: { codigo: string; nombre: string; cantidad: number }[]
 }
 
-// SUCURSAL: 3 copias (destino / bodega / evidencia). PROVEEDOR: UNA sola —
-// es la lista de compra que se le entrega al proveedor tras aprobarse.
-const COPIAS_PEDIDO: Record<PedidoPrintData['tipo'], string[]> = {
-  SUCURSAL: ['COPIA: SUCURSAL DESTINO', 'COPIA: BODEGA MATRIZ', 'COPIA: EVIDENCIA — PROPIETARIO'],
-  PROVEEDOR: ['PEDIDO DE COMPRA']
+/** Una copia del pedido. `titulo` = rótulo centrado en grande hasta arriba. */
+interface CopiaPedido {
+  etiqueta: string
+  titulo?: string
+}
+
+/**
+ * SUCURSAL: 3 copias. Los índices son el ORDEN EN QUE SE IMPRIMEN:
+ *   [0] y [1] al TERMINAR la captura (la de la sucursal y el ORIGINAL del
+ *   propietario), [2] al APROBARSE en la matriz (la de archivo).
+ * PROVEEDOR: UNA sola — la lista de compra, y sólo tras aprobarse.
+ */
+const COPIAS_PEDIDO: Record<PedidoPrintData['tipo'], CopiaPedido[]> = {
+  SUCURSAL: [
+    { etiqueta: 'COPIA: SUCURSAL DESTINO' },
+    { etiqueta: 'COPIA: PROPIETARIO', titulo: 'ORIGINAL' },
+    { etiqueta: 'COPIA: ARCHIVO', titulo: 'ARCHIVO' }
+  ],
+  PROVEEDOR: [{ etiqueta: 'PEDIDO DE COMPRA' }]
 }
 
 const TITULO_PEDIDO: Record<PedidoPrintData['tipo'], string> = {
@@ -525,10 +586,15 @@ function buildPedidoHtml(p: PedidoPrintData, copiaIdx?: number): string {
   // SEPARADO: así el dúplex nunca junta dos copias en la misma hoja y la
   // numeración de páginas es por copia ("1 de N" de esa copia).
   const listaCopias =
-    copiaIdx != null ? [COPIAS_PEDIDO[p.tipo][copiaIdx] ?? 'COPIA'] : COPIAS_PEDIDO[p.tipo]
+    copiaIdx != null
+      ? [COPIAS_PEDIDO[p.tipo][copiaIdx] ?? { etiqueta: 'COPIA' }]
+      : COPIAS_PEDIDO[p.tipo]
+  // El rótulo centrado va DENTRO del <section> (nunca como hijo de <body>: el
+  // paginador detecta las copias con `todos los hijos son <section>`).
   const copias = listaCopias.map(
     (copia, idx) => `
   <section ${idx < listaCopias.length - 1 ? 'style="page-break-after: always;"' : ''}>
+    ${copia.titulo ? `<div class="hoja-titulo">${esc(copia.titulo)}</div>` : ''}
     <header>
       <div>
         <div class="negocio">${esc(negocio.nombre)}</div>
@@ -536,7 +602,7 @@ function buildPedidoHtml(p: PedidoPrintData, copiaIdx?: number): string {
       </div>
       <div class="doc-titulo">
         ${esc(TITULO_PEDIDO[p.tipo])}<br>
-        <span class="doc-tipo">${esc(copia)}</span>
+        <span class="doc-tipo">${esc(copia.etiqueta)}</span>
       </div>
     </header>
 
@@ -596,7 +662,8 @@ ${copias}
 /**
  * Guarda el pedido como PDF (tamaño carta) donde el usuario elija — típico:
  * USB o para mandarlo digital al proveedor. PROVEEDOR genera 1 hoja; SUCURSAL
- * las 3 copias en un solo PDF. Al terminar se abre con el visor del sistema.
+ * las 3 copias (sucursal, ORIGINAL y ARCHIVO) en un solo PDF: es el respaldo
+ * digital completo. Al terminar se abre con el visor del sistema.
  */
 export async function exportPedidoPdf(
   p: PedidoPrintData,
@@ -624,9 +691,9 @@ export async function exportPedidoPdf(
         const pdf = await win.webContents.printToPDF({
           pageSize: 'Letter',
           printBackground: true,
-          // Mismos márgenes que el @page (14mm/12mm/16mm, en pulgadas): el
-          // paginador en contenido mide con estas medidas exactas.
-          margins: { marginType: 'custom', top: 0.5512, bottom: 0.6299, left: 0.4724, right: 0.4724 }
+          // MISMA geometría que el @page (12mm = 0.4724in por lado) y que la
+          // que mide el paginador: el PDF y lo impreso componen idéntico.
+          margins: { marginType: 'custom', top: 0.4724, bottom: 0.4724, left: 0.4724, right: 0.4724 }
         })
         writeFileSync(filePath, pdf)
       },
@@ -793,9 +860,33 @@ function estilosDoc(): string {
   const k = escalaDoc()
   const fs = (n: number): string => `${Math.round(n * k * 10) / 10}px`
   return `
-  @page { size: letter; margin: 14mm 12mm 16mm; }
+  /* margin 12mm en los 4 lados: mayor que el área no imprimible de cualquier
+     láser, así la caja de página (725.29 x 965.29 px) es la MISMA en toda
+     impresora y coincide con la que mide el paginador y con la que se le pasa
+     a printToPDF (0.4724in). */
+  @page { size: letter; margin: 12mm; }
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: ${fs(10)}; color: #111; margin: 0; }
+  html, body { margin: 0; padding: 0; }
+  /* line-height numérico (no 'normal'): 'normal' depende de las métricas del
+     dispositivo y hacía que lo impreso midiera más que lo medido en pantalla
+     — el origen de los renglones encimados. */
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: ${fs(10)}; color: #111;
+         line-height: 1.25; }
+
+  /* Hojas que arma el paginador. Alto fijo MENOR que la caja de @page, y
+     overflow:hidden como red de seguridad: un desborde residual jamás puede
+     sangrar sobre la hoja siguiente. */
+  .hoja { position: relative; width: 100%; height: 940px; overflow: hidden;
+          page-break-after: always; break-after: page; }
+  .hoja > .pie { position: absolute; left: 0; right: 0; bottom: 0;
+                 display: flex; justify-content: space-between; align-items: flex-end;
+                 background: #fff; z-index: 2;
+                 font-size: ${fs(10)}; line-height: 1.25; color: #333; }
+
+  /* Rótulo centrado de la copia (ORIGINAL / ARCHIVO), hasta arriba de la hoja. */
+  .hoja-titulo { text-align: center; font-weight: 700; font-size: ${fs(16)};
+                 text-transform: uppercase; letter-spacing: 2px; margin: 0 0 6px; }
+
   header { display: flex; justify-content: space-between; align-items: flex-start;
            border-bottom: 2px solid #111; padding-bottom: 5px; margin-bottom: 6px; }
   .negocio { font-size: ${fs(14)}; font-weight: 700; }
@@ -808,11 +899,15 @@ function estilosDoc(): string {
   .datos .k { color: #555; white-space: nowrap; width: ${Math.round(110 * k)}px; }
   .datos .v { font-weight: 600; }
   .mono { font-family: Consolas, 'Courier New', monospace; }
-  table.items { width: 100%; border-collapse: collapse; }
+  /* table-layout:fixed: las columnas miden igual en la tabla original (donde
+     el paginador mide las filas) que en las tablas clonadas por hoja. */
+  table.items { width: 100%; border-collapse: collapse; table-layout: fixed; }
   table.items th { background: #f0f0f0; border: 1px solid #999; padding: 2px 5px;
-                   font-size: ${fs(9)}; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; }
-  table.items td { border: 1px solid #bbb; padding: 2px 5px; }
-  table.items tr { page-break-inside: avoid; }
+                   font-size: ${fs(9)}; line-height: 1.25; text-transform: uppercase;
+                   letter-spacing: 0.3px; text-align: left; }
+  table.items td { border: 1px solid #bbb; padding: 2px 5px; line-height: 1.25;
+                   overflow-wrap: anywhere; word-break: break-word; }
+  table.items tr { page-break-inside: avoid; break-inside: avoid; }
   .num { text-align: right; font-family: Consolas, 'Courier New', monospace; white-space: nowrap; }
   .center { text-align: center; }
   .sec { font-size: ${fs(10)}; color: #444; }
@@ -843,10 +938,12 @@ function estilosDoc(): string {
 function estilosStockCompacto(): string {
   const k = escalaDoc()
   const fs = (n: number): string => `${Math.round(n * k * 10) / 10}px`
+  // Paddings y tamaños ENTEROS: los fraccionarios (0.5px, 7.5px) redondean
+  // distinto a 96dpi que a la resolución de la impresora.
   return `
-  table.items td { padding: 0.5px 4px; font-size: ${fs(8)}; line-height: 1.12; }
-  table.items th { padding: 1.5px 4px; font-size: ${fs(7.5)}; }
-  table.items .sec { font-size: ${fs(7.5)}; }
+  table.items td { padding: 1px 4px; font-size: ${fs(8)}; line-height: 1.12; }
+  table.items th { padding: 2px 4px; font-size: ${fs(8)}; line-height: 1.12; }
+  table.items .sec { font-size: ${fs(8)}; line-height: 1.12; }
   .kpis { gap: 4px; margin-bottom: 5px; }
   .kpi { padding: 3px 6px; }
   .kpi .label { font-size: ${fs(7)}; }

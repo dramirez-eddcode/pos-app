@@ -4,7 +4,7 @@ Punto de venta **100% local** para Farmacias MS — Electron + React + TypeScrip
 Tailwind. SQLite local por equipo (vía Drizzle / better-sqlite3). **Sin dependencias
 en la nube**: matriz y sucursales se sincronizan por **USB**.
 
-> Versión actual: **v1.1.18**
+> Versión actual: **v1.1.19**
 
 ## Modos de instalación
 

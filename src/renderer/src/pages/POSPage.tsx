@@ -58,6 +58,16 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
 
   const [folioNum, setFolioNum] = useState<number>(0)
   const [cart, setCart] = useState<CartItem[]>([])
+  // Resumen de la ÚLTIMA venta cobrada con efectivo: al cerrarse el modal de
+  // cobro la cajera perdía de vista cuánto le dieron y cuánto debía regresar.
+  // Se queda a la vista hasta que empieza la siguiente venta (primer producto
+  // capturado) o hasta que lo cierre a mano.
+  const [ultimoCobro, setUltimoCobro] = useState<{
+    folio: number
+    total: number
+    recibido: number
+    cambio: number
+  } | null>(null)
   const [selectedIdx, setSelectedIdx] = useState<number>(-1)
   const [code, setCode] = useState('')
   const [status, setStatus] = useState<{ kind: 'info' | 'error'; msg: string } | null>(null)
@@ -205,6 +215,8 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
       })
       setSelectedIdx((i) => (i < 0 ? 0 : i))
       setStatus(null)
+      // Empieza otra venta → el cambio de la anterior ya no aplica.
+      setUltimoCobro(null)
       return true
     },
     [cart]
@@ -401,6 +413,22 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
         setStatus(null)
         setPaymentOpen(false)
         setFolioNum(createRes.folioLocal + 1)
+
+        // 4) Deja a la vista lo recibido y el cambio de ESTA venta (sólo si
+        // entró efectivo). En `pagos` el efectivo va NETO —lo que se queda en
+        // la caja—, así que lo que entregó el cliente = neto + cambio.
+        const efectivoNeto = args.pagos.find((p) => p.metodo === 'EFECTIVO')?.monto ?? 0
+        const recibidoEfectivo = +(efectivoNeto + args.cambio).toFixed(2)
+        setUltimoCobro(
+          recibidoEfectivo > 0
+            ? {
+                folio: createRes.folioLocal,
+                total: totals.total,
+                recibido: recibidoEfectivo,
+                cambio: args.cambio
+              }
+            : null
+        )
 
         toast.success(`Folio ${fmtFolio(createRes.folioLocal)} cobrado · ${money(totals.total)}`)
       } catch (e) {
@@ -670,6 +698,41 @@ export default function POSPage({ onVolverMatriz }: Props = {}) {
             </span>
           </button>
           </aside>
+
+          {/* Última venta en efectivo: recibido y CAMBIO, bien visibles hasta
+              que se captura el primer producto de la siguiente venta. */}
+          {ultimoCobro && (
+            <div className="rounded-lg border-2 border-green-500 bg-green-50 px-4 py-3 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] uppercase tracking-wide font-semibold text-green-900">
+                  Última venta · Folio {fmtFolio(ultimoCobro.folio)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setUltimoCobro(null)}
+                  className="p-0.5 rounded text-green-700 hover:bg-green-100 cursor-pointer"
+                  title="Ocultar"
+                  aria-label="Ocultar última venta"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+              <div className="mt-1.5 grid grid-cols-2 gap-x-3 text-sm font-mono text-green-900">
+                <span className="text-green-800/80">Total</span>
+                <span className="text-right">{money(ultimoCobro.total)}</span>
+                <span className="text-green-800/80">Recibí</span>
+                <span className="text-right">{money(ultimoCobro.recibido)}</span>
+              </div>
+              <div className="mt-1.5 pt-1.5 border-t border-green-300">
+                <div className="text-[11px] uppercase tracking-wide font-semibold text-green-900">
+                  Cambio
+                </div>
+                <div className="text-right text-4xl font-bold font-mono text-green-700 leading-tight">
+                  {money(ultimoCobro.cambio)}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Logo a todo el ancho de la columna, pegado al panel de arriba */}
           <Logo full className="shadow-sm" />

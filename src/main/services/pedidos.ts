@@ -22,11 +22,13 @@ import type {
  * Flujo (para matrices que también venden — equipo único):
  *   1. La CAJERA arma el pedido desde el POS (F11) con lo que otra farmacia
  *      pide para surtirse; al terminar se registra como PENDIENTE y se
- *      imprimen 3 hojas (sucursal destino / bodega matriz / evidencia dueño).
+ *      imprimen 2 hojas: la de la sucursal destino y el ORIGINAL del
+ *      propietario (copias 0 y 1 de COPIAS_PEDIDO en pdf.ts).
  *   2. El SUPERUSUARIO/ADMINISTRADOR lo revisa en el panel de matriz: puede
  *      editarlo, rechazarlo o aprobarlo.
  *   3. SÓLO al APROBAR se ejecuta el traspaso real (descuento FEFO de la
- *      bodega + archivo .traspaso). El pedido en sí NUNCA toca inventario.
+ *      bodega + archivo .traspaso) y se imprime la 3ª hoja, la de ARCHIVO.
+ *      El pedido en sí NUNCA toca inventario antes de eso.
  */
 
 function requireUsuario(userId: string): void {
@@ -456,8 +458,10 @@ export async function aprobarPedido(
 }
 
 /**
- * Imprime el pedido: SUCURSAL = 3 hojas (destino/bodega/evidencia, con firma);
- * PROVEEDOR = 1 sola hoja, y SÓLO después de que un admin lo apruebe.
+ * Imprime UNA copia del pedido (índice en COPIAS_PEDIDO de pdf.ts). SUCURSAL:
+ * 0 = sucursal destino y 1 = ORIGINAL del propietario (ambas al capturar),
+ * 2 = ARCHIVO (al aprobarse). PROVEEDOR: hoja única (sin índice) y SÓLO
+ * después de que un admin lo apruebe.
  */
 export async function imprimirPedido(
   viewerUserId: string,
