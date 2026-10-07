@@ -3,7 +3,7 @@
  * Todas las funciones son invocadas desde IPC handlers en src/main/index.ts.
  */
 
-import { Escpos } from './escpos'
+import { Escpos, pulsosCajon } from './escpos'
 import {
   buildReceiptBytes,
   buildTestReceiptBytes,
@@ -103,10 +103,18 @@ export async function printTest(printer: string, opts?: PrintTestOpts): Promise<
 /**
  * Abre el cajón mediante pulso ESC/POS. El cajón debe estar conectado por
  * RJ-11/12 al puerto "DK" de la impresora EPSON TM-T20III (pin 2 por default).
+ * Sin `override` usa la config guardada (drawerPulseMs/drawerPulseCount); el
+ * botón "Abrir cajón" de Configuración manda los valores capturados aún sin
+ * guardar, para poder probarlos antes de dar Guardar.
  */
-export async function openCashDrawer(printer: string): Promise<PrintResult> {
-  const bytes = new Escpos().init().drawerPulse(0, 50, 250).bytes()
-  return sendRawToPrinter(printer, bytes)
+export async function openCashDrawer(
+  printer: string,
+  override?: { pulseMs?: number; pulseCount?: number }
+): Promise<PrintResult> {
+  const s = getSettings()
+  const p = new Escpos().init()
+  pulsosCajon(p, override?.pulseMs ?? s.drawerPulseMs, override?.pulseCount ?? s.drawerPulseCount)
+  return sendRawToPrinter(printer, p.bytes())
 }
 
 export type { ReceiptData, PrintResult }

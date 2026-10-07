@@ -24,6 +24,9 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [docDuplex, setDocDuplex] = useState<boolean>(false)
   const [docFontSize, setDocFontSize] = useState<'chico' | 'mediano' | 'grande'>('chico')
   const [drawerOnCash, setDrawerOnCash] = useState<boolean>(true)
+  // Pulso del cajón (string para permitir el campo vacío mientras teclean).
+  const [pulseMs, setPulseMs] = useState<string>('50')
+  const [pulseCount, setPulseCount] = useState<string>('1')
   const [showTime, setShowTime] = useState<boolean>(false)
   const [receiptFooter, setReceiptFooter] = useState<string>('')
   const [mostrarRazonSocial, setMostrarRazonSocial] = useState<boolean>(true)
@@ -52,7 +55,15 @@ export default function SettingsModal({ open, onClose }: Props) {
       const list = await window.api.printer.list()
       setPrinters(list)
     } catch (e) {
-      toast.error('No pude enumerar impresoras', { description: String(e) })
+      // Sin el envoltorio del IPC ("Error invoking remote method 'printer:list': …").
+      const msg = (e instanceof Error ? e.message : String(e)).replace(
+        /^Error invoking remote method '[^']+':\s*(Error:\s*)?/,
+        ''
+      )
+      toast.error('No pude enumerar las impresoras', {
+        description: msg,
+        duration: 10000
+      })
     }
   }, [])
 
@@ -64,6 +75,8 @@ export default function SettingsModal({ open, onClose }: Props) {
     setDocDuplex(settings?.docPrinterDuplex ?? false)
     setDocFontSize(settings?.docFontSize ?? 'chico')
     setDrawerOnCash(settings?.openDrawerOnCash ?? true)
+    setPulseMs(String(settings?.drawerPulseMs ?? 50))
+    setPulseCount(String(settings?.drawerPulseCount ?? 1))
     setShowTime(settings?.showTimeOnReceipt ?? false)
     setReceiptFooter(settings?.receiptFooter ?? '')
     setMostrarRazonSocial(settings?.ticketMostrarRazonSocial ?? true)
@@ -106,7 +119,12 @@ export default function SettingsModal({ open, onClose }: Props) {
       return
     }
     setBusy('drawer')
-    const r = await window.api.printer.openDrawer(selected)
+    // Manda los valores CAPTURADOS (aunque no se hayan guardado): así el admin
+    // prueba duración/repeticiones del pulso antes de dar Guardar.
+    const r = await window.api.printer.openDrawer(selected, {
+      pulseMs: Number(pulseMs) || 50,
+      pulseCount: Number(pulseCount) || 1
+    })
     setBusy(null)
     if (r.ok) toast.success('Pulso enviado al cajón')
     else toast.error('No se pudo abrir el cajón', { description: (r.stderr || r.stdout).trim() })
@@ -163,6 +181,8 @@ export default function SettingsModal({ open, onClose }: Props) {
         docPrinterDuplex: docDuplex,
         docFontSize,
         openDrawerOnCash: drawerOnCash,
+        drawerPulseMs: Math.max(20, Math.min(500, Math.round(Number(pulseMs)) || 50)),
+        drawerPulseCount: Math.max(1, Math.min(5, Math.round(Number(pulseCount)) || 1)),
         showTimeOnReceipt: showTime,
         receiptFooter: receiptFooter.trim() || null,
         ticketMostrarRazonSocial: mostrarRazonSocial,
@@ -311,6 +331,50 @@ export default function SettingsModal({ open, onClose }: Props) {
           <label htmlFor="drawer" className={puedeConfigurarTicket ? '' : 'opacity-60'}>
             Abrir cajón automáticamente al cobrar en efectivo
           </label>
+        </section>
+
+        {/* Pulso del cajón: para sucursales donde no abre a la primera o le
+            falta fuerza. Sólo admin/superusuario; "Abrir cajón" (abajo) prueba
+            estos valores aunque no se hayan guardado. */}
+        <section className={`space-y-1.5 ${puedeConfigurarTicket ? '' : 'opacity-60'}`}>
+          <div className="font-medium text-xs">Pulso del cajón de dinero</div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="block text-[11px] text-muted-foreground mb-1">
+                Duración del pulso (ms)
+              </span>
+              <input
+                type="number"
+                min={20}
+                max={500}
+                step={10}
+                value={pulseMs}
+                disabled={!puedeConfigurarTicket}
+                onChange={(e) => setPulseMs(e.target.value)}
+                className="w-full border border-border rounded px-2 py-1.5 font-mono text-right"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[11px] text-muted-foreground mb-1">
+                Pulsos por apertura (1–5)
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={5}
+                step={1}
+                value={pulseCount}
+                disabled={!puedeConfigurarTicket}
+                onChange={(e) => setPulseCount(e.target.value)}
+                className="w-full border border-border rounded px-2 py-1.5 font-mono text-right"
+              />
+            </label>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Si el cajón no abre o le falta fuerza, sube la duración (normal: 50 ms, máximo 500) o
+            manda más de un pulso. Aplica al cobrar y al botón "Abrir cajón" — pruébalo ahí antes
+            de guardar.
+          </p>
         </section>
 
         <section className="flex items-center gap-2">

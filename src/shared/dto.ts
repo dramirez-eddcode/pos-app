@@ -858,9 +858,36 @@ export interface StockBodegaResult {
   items: StockBodegaItem[]
 }
 
+// ── Redistribución de lotes (misma existencia total, otro reparto) ──────────
+export interface RedistribuirLoteLinea {
+  /** null = crear lote nuevo. */
+  loteId: string | null
+  caducidad: string // YYYY-MM-DD
+  /** Entero >= 1. Para "eliminar" un lote simplemente no se manda su fila. */
+  cantidad: number
+}
+
+export interface RedistribuirLotesInput {
+  usuarioId: string
+  bodegaId: string
+  productoId: string
+  /** Existencia que el usuario vio al abrir (guard de concurrencia). */
+  totalEsperado: number
+  lotes: RedistribuirLoteLinea[]
+}
+
+export interface RedistribuirLotesResult {
+  ok: true
+  lotesCreados: number
+  lotesModificados: number
+  lotesEnCero: number
+}
+
 // ── Reporte imprimible de stock por bodega (PDF / impresión directa) ────────
 // El renderer manda lo que se ve en pantalla (filtros aplicados) + el resumen
 // global de la bodega; el main arma el documento.
+export type StockBodegaPdfLote = Pick<StockBodegaLote, 'caducidad' | 'saldo' | 'vencido' | 'porVencer'>
+
 export interface StockBodegaPdfItem {
   codigo: string
   nombre: string
@@ -872,12 +899,16 @@ export interface StockBodegaPdfItem {
   proximaCaducidad: string | null // YYYY-MM-DD
   vencido: boolean // el lote más próximo ya venció
   porVencer: boolean // el lote más próximo vence en ≤90 días
+  /** Detalle por lote — sólo viaja cuando `incluirLotes` está activo. */
+  lotes?: StockBodegaPdfLote[]
 }
 
 export interface StockBodegaPdfInput {
   bodegaNombre: string
   resumen: StockBodegaResumen
   filtroDescripcion: string | null // filtros activos en pantalla (se imprimen)
+  /** Imprime bajo cada producto la sub-fila con sus lotes (caducidad × cantidad). */
+  incluirLotes?: boolean
   items: StockBodegaPdfItem[]
 }
 

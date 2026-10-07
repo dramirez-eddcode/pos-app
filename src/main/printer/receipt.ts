@@ -3,7 +3,8 @@
  * Replica el layout del ticket legacy (foto de referencia — sucursal TORRES LANDA 02).
  */
 
-import { Escpos, COLS_DEFAULT, itemLine, labelValue, padRight } from './escpos'
+import { Escpos, COLS_DEFAULT, itemLine, labelValue, padRight, pulsosCajon } from './escpos'
+import { getSettings } from '../services/settings'
 import { montoEnLetras } from './numero-a-letras'
 import type { MetodoPago } from '@shared/types'
 import type {
@@ -170,7 +171,12 @@ export function buildReceiptBytes(data: ReceiptData): Uint8Array {
 
   // ── Corte y (opcional) cajón ──────────────────────────────────────────────
   p.cut(true)
-  if (data.openDrawer) p.drawerPulse(0, 50, 250)
+  if (data.openDrawer) {
+    // Duración y repeticiones configurables (Configuración → pulso del cajón)
+    // para sucursales donde el cajón no abre a la primera o le falta fuerza.
+    const s = getSettings()
+    pulsosCajon(p, s.drawerPulseMs, s.drawerPulseCount)
+  }
 
   return p.bytes()
 }

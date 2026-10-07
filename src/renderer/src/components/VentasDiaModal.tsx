@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import Modal from './Modal'
@@ -52,6 +52,9 @@ export default function VentasDiaModal({ open, onClose }: Props) {
   const [selId, setSelId] = useState<string | null>(null)
   const [detail, setDetail] = useState<VentaDetailDto | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  // Navegación con ↑/↓ entre folios (el detalle se carga al moverse).
+  const tablaRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
 
   const hoyYmd = toYmd(new Date())
 
@@ -94,7 +97,7 @@ export default function VentasDiaModal({ open, onClose }: Props) {
     cambiarDia(toYmd(d))
   }
 
-  const verDetalle = async (folioLocal: number, id: string): Promise<void> => {
+  const verDetalle = useCallback(async (folioLocal: number, id: string): Promise<void> => {
     setSelId(id)
     setLoadingDetail(true)
     try {
@@ -105,7 +108,57 @@ export default function VentasDiaModal({ open, onClose }: Props) {
     } finally {
       setLoadingDetail(false)
     }
-  }
+  }, [])
+
+  // ↑/↓ recorren los folios del día y cargan su detalle al instante. Listener
+  // en fase captura (le gana al arrowFieldNav del Modal); si el foco está en
+  // un input —el calendario "Día a consultar"— las flechas se respetan ahí
+  // (en el date nativo cambian el día).
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      const t = e.target as HTMLElement | null
+      if (
+        t instanceof HTMLInputElement ||
+        t instanceof HTMLSelectElement ||
+        t instanceof HTMLTextAreaElement ||
+        (t && t.isContentEditable)
+      ) {
+        return
+      }
+      const ventas = data?.ventas ?? []
+      if (ventas.length === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const cur = ventas.findIndex((f) => f.id === selId)
+      const next =
+        e.key === 'ArrowDown'
+          ? Math.min(ventas.length - 1, cur + 1)
+          : Math.max(0, cur <= 0 ? 0 : cur - 1)
+      if (next === cur) return
+      const f = ventas[next]!
+      void verDetalle(f.folioLocal, f.id)
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [open, data, selId, verDetalle])
+
+  // Mantiene visible la fila seleccionada compensando el thead sticky (con
+  // scrollIntoView la primera fila visible quedaba tapada por el encabezado).
+  useEffect(() => {
+    const idx = data?.ventas.findIndex((f) => f.id === selId) ?? -1
+    if (idx < 0) return
+    const cont = tablaRef.current
+    const row = tbodyRef.current?.children[idx] as HTMLElement | undefined
+    if (!cont || !row) return
+    const headH = (cont.querySelector('thead') as HTMLElement | null)?.offsetHeight ?? 0
+    if (row.offsetTop - headH < cont.scrollTop) {
+      cont.scrollTop = row.offsetTop - headH
+    } else if (row.offsetTop + row.offsetHeight > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = row.offsetTop + row.offsetHeight - cont.clientHeight
+    }
+  }, [selId, data])
 
   const fechaTitulo = ymdToDate(dia).toLocaleDateString('es-MX', {
     weekday: 'long',
@@ -176,7 +229,7 @@ export default function VentasDiaModal({ open, onClose }: Props) {
                 {data?.ventas.length ?? 0}
               </span>
             </header>
-            <div className="overflow-auto max-h-[380px]">
+            <div ref={tablaRef} className="overflow-auto max-h-[380px]">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b border-border z-10">
                   <tr className="text-left">
@@ -187,7 +240,7 @@ export default function VentasDiaModal({ open, onClose }: Props) {
                     <th className="px-2 py-1 w-12 text-center">Canc.</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={tbodyRef}>
                   {(!data || data.ventas.length === 0) && (
                     <tr>
                       <td colSpan={5} className="px-2 py-6 text-center text-muted-foreground italic">

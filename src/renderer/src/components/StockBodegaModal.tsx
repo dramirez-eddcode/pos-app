@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle,
@@ -11,9 +11,11 @@ import {
   Pencil,
   Printer,
   Search,
+  SlidersHorizontal,
   X
 } from 'lucide-react'
 import Modal from './Modal'
+import RedistribuirLotesModal from './RedistribuirLotesModal'
 import Spinner from './Spinner'
 import { useSession } from '../stores/session'
 import { money } from '../lib/format'
@@ -46,12 +48,20 @@ export default function StockBodegaModal({ open, onClose }: Props) {
   const [soloBajoMinimo, setSoloBajoMinimo] = useState(false)
   const [soloPorVencer, setSoloPorVencer] = useState(false)
   const [incluirCero, setIncluirCero] = useState(false)
+  // Al imprimir/PDF: sub-fila con el detalle de lotes bajo cada producto (el
+  // dueño anota sobre las hojas). Activado por defecto; se puede quitar si se
+  // quiere el reporte corto (usa bastantes menos páginas).
+  const [incluirLotes, setIncluirLotes] = useState(true)
   const [expandido, setExpandido] = useState<Set<string>>(new Set())
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [pdfBusy, setPdfBusy] = useState(false)
   const [printBusy, setPrintBusy] = useState(false)
+  // Renglón sombreado (↑/↓ recorren la página y saltan de página en los
+  // extremos; Enter expande/colapsa los lotes del producto sombreado).
+  const [selRow, setSelRow] = useState(-1)
+  const stockTbodyRef = useRef<HTMLTableSectionElement>(null)
 
   // Cargar bodegas al abrir
   useEffect(() => {
@@ -113,6 +123,11 @@ export default function StockBodegaModal({ open, onClose }: Props) {
     setPage(1)
   }, [filtro, soloBajoMinimo, soloPorVencer, bodegaId, pageSize])
 
+  // El sombreado se resetea al cambiar de página o de filtros.
+  useEffect(() => {
+    setSelRow(-1)
+  }, [page, filtro, soloBajoMinimo, soloPorVencer, bodegaId, pageSize, incluirCero])
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageSafe = Math.min(page, totalPages)
   const pageItems = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize)
@@ -125,6 +140,65 @@ export default function StockBodegaModal({ open, onClose }: Props) {
       return next
     })
   }
+
+  // ↑/↓ con la tabla enfocada recorren los productos (saltan de página en los
+  // extremos) y Enter expande/colapsa los lotes del sombreado. Los inputs
+  // (filtro, checkboxes, fecha de caducidad inline) conservan sus teclas.
+  const onKeyStock = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const tgt = e.target as HTMLElement | null
+    if (
+      tgt instanceof HTMLInputElement ||
+      tgt instanceof HTMLSelectElement ||
+      tgt instanceof HTMLTextAreaElement
+    ) {
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (pageItems.length === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'ArrowDown') {
+        if (selRow >= pageItems.length - 1) {
+          if (pageSafe < totalPages) {
+            setPage(pageSafe + 1)
+            setTimeout(() => setSelRow(0), 0) // tras el reset por cambio de página
+          }
+          return
+        }
+        setSelRow((i) => Math.min(pageItems.length - 1, i + 1))
+      } else {
+        if (selRow === 0 && pageSafe > 1) {
+          setPage(pageSafe - 1)
+          setTimeout(() => setSelRow(pageSize - 1), 0)
+          return
+        }
+        setSelRow((i) => Math.max(0, i - 1))
+      }
+    } else if (e.key === 'Enter') {
+      if (tgt?.tagName === 'BUTTON') return
+      const it = pageItems[selRow]
+      if (!it) return
+      e.preventDefault()
+      e.stopPropagation()
+      toggleExpand(it.productoId)
+    }
+  }
+
+  // Mantiene visible la fila sombreada (la expansión de lotes inserta <tr>
+  // extra, por eso se ubica por data-fila y no por índice del tbody).
+  useEffect(() => {
+    if (selRow < 0) return
+    const tbody = stockTbodyRef.current
+    const row = tbody?.querySelector(`tr[data-fila="${selRow}"]`) as HTMLElement | null
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    if (row.offsetTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, row.offsetTop - headerH)
+    } else if (row.offsetTop + row.offsetHeight > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = row.offsetTop + row.offsetHeight - cont.clientHeight
+    }
+  }, [selRow])
 
   const exportarHojaConteo = useCallback(() => {
     if (filtered.length === 0) {
@@ -172,6 +246,7 @@ export default function StockBodegaModal({ open, onClose }: Props) {
       bodegaNombre: bodega?.nombre ?? 'Bodega',
       resumen: data.resumen,
       filtroDescripcion: filtros.length > 0 ? filtros.join(' · ') : null,
+      incluirLotes,
       items: filtered.map((it) => ({
         codigo: it.codigo,
         nombre: it.nombre,
@@ -182,10 +257,18 @@ export default function StockBodegaModal({ open, onClose }: Props) {
         valorCosto: it.valorCosto,
         proximaCaducidad: it.proximaCaducidad,
         vencido: it.lotes[0]?.vencido ?? false,
-        porVencer: it.lotes[0]?.porVencer ?? false
+        porVencer: it.lotes[0]?.porVencer ?? false,
+        lotes: incluirLotes
+          ? it.lotes.map((l) => ({
+              caducidad: l.caducidad,
+              saldo: l.saldo,
+              vencido: l.vencido,
+              porVencer: l.porVencer
+            }))
+          : undefined
       }))
     }
-  }, [data, bodegas, bodegaId, filtro, soloBajoMinimo, soloPorVencer, filtered])
+  }, [data, bodegas, bodegaId, filtro, soloBajoMinimo, soloPorVencer, filtered, incluirLotes])
 
   const exportarPdf = useCallback(async () => {
     const input = buildPdfInput()
@@ -334,10 +417,26 @@ export default function StockBodegaModal({ open, onClose }: Props) {
             <input type="checkbox" checked={incluirCero} onChange={(e) => setIncluirCero(e.target.checked)} />
             Incluir existencia 0
           </label>
+          <label
+            className="flex items-center gap-1.5 text-xs whitespace-nowrap"
+            title="Al imprimir o guardar PDF, agrega debajo de cada producto sus lotes (caducidad y cantidad). Usa más hojas."
+          >
+            <input
+              type="checkbox"
+              checked={incluirLotes}
+              onChange={(e) => setIncluirLotes(e.target.checked)}
+            />
+            Detalle de lotes en impresión
+          </label>
         </div>
 
         {/* Tabla */}
-        <div className="border border-border rounded overflow-auto max-h-[55vh]">
+        <div
+          tabIndex={0}
+          onKeyDown={onKeyStock}
+          className="border border-border rounded overflow-auto max-h-[55vh] focus:outline-none focus:ring-1 focus:ring-primary/40"
+          title="↑/↓ recorren los productos · Enter muestra/oculta sus lotes"
+        >
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
               <tr className="text-left">
@@ -350,7 +449,7 @@ export default function StockBodegaModal({ open, onClose }: Props) {
                 <th className="px-2 py-1.5 w-28 text-center">Próx. caducidad</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody ref={stockTbodyRef}>
               {loading && (
                 <tr>
                   <td colSpan={7} className="px-2 py-8 text-muted-foreground">
@@ -368,10 +467,14 @@ export default function StockBodegaModal({ open, onClose }: Props) {
                 </tr>
               )}
               {!loading &&
-                pageItems.map((it) => (
+                pageItems.map((it, i) => (
                   <Fila
                     key={it.productoId}
                     it={it}
+                    idx={i}
+                    seleccionada={i === selRow}
+                    onSelect={() => setSelRow(i)}
+                    bodegaId={bodegaId}
                     expandido={expandido.has(it.productoId)}
                     onToggle={() => toggleExpand(it.productoId)}
                     userId={user?.id ?? ''}
@@ -428,12 +531,20 @@ export default function StockBodegaModal({ open, onClose }: Props) {
 
 function Fila({
   it,
+  idx,
+  seleccionada,
+  onSelect,
+  bodegaId,
   expandido,
   onToggle,
   userId,
   onSaved
 }: {
   it: StockBodegaItem
+  idx: number
+  seleccionada: boolean
+  onSelect: () => void
+  bodegaId: string
   expandido: boolean
   onToggle: () => void
   userId: string
@@ -442,6 +553,7 @@ function Fila({
   const [editLoteId, setEditLoteId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [savingLote, setSavingLote] = useState(false)
+  const [ajustarOpen, setAjustarOpen] = useState(false)
 
   const guardarCaducidad = async () => {
     if (!editLoteId) return
@@ -466,7 +578,16 @@ function Fila({
 
   return (
     <>
-      <tr className={`border-b border-border/60 ${!it.activo ? 'opacity-60' : ''}`}>
+      <tr
+        data-fila={idx}
+        onClick={(e) => {
+          onSelect()
+          ;(e.currentTarget.closest('[tabindex]') as HTMLElement | null)?.focus()
+        }}
+        className={`border-b border-border/60 cursor-pointer ${
+          seleccionada ? 'bg-primary/10' : 'hover:bg-muted/40'
+        } ${!it.activo ? 'opacity-60' : ''}`}
+      >
         <td className="px-2 py-1 text-center">
           <button type="button" onClick={onToggle} className="text-muted-foreground hover:text-foreground" title="Ver lotes">
             {expandido ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
@@ -496,7 +617,19 @@ function Fila({
         <tr className="bg-muted/20 border-b border-border/60">
           <td></td>
           <td colSpan={6} className="px-2 py-2">
-            <div className="text-[10px] uppercase text-muted-foreground mb-1">Lotes (FEFO)</div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] uppercase text-muted-foreground">Lotes (FEFO)</span>
+              {userId && it.existencias > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAjustarOpen(true)}
+                  className="inline-flex items-center gap-1 text-[10px] uppercase border border-border rounded px-1.5 py-0.5 cursor-pointer hover:bg-muted"
+                  title="Repartir las existencias entre lotes (crear, eliminar o mover cantidades) sin cambiar el total"
+                >
+                  <SlidersHorizontal className="size-3" /> Ajustar lotes
+                </button>
+              )}
+            </div>
             <div className="flex flex-wrap gap-1.5">
               {it.lotes.map((l) => {
                 const editing = editLoteId === l.loteId
@@ -571,6 +704,17 @@ function Fila({
                 )
               })}
             </div>
+            <RedistribuirLotesModal
+              open={ajustarOpen}
+              onClose={() => setAjustarOpen(false)}
+              userId={userId}
+              bodegaId={bodegaId}
+              item={it}
+              onSaved={() => {
+                setAjustarOpen(false)
+                onSaved()
+              }}
+            />
           </td>
         </tr>
       )}

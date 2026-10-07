@@ -13,6 +13,8 @@ import type {
   CorteReimpresionDto,
   CargaInicialInput,
   CargaInicialResult,
+  RedistribuirLotesInput,
+  RedistribuirLotesResult,
   StockBodegaResult,
   StockBodegaPdfInput,
   CrearTraspasoInput,
@@ -276,6 +278,11 @@ declare global {
           items: PedidoLinea[],
           notas?: string | null
         ) => Promise<PedidoTraspasoDto>
+        cerrarLista: (viewerUserId: string, pedidoId: string) => Promise<PedidoTraspasoDto>
+        existenciasActuales: (
+          viewerUserId: string,
+          codigos: string[]
+        ) => Promise<Record<string, number>>
         existenciaBodega: (
           viewerUserId: string,
           codigo: string,
@@ -315,6 +322,7 @@ declare global {
           loteId: string,
           fechaYmd: string
         ) => Promise<{ ok: true; caducidad: string }>
+        redistribuirLotes: (input: RedistribuirLotesInput) => Promise<RedistribuirLotesResult>
         stockPdf: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
         stockImprimir: (input: StockBodegaPdfInput) => Promise<PdfMovimientoResult>
       }
@@ -382,7 +390,10 @@ declare global {
             mostrarFolio?: boolean
           }
         ) => Promise<PrintResultLike>
-        openDrawer: (printer: string) => Promise<PrintResultLike>
+        openDrawer: (
+          printer: string,
+          override?: { pulseMs?: number; pulseCount?: number }
+        ) => Promise<PrintResultLike>
         printReceipt: (printer: string, data: ReceiptData) => Promise<PrintResultLike>
         printCancel: (printer: string, data: CancelReceiptData) => Promise<PrintResultLike>
         printCorte: (printer: string, data: CorteReceiptData) => Promise<PrintResultLike>

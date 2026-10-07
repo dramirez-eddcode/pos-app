@@ -67,6 +67,11 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   const [precioIvaPct, setPrecioIvaPct] = useState<string>(String(DEFAULT_IVA_PORCENTAJE))
   const [saving, setSaving] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  // Selección MÚLTIPLE del F5 (familias que valen igual: sueros, desodorantes…):
+  // los N quedan fijados y "Agregar cambio" mete N líneas de un jalón.
+  const [multiSel, setMultiSel] = useState<ProductoDto[]>([])
+  // Opt-in: en masivo el IVA de cada producto se conserva salvo que lo pidan.
+  const [ivaMasivo, setIvaMasivo] = useState(false)
 
   const codRef = useRef<HTMLInputElement>(null)
   const precioRef = useRef<HTMLInputElement>(null)
@@ -92,6 +97,8 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     setNuevoPrecio('')
     setMotivo('CAMBIO_LISTA')
     setNota('')
+    setMultiSel([])
+    setIvaMasivo(false)
     setIvaItems([])
     setIvaCurrent(null)
     setIvaCodigo('')
@@ -104,6 +111,8 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     setCodigo('')
     setNuevoPrecio('')
     setNota('')
+    setMultiSel([])
+    setIvaMasivo(false)
     setPrecioIvaModo('exento')
     setPrecioIvaPct(String(DEFAULT_IVA_PORCENTAJE))
     setTimeout(() => codRef.current?.focus(), 30)
@@ -131,6 +140,8 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
 
   // ── Precios: captura ─────────────────────────────────────────────────────
   const setFromProduct = useCallback((p: ProductoDto) => {
+    setMultiSel([]) // elegir 1 por código descarta la selección múltiple
+    setIvaMasivo(false)
     setCurrent(p)
     setCodigo(p.codigo)
     setNuevoPrecio(String(p.precio.toFixed(2)))
@@ -146,6 +157,28 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     }, 30)
   }, [])
 
+  // F5 múltiple: N productos quedan FIJADOS; se captura UN precio nuevo (y
+  // motivo/nota) y "Agregar cambio" genera N líneas de un jalón. Con 1 solo
+  // producto delega en el flujo single de siempre (prefija precio/IVA).
+  const setFromProducts = useCallback(
+    (ps: ProductoDto[]) => {
+      if (ps.length === 1) {
+        setFromProduct(ps[0]!)
+        return
+      }
+      setMultiSel(ps)
+      setCurrent(null)
+      setCodigo('')
+      setNuevoPrecio('') // NO prefijar: los precios actuales difieren entre sí
+      setNota('')
+      setIvaMasivo(false) // default: cada producto conserva su IVA
+      setPrecioIvaModo('exento')
+      setPrecioIvaPct(String(DEFAULT_IVA_PORCENTAJE))
+      setTimeout(() => precioRef.current?.focus(), 30)
+    },
+    [setFromProduct]
+  )
+
   const lookupByCode = useCallback(async () => {
     const c = codigo.trim()
     if (!c) return
@@ -158,10 +191,6 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   }, [codigo, setFromProduct])
 
   const addItem = useCallback(() => {
-    if (!current) {
-      toast.error('Busca un producto primero')
-      return
-    }
     const nuevo = Math.round(parseFloat(nuevoPrecio) * 100) / 100
     if (!Number.isFinite(nuevo) || nuevo < 0) {
       toast.error('Precio inválido')
@@ -171,6 +200,65 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
       precioIvaModo === 'exento'
         ? 0
         : Math.max(0, Math.min(100, Math.round(Number(precioIvaPct) || 0)))
+
+    // ── Rama MASIVA: un precio para los N seleccionados del F5 ─────────────
+    if (multiSel.length > 0) {
+      const nuevosPrecios: UpdatePrecioItemInput[] = []
+      const nuevosIva: UpdateIvaItemInput[] = []
+      let sinCambio = 0
+      for (const p of multiSel) {
+        if (nuevo !== p.precio) {
+          nuevosPrecios.push({
+            productoId: p.id,
+            productoNombre: p.nombre,
+            codigo: p.codigo,
+            precioAnterior: p.precio,
+            nuevoPrecio: nuevo,
+            motivo,
+            nota: nota.trim() || null
+          })
+        } else {
+          sinCambio++
+        }
+        if (ivaMasivo && (precioIvaModo !== p.ivaModo || pct !== p.ivaPorcentaje)) {
+          nuevosIva.push({
+            productoId: p.id,
+            productoNombre: p.nombre,
+            codigo: p.codigo,
+            ivaModoAnterior: p.ivaModo,
+            ivaPorcentajeAnterior: p.ivaPorcentaje,
+            nuevoModo: precioIvaModo,
+            nuevoPorcentaje: pct
+          })
+        }
+      }
+      if (nuevosPrecios.length === 0 && nuevosIva.length === 0) {
+        toast.warning('Ningún cambio: todos los seleccionados ya tienen ese precio')
+        return
+      }
+      // Dedupe por productoId: si ya estaba en la lista, se reemplaza.
+      setItems((prev) => [
+        ...prev.filter((x) => !nuevosPrecios.some((n) => n.productoId === x.productoId)),
+        ...nuevosPrecios
+      ])
+      if (nuevosIva.length > 0) {
+        setIvaItems((prev) => [
+          ...prev.filter((x) => !nuevosIva.some((n) => n.productoId === x.productoId)),
+          ...nuevosIva
+        ])
+      }
+      const parts = [`${nuevosPrecios.length} cambio${nuevosPrecios.length === 1 ? '' : 's'} de precio`]
+      if (nuevosIva.length > 0) parts.push(`${nuevosIva.length} de IVA`)
+      if (sinCambio > 0) parts.push(`${sinCambio} sin cambio (ya tenían ese precio)`)
+      toast.success('Agregados a la lista', { description: parts.join(' · ') })
+      resetRow()
+      return
+    }
+
+    if (!current) {
+      toast.error('Busca un producto primero')
+      return
+    }
     const precioCambio = nuevo !== current.precio
     const ivaCambio = precioIvaModo !== current.ivaModo || pct !== current.ivaPorcentaje
     if (!precioCambio && !ivaCambio) {
@@ -223,7 +311,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
     }
 
     resetRow()
-  }, [current, nuevoPrecio, precioIvaModo, precioIvaPct, motivo, nota, resetRow])
+  }, [current, multiSel, ivaMasivo, nuevoPrecio, precioIvaModo, precioIvaPct, motivo, nota, resetRow])
 
   const removeItem = useCallback((i: number) => {
     setItems((prev) => prev.filter((_, idx) => idx !== i))
@@ -688,11 +776,18 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
   const subidas = preciosCambiados.filter((i) => i.nuevoPrecio > i.precioAnterior).length
   const bajadas = preciosCambiados.filter((i) => i.nuevoPrecio < i.precioAnterior).length
 
-  // Preview del precio según el IVA (misma lógica que "Editar producto" y el POS)
+  // Hay algo fijado para capturar precio: 1 producto o la selección múltiple.
+  const haySeleccion = !!current || multiSel.length > 0
+  // Preview del precio según el IVA (misma lógica que "Editar producto" y el
+  // POS). En masivo sólo aplica si van a cambiar el IVA de todos (con IVAs
+  // mixtos la vista previa sería engañosa).
   const precioPrevNum = Number(nuevoPrecio)
   const precioPrevPct = precioIvaModo === 'exento' ? 0 : Number(precioIvaPct || '0')
   const precioPrevOk =
-    !!current && nuevoPrecio.trim() !== '' && Number.isFinite(precioPrevNum) && precioPrevNum >= 0
+    (!!current || (multiSel.length > 0 && ivaMasivo)) &&
+    nuevoPrecio.trim() !== '' &&
+    Number.isFinite(precioPrevNum) &&
+    precioPrevNum >= 0
   const desglosePrecio = precioPrevOk
     ? calcFromBase(precioPrevNum, precioPrevPct, precioIvaModo)
     : null
@@ -790,12 +885,18 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                     <input
                       ref={codRef}
                       type="text"
-                      className="w-full border border-border rounded px-2 py-1.5 font-mono"
+                      className="w-full border border-border rounded px-2 py-1.5 font-mono disabled:bg-muted/30"
                       value={codigo}
                       onChange={(e) => setCodigo(e.target.value)}
                       onKeyDown={onKeyCode}
                       placeholder="EAN-13 o SKU interno…"
                       autoComplete="off"
+                      disabled={multiSel.length > 0}
+                      title={
+                        multiSel.length > 0
+                          ? 'Hay una selección múltiple activa — quítala para capturar por código'
+                          : undefined
+                      }
                     />
                   </div>
                   <div className="self-end">
@@ -821,6 +922,47 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                   </div>
                 )}
 
+                {multiSel.length > 0 && (
+                  <div className="text-xs bg-background border border-emerald-300 rounded px-3 py-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span>
+                        <span className="font-semibold text-emerald-800">
+                          {multiSel.length} productos seleccionados
+                        </span>
+                        <span className="text-muted-foreground">
+                          {' '}
+                          — el nuevo precio se aplicará a todos
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={resetRow}
+                        className="text-red-700 hover:underline cursor-pointer"
+                      >
+                        Quitar selección
+                      </button>
+                    </div>
+                    <div className="max-h-24 overflow-auto">
+                      {multiSel.map((p) => (
+                        <div key={p.id} className="flex items-center gap-2 text-muted-foreground">
+                          <button
+                            type="button"
+                            title="Quitar este producto"
+                            onClick={() => setMultiSel((prev) => prev.filter((x) => x.id !== p.id))}
+                            className="text-red-700 hover:bg-red-50 rounded px-1 cursor-pointer"
+                          >
+                            ×
+                          </button>
+                          <span className="truncate flex-1">
+                            {p.nombre} <span className="font-mono text-[10px]">{p.codigo}</span>
+                          </span>
+                          <span className="font-mono shrink-0">${money(p.precio)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-[200px_1fr] gap-2">
                   <div>
                     <label className="flex items-center text-xs text-muted-foreground mb-1">
@@ -839,7 +981,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                       value={nuevoPrecio}
                       onChange={(e) => setNuevoPrecio(e.target.value)}
                       onKeyDown={onKeyPrecio}
-                      disabled={!current}
+                      disabled={!haySeleccion}
                     />
                   </div>
                   <div>
@@ -853,7 +995,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                     <select
                       value={motivo}
                       onChange={(e) => setMotivo(e.target.value as MotivoPrecio)}
-                      disabled={!current}
+                      disabled={!haySeleccion}
                       className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
                     >
                       {MOTIVO_OPTIONS.map((m) => (
@@ -866,6 +1008,19 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                 </div>
 
                 {/* IVA del producto + preview (igual que en "Editar producto") */}
+                {multiSel.length > 0 && (
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ivaMasivo}
+                      onChange={(e) => setIvaMasivo(e.target.checked)}
+                    />
+                    Cambiar también el IVA de los {multiSel.length} seleccionados{' '}
+                    <span className="text-muted-foreground">
+                      (si no, cada producto conserva su IVA actual)
+                    </span>
+                  </label>
+                )}
                 <div className="grid grid-cols-[1fr_120px] gap-2">
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">IVA modo</label>
@@ -878,7 +1033,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                           setPrecioIvaPct(String(DEFAULT_IVA_PORCENTAJE))
                         }
                       }}
-                      disabled={!current}
+                      disabled={multiSel.length > 0 ? !ivaMasivo : !current}
                       className="w-full border border-border rounded px-2 py-1.5 bg-background text-xs"
                     >
                       {IVA_MODO_OPTIONS.map((o) => (
@@ -896,7 +1051,9 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                       max={100}
                       value={precioIvaPct}
                       onChange={(e) => setPrecioIvaPct(e.target.value)}
-                      disabled={!current || precioIvaModo === 'exento'}
+                      disabled={
+                        (multiSel.length > 0 ? !ivaMasivo : !current) || precioIvaModo === 'exento'
+                      }
                       className="w-full border border-border rounded px-2 py-1.5 font-mono text-right disabled:bg-muted/30"
                     />
                   </div>
@@ -935,7 +1092,7 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                     value={nota}
                     onChange={(e) => setNota(e.target.value)}
                     placeholder='Ej: "Lista octubre 2026", "Promo semana santa"…'
-                    disabled={!current}
+                    disabled={!haySeleccion}
                   />
                 </div>
 
@@ -946,10 +1103,10 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
                   <button
                     type="button"
                     onClick={addItem}
-                    disabled={!current || !nuevoPrecio}
+                    disabled={!haySeleccion || !nuevoPrecio}
                     className="px-4 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-medium"
                   >
-                    Agregar cambio
+                    {multiSel.length > 0 ? `Agregar cambio a ${multiSel.length}` : 'Agregar cambio'}
                   </button>
                 </div>
               </section>
@@ -1302,6 +1459,11 @@ export default function PreciosModal({ open, onClose, userId }: Props) {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSelect={(p) => (tab === 'iva' ? setFromProductIva(p) : setFromProduct(p))}
+        // Pestaña Precios: multi-selección (Insert/Ctrl+Espacio/checkbox) para
+        // fijar N productos y aplicarles el mismo precio de un jalón. La
+        // pestaña IVA conserva el flujo de un producto.
+        multiSelect={tab === 'precios'}
+        onSelectMany={setFromProducts}
         allowZeroStock
         returnFocus={() =>
           setTimeout(

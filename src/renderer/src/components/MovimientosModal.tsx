@@ -112,6 +112,22 @@ export default function MovimientosModal({ open, onClose }: Props) {
     setDetSelRow(-1)
   }, [detalle])
 
+  // ── Sombreado con ↑/↓ en la LISTA de documentos (Enter = "Ver") ──────────
+  const [docSelRow, setDocSelRow] = useState(-1)
+  const docSelRowRef = useRef(-1)
+  useEffect(() => {
+    docSelRowRef.current = docSelRow
+  }, [docSelRow])
+  const docTbodyRef = useRef<HTMLTableSectionElement>(null)
+
+  // ── Sombreado con ↑/↓ en el kárdex (Enter abre el documento ligado) ──────
+  const [kSelRow, setKSelRow] = useState(-1)
+  const kSelRowRef = useRef(-1)
+  useEffect(() => {
+    kSelRowRef.current = kSelRow
+  }, [kSelRow])
+  const kTbodyRef = useRef<HTMLTableSectionElement>(null)
+
   useEffect(() => {
     if (!open || !detalle) return
     const total = detalleFilas.length
@@ -279,6 +295,110 @@ export default function MovimientosModal({ open, onClose }: Props) {
       setLoadingDet(false)
     }
   }, [])
+
+  // El sombreado de la lista se resetea al cambiar filtros/pestaña; el del
+  // kárdex al cambiar de producto.
+  useEffect(() => {
+    setDocSelRow(-1)
+  }, [filtro, fechaFiltro, list, vista])
+  useEffect(() => {
+    setKSelRow(-1)
+  }, [kItems])
+
+  // ↑/↓ recorren la lista de documentos y Enter abre "Ver" de la fila
+  // sombreada. Captura: le gana al arrowFieldNav del Modal. Los inputs
+  // conservan sus flechas (el filtro de fecha cambia el día con ↑/↓).
+  useEffect(() => {
+    if (!open || detalle || searchOpen || vista !== 'documentos') return
+    const handler = (e: KeyboardEvent): void => {
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLSelectElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable === true
+      ) {
+        return
+      }
+      const total = filtered.length
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (total === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const cur = docSelRowRef.current
+        if (e.key === 'ArrowDown') setDocSelRow(Math.min(total - 1, cur + 1))
+        else if (cur >= 0) setDocSelRow(Math.max(0, cur - 1))
+      } else if (e.key === 'Enter') {
+        // En botones (Ver/PDF/Imprimir/Cerrar), Enter conserva su acción.
+        if (tgt?.tagName === 'BUTTON') return
+        const cur = docSelRowRef.current
+        const m = filtered[cur]
+        if (!m) return
+        e.preventDefault()
+        e.stopPropagation()
+        void verDetalle(m.folio)
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [open, detalle, searchOpen, vista, filtered, verDetalle])
+
+  // Lo mismo para el kárdex: ↑/↓ sombrean; Enter abre el documento ligado a
+  // la fila (si el renglón tiene folio de entrada/salida/traspaso).
+  useEffect(() => {
+    if (!open || detalle || searchOpen || vista !== 'kardex') return
+    const handler = (e: KeyboardEvent): void => {
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLSelectElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable === true
+      ) {
+        return
+      }
+      const total = kItems.length
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (total === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const cur = kSelRowRef.current
+        if (e.key === 'ArrowDown') setKSelRow(Math.min(total - 1, cur + 1))
+        else if (cur >= 0) setKSelRow(Math.max(0, cur - 1))
+      } else if (e.key === 'Enter') {
+        if (tgt?.tagName === 'BUTTON') return
+        const k = kItems[kSelRowRef.current]
+        if (!k?.docFolio) return
+        e.preventDefault()
+        e.stopPropagation()
+        void verDetalle(k.docFolio)
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [open, detalle, searchOpen, vista, kItems, verDetalle])
+
+  // Mantiene visible la fila sombreada de cada tabla (thead sticky aparte).
+  const scrollFila = (tbody: HTMLTableSectionElement | null, idx: number): void => {
+    if (idx < 0) return
+    const row = tbody?.children[idx] as HTMLElement | undefined
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    const rowTop = row.offsetTop
+    const rowBottom = rowTop + row.offsetHeight
+    if (rowTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, rowTop - headerH)
+    } else if (rowBottom > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = rowBottom - cont.clientHeight
+    }
+  }
+  useEffect(() => {
+    scrollFila(docTbodyRef.current, docSelRow)
+  }, [docSelRow])
+  useEffect(() => {
+    scrollFila(kTbodyRef.current, kSelRow)
+  }, [kSelRow])
 
   const exportarPdf = useCallback(async (folio: string) => {
     setPdfBusy(folio)
@@ -476,7 +596,7 @@ export default function MovimientosModal({ open, onClose }: Props) {
                       <th className="px-2 py-1.5 w-48 text-center">Acciones</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody ref={docTbodyRef}>
                     {loading && (
                       <tr>
                         <td colSpan={7} className="px-2 py-8">
@@ -498,8 +618,15 @@ export default function MovimientosModal({ open, onClose }: Props) {
                       </tr>
                     )}
                     {!loading &&
-                      filtered.map((m) => (
-                        <tr key={m.folio} className="border-b border-border/60">
+                      filtered.map((m, i) => (
+                        <tr
+                          key={m.folio}
+                          onClick={() => setDocSelRow(i)}
+                          onDoubleClick={() => verDetalle(m.folio)}
+                          className={`border-b border-border/60 cursor-pointer ${
+                            i === docSelRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                          }`}
+                        >
                           <td className="px-2 py-1 font-mono">
                             {new Date(m.fecha).toLocaleString('es-MX')}
                           </td>
@@ -649,7 +776,7 @@ export default function MovimientosModal({ open, onClose }: Props) {
                       <th className="px-2 py-1.5 w-32">Bodega</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody ref={kTbodyRef}>
                     {kLoading && (
                       <tr>
                         <td colSpan={7} className="px-2 py-8">
@@ -678,6 +805,7 @@ export default function MovimientosModal({ open, onClose }: Props) {
                         <tr
                           key={i}
                           onClick={() => {
+                            setKSelRow(i)
                             if (k.docFolio) verDetalle(k.docFolio)
                           }}
                           title={
@@ -686,8 +814,8 @@ export default function MovimientosModal({ open, onClose }: Props) {
                               : undefined
                           }
                           className={`border-b border-border/60 ${
-                            k.docFolio ? 'cursor-pointer hover:bg-muted/50' : ''
-                          }`}
+                            i === kSelRow ? 'bg-primary/10' : ''
+                          } ${k.docFolio ? 'cursor-pointer hover:bg-muted/50' : ''}`}
                         >
                           <td className="px-2 py-1 font-mono">
                             {new Date(k.fecha).toLocaleString('es-MX')}

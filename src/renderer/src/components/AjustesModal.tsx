@@ -55,6 +55,20 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
   const loteRef = useRef<HTMLSelectElement>(null)
   const saldoRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Renglón sombreado de "Ajustes a registrar": ↑/↓ con la tabla enfocada lo
+  // recorren para repasar lo capturado (mismo patrón que Entradas/Salidas).
+  const [selRow, setSelRow] = useState(-1)
+  const ajustesTbodyRef = useRef<HTMLTableSectionElement>(null)
+  useEffect(() => {
+    if (selRow < 0) return
+    if (selRow > items.length - 1) {
+      setSelRow(items.length - 1)
+      return
+    }
+    // children[0] puede ser la fila "Sin ajustes" sólo cuando items está vacío
+    const row = ajustesTbodyRef.current?.children[selRow] as HTMLElement | undefined
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow, items.length])
   const [importing, setImporting] = useState(false)
 
   const reset = useCallback(() => {
@@ -739,7 +753,28 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                 {items.length} línea{items.length === 1 ? '' : 's'}
               </span>
             </header>
-            <div className="overflow-auto max-h-[260px]">
+            <div
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+                const tgt = e.target as HTMLElement | null
+                if (
+                  tgt instanceof HTMLInputElement ||
+                  tgt instanceof HTMLSelectElement ||
+                  tgt instanceof HTMLTextAreaElement
+                ) {
+                  return
+                }
+                if (items.length === 0) return
+                e.preventDefault()
+                e.stopPropagation()
+                setSelRow((i) =>
+                  e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+                )
+              }}
+              className="overflow-auto max-h-[260px] focus:outline-none focus:ring-1 focus:ring-primary/40 rounded"
+              title="↑/↓ recorren los renglones capturados"
+            >
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-background border-b border-border">
                   <tr className="text-left">
@@ -752,7 +787,7 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                     <th className="px-2 py-1 w-8" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={ajustesTbodyRef}>
                   {items.length === 0 && (
                     <tr>
                       <td
@@ -766,7 +801,16 @@ export default function AjustesModal({ open, onClose, userId }: Props) {
                   {items.map((it, i) => {
                     const delta = it.nuevoSaldo - it.saldoActual
                     return (
-                      <tr key={i} className="border-b border-border/60">
+                      <tr
+                        key={i}
+                        onClick={(e) => {
+                          setSelRow(i)
+                          ;(e.currentTarget.closest('[tabindex]') as HTMLElement | null)?.focus()
+                        }}
+                        className={`border-b border-border/60 cursor-pointer ${
+                          i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                        }`}
+                      >
                         <td className="px-2 py-1">
                           <div>{it.productoNombre}</div>
                           <div className="text-[10px] text-muted-foreground font-mono">

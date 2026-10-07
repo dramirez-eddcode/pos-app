@@ -87,7 +87,10 @@ export class Escpos {
     return this
   }
 
-  // ESC p m t1 t2 — pulso al cajón. m: 0=pin2, 1=pin5.
+  // ESC p m t1 t2 — pulso al cajón. m: 0=pin2, 1=pin5. t1/t2 en unidades de
+  // 2ms (máx 255 = 510ms): t1 = tiempo ENCENDIDO (más tiempo = más fuerza),
+  // t2 = tiempo apagado después del pulso (la impresora no procesa el
+  // siguiente comando hasta cumplirlo — separa pulsos consecutivos).
   drawerPulse(pin: 0 | 1 = 0, onMs = 50, offMs = 250): this {
     const t1 = Math.max(1, Math.min(255, Math.round(onMs / 2)))
     const t2 = Math.max(1, Math.min(255, Math.round(offMs / 2)))
@@ -134,6 +137,19 @@ export function center(s: string, cols = COLS_DEFAULT): string {
   if (s.length >= cols) return s.slice(0, cols)
   const pad = Math.floor((cols - s.length) / 2)
   return ' '.repeat(pad) + s
+}
+
+/**
+ * Manda el/los pulso(s) al cajón con la config acotada a rangos seguros:
+ * duración 20–500ms (más tiempo = más fuerza; arriba de eso se arriesga el
+ * solenoide) y 1–5 repeticiones (cajones que no abren a la primera). El t2 de
+ * 250ms separa los pulsos consecutivos (la impresora espera t1+t2 entre uno
+ * y otro).
+ */
+export function pulsosCajon(p: Escpos, ms: number, veces: number): void {
+  const on = Math.max(20, Math.min(500, Math.round(ms) || 50))
+  const n = Math.max(1, Math.min(5, Math.round(veces) || 1))
+  for (let i = 0; i < n; i++) p.drawerPulse(0, on, 250)
 }
 
 /**

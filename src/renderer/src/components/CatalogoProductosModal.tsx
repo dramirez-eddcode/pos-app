@@ -150,6 +150,67 @@ export default function CatalogoProductosModal({
     setPage(1)
   }, [filtro, showInactivos, ivaFilter, pageSize])
 
+  // ── Sombreado con ↑/↓ (salta de página en los extremos; Enter = Editar) ──
+  const [selRow, setSelRow] = useState(-1)
+  const catTbodyRef = useRef<HTMLTableSectionElement>(null)
+  useEffect(() => {
+    setSelRow(-1)
+  }, [pageSafe, filtro, showInactivos, ivaFilter, pageSize])
+  const onKeyCatalogo = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const tgt = e.target as HTMLElement | null
+    if (
+      tgt instanceof HTMLInputElement ||
+      tgt instanceof HTMLSelectElement ||
+      tgt instanceof HTMLTextAreaElement
+    ) {
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (pageItems.length === 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.key === 'ArrowDown') {
+        if (selRow >= pageItems.length - 1) {
+          if (pageSafe < totalPages) {
+            setPage(pageSafe + 1)
+            setTimeout(() => setSelRow(0), 0)
+          }
+          return
+        }
+        setSelRow((i) => Math.min(pageItems.length - 1, i + 1))
+      } else {
+        if (selRow === 0 && pageSafe > 1) {
+          setPage(pageSafe - 1)
+          setTimeout(() => setSelRow(pageSize - 1), 0)
+          return
+        }
+        setSelRow((i) => Math.max(0, i - 1))
+      }
+    } else if (e.key === 'Enter') {
+      if (tgt?.tagName === 'BUTTON') return
+      const p = pageItems[selRow]
+      if (!p) return
+      e.preventDefault()
+      e.stopPropagation()
+      setSub({ kind: 'edit', target: p })
+    }
+  }
+  useEffect(() => {
+    if (selRow < 0) return
+    // Con pageItems no vacío las filas del tbody mapean 1:1 con el índice
+    // (las filas de "cargando"/"sin coincidencias" sólo salen con lista vacía).
+    const tbody = catTbodyRef.current
+    const row = tbody?.children[selRow] as HTMLElement | undefined
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    if (row.offsetTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, row.offsetTop - headerH)
+    } else if (row.offsetTop + row.offsetHeight > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = row.offsetTop + row.offsetHeight - cont.clientHeight
+    }
+  }, [selRow])
+
   // ── Igualar el % de IVA de los productos gravados al default del negocio ──
   // Aplica a los que YA tienen un % de IVA (modo sumar/incluido con % > 0)
   // distinto al configurado en Impuestos · IVA. Los exentos no se tocan.
@@ -557,7 +618,12 @@ export default function CatalogoProductosModal({
             </span>
           </div>
 
-          <div className="border border-border rounded overflow-auto max-h-[60vh]">
+          <div
+            tabIndex={0}
+            onKeyDown={onKeyCatalogo}
+            className="border border-border rounded overflow-auto max-h-[60vh] focus:outline-none focus:ring-1 focus:ring-primary/40"
+            title="↑/↓ recorren los productos · Enter edita el sombreado"
+          >
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
                 <tr className="text-left">
@@ -571,7 +637,7 @@ export default function CatalogoProductosModal({
                   <th className="px-2 py-1.5 w-44 text-right">Acciones</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={catTbodyRef}>
                 {loading && filtered.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-2 py-6 text-muted-foreground">
@@ -590,10 +656,17 @@ export default function CatalogoProductosModal({
                     </td>
                   </tr>
                 )}
-                {pageItems.map((p) => (
+                {pageItems.map((p, i) => (
                   <tr
                     key={p.id}
-                    className={`border-b border-border/60 ${!p.activo ? 'text-muted-foreground' : ''}`}
+                    onClick={(e) => {
+                      setSelRow(i)
+                      ;(e.currentTarget.closest('[tabindex]') as HTMLElement | null)?.focus()
+                    }}
+                    onDoubleClick={() => setSub({ kind: 'edit', target: p })}
+                    className={`border-b border-border/60 cursor-pointer ${
+                      i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                    } ${!p.activo ? 'text-muted-foreground' : ''}`}
                   >
                     <td className="px-2 py-1 font-mono">{p.codigo}</td>
                     <td className="px-2 py-1">

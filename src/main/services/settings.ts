@@ -19,6 +19,10 @@ export interface AppSettings {
   /** Tamaño de letra de los documentos impresos/PDF. Default: chico. */
   docFontSize: 'chico' | 'mediano' | 'grande'
   openDrawerOnCash: boolean
+  /** Duración del pulso al cajón (ms, ESC p t1). Default 50 = como siempre. */
+  drawerPulseMs: number
+  /** Pulsos por apertura (1–5) para cajones que no abren a la primera. */
+  drawerPulseCount: number
   showTimeOnReceipt: boolean
   receiptFooter: string | null
   // Qué líneas del encabezado se imprimen en los tickets (venta, cancelación,
@@ -39,6 +43,8 @@ const DEFAULTS: AppSettings = {
   docPrinterDuplex: false,
   docFontSize: 'chico',
   openDrawerOnCash: true,
+  drawerPulseMs: 50,
+  drawerPulseCount: 1,
   showTimeOnReceipt: false,
   receiptFooter: null,
   ticketMostrarRazonSocial: true,

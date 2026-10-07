@@ -22,7 +22,11 @@ export default function PrinterTestPanel() {
       const preferred = list.find((p) => p === DEFAULT_PRINTER_NAME) ?? list[0] ?? ''
       setSelected(preferred)
     } catch (e) {
-      setState({ kind: 'err', msg: 'No pude enumerar impresoras', details: String(e) })
+      const details = (e instanceof Error ? e.message : String(e)).replace(
+        /^Error invoking remote method '[^']+':\s*(Error:\s*)?/,
+        ''
+      )
+      setState({ kind: 'err', msg: 'No pude enumerar las impresoras', details })
     }
   }, [])
 

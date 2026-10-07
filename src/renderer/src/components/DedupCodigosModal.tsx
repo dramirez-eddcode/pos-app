@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Merge } from 'lucide-react'
 import Modal from './Modal'
@@ -25,6 +25,17 @@ export default function DedupCodigosModal({ open, onClose, onDone }: Props) {
   const [pares, setPares] = useState<DedupParItem[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
+  // Sombreado con ↑/↓ para repasar los pares antes de fusionar.
+  const [selRow, setSelRow] = useState(-1)
+  const paresTbodyRef = useRef<HTMLTableSectionElement>(null)
+  useEffect(() => {
+    setSelRow(-1)
+  }, [pares])
+  useEffect(() => {
+    if (selRow < 0) return
+    const row = paresTbodyRef.current?.children[selRow] as HTMLElement | undefined
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [selRow])
 
   const cargar = useCallback(async () => {
     if (!user) return
@@ -108,7 +119,22 @@ export default function DedupCodigosModal({ open, onClose, onDone }: Props) {
         )}
 
         {!loading && pares && pares.length > 0 && (
-          <div className="border border-border rounded overflow-auto max-h-[50vh]">
+          <div
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+              const tgt = e.target as HTMLElement | null
+              if (tgt instanceof HTMLInputElement || tgt instanceof HTMLSelectElement) return
+              if (!pares || pares.length === 0) return
+              e.preventDefault()
+              e.stopPropagation()
+              setSelRow((i) =>
+                e.key === 'ArrowDown' ? Math.min(pares.length - 1, i + 1) : Math.max(0, i - 1)
+              )
+            }}
+            className="border border-border rounded overflow-auto max-h-[50vh] focus:outline-none focus:ring-1 focus:ring-primary/40"
+            title="↑/↓ recorren los pares para revisarlos"
+          >
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-muted/40 border-b border-border z-10">
                 <tr className="text-left">
@@ -119,9 +145,18 @@ export default function DedupCodigosModal({ open, onClose, onDone }: Props) {
                   <th className="px-2 py-1.5 text-right">Precio final</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={paresTbodyRef}>
                 {pares.map((p, i) => (
-                  <tr key={i} className="border-b border-border/60">
+                  <tr
+                    key={i}
+                    onClick={(e) => {
+                      setSelRow(i)
+                      ;(e.currentTarget.closest('[tabindex]') as HTMLElement | null)?.focus()
+                    }}
+                    className={`border-b border-border/60 cursor-pointer ${
+                      i === selRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                    }`}
+                  >
                     <td className="px-2 py-1">{p.nombre}</td>
                     <td className="px-2 py-1 font-mono">
                       {p.codigoQueda}

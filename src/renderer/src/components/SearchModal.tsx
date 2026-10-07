@@ -29,6 +29,20 @@ interface Props {
    * global de todas las bodegas.
    */
   bodegaId?: string | null
+  /**
+   * Selección MÚLTIPLE: marcar varias filas (Insert / Ctrl+Espacio / clic en
+   * el checkbox / doble clic) y confirmarlas juntas con Enter o el botón
+   * "Agregar N". La marca sobrevive al cambio de página y de término de
+   * búsqueda. Default: false — comportamiento de un producto, idéntico al de
+   * siempre (Insert no hace nada).
+   */
+  multiSelect?: boolean
+  /**
+   * Requerido con multiSelect: recibe los productos marcados (o el resaltado
+   * si no hay marcas — así elegir 1 sigue siendo un solo Enter). Con
+   * multiSelect activo, onSelect NO se invoca.
+   */
+  onSelectMany?: (ps: ProductoDto[]) => void
 }
 
 const MODE_LABEL: Record<ProductoSearchMode, string> = {
@@ -46,7 +60,9 @@ export default function SearchModal({
   onSelect,
   allowZeroStock = false,
   returnFocus,
-  bodegaId
+  bodegaId,
+  multiSelect = false,
+  onSelectMany
 }: Props) {
   const [mode, setMode] = useState<ProductoSearchMode>('nombre')
   const [term, setTerm] = useState('')
@@ -54,6 +70,9 @@ export default function SearchModal({
   const [loading, setLoading] = useState(false)
   const [idx, setIdx] = useState(0)
   const [pageSize, setPageSize] = useState(20)
+  // Marcados del modo multi (Map por id): vive APARTE de results, así la
+  // selección sobrevive al cambio de término y al paginado.
+  const [marked, setMarked] = useState<Map<string, ProductoDto>>(new Map())
   const inputRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLTableSectionElement>(null)
 
@@ -69,6 +88,7 @@ export default function SearchModal({
     setTerm('')
     setResults([])
     setIdx(0)
+    setMarked(new Map())
     // Con delay: al abrir desde otro modal (F5) el padre se desmonta en el
     // mismo render y un focus síncrono se pierde. Segundo intento por si otro
     // modal en transición robó el foco entre tanto.
@@ -126,6 +146,46 @@ export default function SearchModal({
     [onSelect, onClose, allowZeroStock]
   )
 
+  // Marca/desmarca una fila del modo multi (respeta la regla de stock).
+  const toggleMark = useCallback(
+    (p: ProductoDto) => {
+      if (!allowZeroStock && p.existenciasTotal <= 0) {
+        toast.error('Sin existencias', {
+          description: `"${p.nombre}" no tiene existencias disponibles`
+        })
+        return
+      }
+      setMarked((prev) => {
+        const next = new Map(prev)
+        if (next.has(p.id)) next.delete(p.id)
+        else next.set(p.id, p)
+        return next
+      })
+    },
+    [allowZeroStock]
+  )
+
+  // Confirma la selección múltiple: los marcados, o la fila resaltada si no
+  // hay ninguno (así elegir 1 producto sigue costando un solo Enter).
+  const commitMany = useCallback(() => {
+    let list: ProductoDto[]
+    if (marked.size > 0) {
+      list = [...marked.values()]
+    } else {
+      const sel = results[idx]
+      if (!sel) return
+      if (!allowZeroStock && sel.existenciasTotal <= 0) {
+        toast.error('Sin existencias', {
+          description: `"${sel.nombre}" no tiene existencias disponibles`
+        })
+        return
+      }
+      list = [sel]
+    }
+    onSelectMany?.(list)
+    onClose()
+  }, [marked, results, idx, allowZeroStock, onSelectMany, onClose])
+
   const rotateMode = useCallback(() => {
     setMode((m) => (m === 'nombre' ? 'sustancia' : m === 'sustancia' ? 'codigo' : 'nombre'))
   }, [])
@@ -160,18 +220,32 @@ export default function SearchModal({
         setIdx((i) =>
           e.key === 'ArrowDown' ? Math.min(results.length - 1, i + 1) : Math.max(0, i - 1)
         )
+      } else if (multiSelect && (e.key === 'Insert' || (e.ctrlKey && e.code === 'Space'))) {
+        // Marcar en ráfaga: ni Insert ni Ctrl+Espacio escriben en el input, y
+        // tras marcar se auto-avanza a la siguiente fila (estilo explorador).
+        e.preventDefault()
+        e.stopPropagation()
+        const sel = results[idx]
+        if (sel) {
+          toggleMark(sel)
+          setIdx((i) => Math.min(results.length - 1, i + 1))
+        }
       } else if (e.key === 'Enter') {
         // En botones/selects, Enter conserva su acción nativa (p. ej. Cerrar)
         if (tag === 'BUTTON' || tag === 'SELECT') return
         e.preventDefault()
         e.stopPropagation()
-        const sel = results[idx]
-        if (sel) commit(sel)
+        if (multiSelect) {
+          commitMany()
+        } else {
+          const sel = results[idx]
+          if (sel) commit(sel)
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [open, cancel, rotateMode, results, idx, commit])
+  }, [open, cancel, rotateMode, results, idx, commit, multiSelect, toggleMark, commitMany])
 
   return (
     <Modal open={open} title="Búsqueda de producto" onClose={cancel} maxWidth="max-w-4xl">
@@ -198,13 +272,18 @@ export default function SearchModal({
               autoComplete="off"
             />
           </div>
-          <div className="text-xs text-muted-foreground pt-5">
+          <div className="text-xs text-muted-foreground pt-5 text-right">
             {loading ? (
               <Spinner size={14} label="Buscando…" />
             ) : results.length >= SEARCH_LIMIT ? (
               `${SEARCH_LIMIT}+ resultados · escribe para acotar`
             ) : (
               `${results.length} resultado${results.length === 1 ? '' : 's'}`
+            )}
+            {multiSelect && marked.size > 0 && (
+              <div className="font-semibold text-emerald-700">
+                {marked.size} marcado{marked.size === 1 ? '' : 's'}
+              </div>
             )}
           </div>
         </div>
@@ -213,6 +292,7 @@ export default function SearchModal({
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-muted/40 border-b border-border">
               <tr className="text-left">
+                {multiSelect && <th className="px-2 py-1 w-8" />}
                 <th className="px-2 py-1 w-[120px] font-mono">Código</th>
                 <th className="px-2 py-1">Nombre comercial</th>
                 <th className="px-2 py-1">Sustancia activa</th>
@@ -223,7 +303,10 @@ export default function SearchModal({
             <tbody ref={tableRef}>
               {results.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-2 py-8 text-center text-muted-foreground">
+                  <td
+                    colSpan={multiSelect ? 6 : 5}
+                    className="px-2 py-8 text-center text-muted-foreground"
+                  >
                     {loading ? (
                       <span className="inline-flex items-center justify-center">
                         <Spinner label="Buscando…" />
@@ -245,12 +328,32 @@ export default function SearchModal({
                   <tr
                     key={p.id}
                     onClick={() => setIdx(i)}
-                    onDoubleClick={() => commit(p)}
+                    onDoubleClick={() => (multiSelect ? toggleMark(p) : commit(p))}
                     className={`border-b border-border/60 cursor-pointer ${
                       i === idx ? 'bg-primary/10' : ''
-                    } ${blocked ? 'opacity-60' : ''}`}
+                    } ${multiSelect && marked.has(p.id) ? 'bg-emerald-50' : ''} ${
+                      blocked ? 'opacity-60' : ''
+                    }`}
                     title={blocked ? 'Sin existencias — no se puede agregar' : undefined}
                   >
+                    {multiSelect && (
+                      <td
+                        className="px-2 py-1 text-center"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setIdx(i)
+                          toggleMark(p)
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={marked.has(p.id)}
+                          readOnly
+                          tabIndex={-1}
+                          className="pointer-events-none align-middle"
+                        />
+                      </td>
+                    )}
                     <td className="px-2 py-1 font-mono">{p.codigo}</td>
                     <td className="px-2 py-1">{p.nombre}</td>
                     <td className="px-2 py-1 text-muted-foreground truncate max-w-[220px]">
@@ -277,9 +380,20 @@ export default function SearchModal({
       </div>
       <footer className="flex justify-between items-center gap-3 px-4 py-2 border-t border-border bg-muted/20 text-xs">
         <div className="text-muted-foreground hidden md:block">
-          <span className="font-mono">↑/↓</span> navegar · <span className="font-mono">Enter</span>{' '}
-          agregar · <span className="font-mono">F9</span> modo · <span className="font-mono">Esc</span>{' '}
-          cerrar
+          {multiSelect ? (
+            <>
+              <span className="font-mono">Insert</span>/<span className="font-mono">Ctrl+Espacio</span>{' '}
+              marcar · <span className="font-mono">Enter</span> agregar marcados ·{' '}
+              <span className="font-mono">F9</span> modo · <span className="font-mono">Esc</span>{' '}
+              cancelar
+            </>
+          ) : (
+            <>
+              <span className="font-mono">↑/↓</span> navegar ·{' '}
+              <span className="font-mono">Enter</span> agregar · <span className="font-mono">F9</span>{' '}
+              modo · <span className="font-mono">Esc</span> cerrar
+            </>
+          )}
         </div>
 
         {results.length > 0 && (
@@ -318,13 +432,25 @@ export default function SearchModal({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={cancel}
-          className="px-3 py-1 border border-border rounded hover:bg-muted shrink-0"
-        >
-          Cerrar
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {multiSelect && (
+            <button
+              type="button"
+              onClick={commitMany}
+              disabled={marked.size === 0}
+              className="px-3 py-1 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+            >
+              Agregar {marked.size} seleccionado{marked.size === 1 ? '' : 's'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={cancel}
+            className="px-3 py-1 border border-border rounded hover:bg-muted"
+          >
+            Cerrar
+          </button>
+        </div>
       </footer>
     </Modal>
   )

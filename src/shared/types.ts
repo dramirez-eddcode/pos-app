@@ -67,6 +67,18 @@ export interface AppSettings {
    */
   docFontSize: DocFontSize
   openDrawerOnCash: boolean
+  /**
+   * Duración del pulso al cajón en ms (ESC p, t1). Default 50 = el
+   * comportamiento de siempre. Más tiempo = más fuerza para cajones duros;
+   * el rango seguro es 20–500 (arriba de eso se arriesga el solenoide).
+   * Sólo lo cambian SUPERUSUARIO/ADMINISTRADOR.
+   */
+  drawerPulseMs: number
+  /**
+   * Cuántos pulsos se mandan por apertura (1–5). Para cajones que no abren a
+   * la primera. Default 1. Sólo SUPERUSUARIO/ADMINISTRADOR.
+   */
+  drawerPulseCount: number
   showTimeOnReceipt: boolean
   receiptFooter: string | null
   // Qué líneas del encabezado se imprimen en los tickets (venta, cancelación,

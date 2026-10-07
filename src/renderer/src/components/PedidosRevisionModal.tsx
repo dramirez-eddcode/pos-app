@@ -45,6 +45,9 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
   const [detalle, setDetalle] = useState<PedidoTraspasoDto | null>(null)
   const [items, setItems] = useState<PedidoLinea[]>([])
   const [dirty, setDirty] = useState(false)
+  // Lista a PROVEEDOR: existencia real de cada código AHORA, para detectar
+  // renglones cuya "foto" quedó vieja (ventas/traspasos tras capturarlos).
+  const [actuales, setActuales] = useState<Record<string, number> | null>(null)
   const [bodegaId, setBodegaId] = useState('')
   const [busy, setBusy] = useState<null | 'guardar' | 'aprobar' | 'rechazar' | 'imprimir' | 'pdf'>(
     null
@@ -64,6 +67,13 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
   const capCantidadRef = useRef<HTMLInputElement>(null)
   const tablaRef = useRef<HTMLDivElement>(null)
   const tbodyRef = useRef<HTMLTableSectionElement>(null)
+  // Sombreado con ↑/↓ en la LISTA de pedidos (Enter = Revisar/Ver).
+  const [listaSelRow, setListaSelRow] = useState(-1)
+  const listaSelRowRef = useRef(-1)
+  useEffect(() => {
+    listaSelRowRef.current = listaSelRow
+  }, [listaSelRow])
+  const listaTbodyRef = useRef<HTMLTableSectionElement>(null)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -105,6 +115,101 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
     // surtir (el admin puede cambiarla, pero el default es la correcta).
     if (p.bodegaId && bodegas.some((b) => b.id === p.bodegaId)) setBodegaId(p.bodegaId)
   }
+
+  // ↑/↓ recorren la lista de pedidos y Enter abre Revisar/Ver de la fila
+  // sombreada (captura: le gana al arrowFieldNav del Modal).
+  // Al abrir una lista a proveedor pendiente, compara su "foto" de existencias
+  // con el stock real de ahora.
+  useEffect(() => {
+    setActuales(null)
+    if (!open || !user || !detalle) return
+    if (detalle.tipo !== 'PROVEEDOR' || detalle.estado !== 'PENDIENTE') return
+    let vivo = true
+    window.api.pedidos
+      .existenciasActuales(
+        user.id,
+        detalle.items.map((l) => l.codigo)
+      )
+      .then((a) => {
+        if (vivo) setActuales(a)
+      })
+      .catch(() => {})
+    return () => {
+      vivo = false
+    }
+  }, [open, user, detalle])
+
+  const desactualizadas = actuales
+    ? items.filter((l) => actuales[l.codigo] !== undefined && actuales[l.codigo] !== l.cantidad)
+    : []
+
+  // Pone cada renglón al stock real (queda como cambio pendiente de guardar /
+  // aprobar — al aprobar el backend lo vuelve a refrescar de todas formas).
+  const actualizarExistencias = (): void => {
+    if (!actuales || desactualizadas.length === 0) return
+    setItems((prev) =>
+      prev.map((l) =>
+        actuales[l.codigo] !== undefined ? { ...l, cantidad: actuales[l.codigo]! } : l
+      )
+    )
+    setDirty(true)
+    toast.success(
+      `${desactualizadas.length} existencia${desactualizadas.length === 1 ? '' : 's'} actualizada${desactualizadas.length === 1 ? '' : 's'} al stock real`,
+      { description: 'Guarda o aprueba la lista para dejarlas registradas.' }
+    )
+  }
+
+  useEffect(() => {
+    setListaSelRow(-1)
+  }, [pedidos])
+  useEffect(() => {
+    if (!open || detalle || searchOpen || resumenOpen) return
+    const handler = (e: KeyboardEvent): void => {
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLSelectElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable === true
+      ) {
+        return
+      }
+      const total = pedidos.length
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (total === 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        const cur = listaSelRowRef.current
+        if (e.key === 'ArrowDown') setListaSelRow(Math.min(total - 1, cur + 1))
+        else if (cur >= 0) setListaSelRow(Math.max(0, cur - 1))
+      } else if (e.key === 'Enter') {
+        if (tgt?.tagName === 'BUTTON') return
+        const p = pedidos[listaSelRowRef.current]
+        if (!p) return
+        e.preventDefault()
+        e.stopPropagation()
+        abrirDetalle(p)
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, detalle, searchOpen, resumenOpen, pedidos, bodegas])
+
+  // Mantiene visible la fila sombreada (compensa el thead sticky).
+  useEffect(() => {
+    if (listaSelRow < 0) return
+    const tbody = listaTbodyRef.current
+    const row = tbody?.children[listaSelRow] as HTMLElement | undefined
+    const cont = tbody?.closest('.overflow-auto') as HTMLElement | null
+    if (!row || !cont) return
+    const headerH = cont.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    if (row.offsetTop - headerH < cont.scrollTop) {
+      cont.scrollTop = Math.max(0, row.offsetTop - headerH)
+    } else if (row.offsetTop + row.offsetHeight > cont.scrollTop + cont.clientHeight) {
+      cont.scrollTop = row.offsetTop + row.offsetHeight - cont.clientHeight
+    }
+  }, [listaSelRow])
 
   // ── Agregar productos durante la revisión (corregir el pedido) ────────────
   const agregarLinea = useCallback(
@@ -422,7 +527,7 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
     toast.warning(`¿Aprobar el pedido P-${detalle.numero}?`, {
       id: 'pedido-aprobar',
       description: esProveedor
-        ? `Lista de compra para "${detalle.sucursalNombre}": sólo se marca aprobado (no toca inventario). Registra la Entrada cuando el proveedor surta.`
+        ? `Lista de compra para "${detalle.sucursalNombre}": sólo se marca aprobado (no toca inventario). Las existencias de la hoja se ponen al stock real de este momento. Registra la Entrada cuando el proveedor surta.`
         : `Se genera el traspaso real: descuenta FEFO de ${bodegaNombre} y crea el archivo .traspaso para "${detalle.sucursalNombre}".`,
       duration: 10000,
       action: {
@@ -510,7 +615,7 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                     <th className="px-2 py-1.5 w-24 text-center">Acciones</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody ref={listaTbodyRef}>
                   {loading && (
                     <tr>
                       <td colSpan={7} className="px-2 py-8">
@@ -528,8 +633,15 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                     </tr>
                   )}
                   {!loading &&
-                    pedidos.map((p) => (
-                      <tr key={p.id} className="border-b border-border/60">
+                    pedidos.map((p, i) => (
+                      <tr
+                        key={p.id}
+                        onClick={() => setListaSelRow(i)}
+                        onDoubleClick={() => abrirDetalle(p)}
+                        className={`border-b border-border/60 cursor-pointer ${
+                          i === listaSelRow ? 'bg-primary/10' : 'hover:bg-muted/40'
+                        }`}
+                      >
                         <td className="px-2 py-1 font-mono">P-{p.numero}</td>
                         <td className="px-2 py-1 font-mono text-[11px]">
                           {new Date(p.fechaCreado).toLocaleString('es-MX')}
@@ -720,6 +832,33 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
               </div>
             )}
 
+            {/* Lista a proveedor: aviso de existencias desactualizadas + botón */}
+            {detalle.tipo === 'PROVEEDOR' &&
+              editable &&
+              (desactualizadas.length > 0 ? (
+                <div className="flex items-center justify-between gap-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <span>
+                    <strong>
+                      {desactualizadas.length} producto{desactualizadas.length === 1 ? '' : 's'}
+                    </strong>{' '}
+                    con existencia desactualizada: hubo ventas o traspasos después de capturarlos
+                    (en cada renglón se muestra la existencia de ahora).
+                  </span>
+                  <button
+                    type="button"
+                    onClick={actualizarExistencias}
+                    className="shrink-0 px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 cursor-pointer font-semibold"
+                  >
+                    Actualizar existencias
+                  </button>
+                </div>
+              ) : actuales ? (
+                <div className="text-[11px] text-muted-foreground">
+                  Existencias al día con el stock actual. Al aprobar se vuelven a verificar antes
+                  de imprimir la hoja.
+                </div>
+              ) : null)}
+
             <div
               ref={tablaRef}
               tabIndex={0}
@@ -759,13 +898,30 @@ export default function PedidosRevisionModal({ open, onClose, onDone }: Props) {
                       <td className="px-2 py-1">{l.nombre}</td>
                       <td className="px-2 py-1 text-right">
                         {editable ? (
-                          <input
-                            type="number"
-                            min={detalle.tipo === 'PROVEEDOR' ? 0 : 1}
-                            value={detalle.tipo === 'PROVEEDOR' ? l.cantidad : l.cantidad || ''}
-                            onChange={(e) => setCantidad(i, e.target.value)}
-                            className="w-20 border border-border rounded px-1.5 py-1 font-mono text-right"
-                          />
+                          <>
+                            <input
+                              type="number"
+                              min={detalle.tipo === 'PROVEEDOR' ? 0 : 1}
+                              value={detalle.tipo === 'PROVEEDOR' ? l.cantidad : l.cantidad || ''}
+                              onChange={(e) => setCantidad(i, e.target.value)}
+                              className={`w-20 border rounded px-1.5 py-1 font-mono text-right ${
+                                detalle.tipo === 'PROVEEDOR' &&
+                                actuales &&
+                                actuales[l.codigo] !== undefined &&
+                                actuales[l.codigo] !== l.cantidad
+                                  ? 'border-amber-400 bg-amber-50'
+                                  : 'border-border'
+                              }`}
+                            />
+                            {detalle.tipo === 'PROVEEDOR' &&
+                              actuales &&
+                              actuales[l.codigo] !== undefined &&
+                              actuales[l.codigo] !== l.cantidad && (
+                                <div className="text-[10px] text-amber-700 text-right font-mono">
+                                  ahora: {actuales[l.codigo]}
+                                </div>
+                              )}
+                          </>
                         ) : (
                           <span className="font-mono">{l.cantidad}</span>
                         )}

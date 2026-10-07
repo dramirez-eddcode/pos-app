@@ -31,7 +31,9 @@ import type { MovimientoDetalle, PdfMovimientoResult, StockBodegaPdfInput } from
  *    neutraliza con el COLCHÓN + el `overflow:hidden` de `.hoja`.
  *
  * Estructura esperada: <body> con bloques (header, .datos, table.items,
- * .totales, .firmas, footer) o <section> por copia (pedidos).
+ * .totales, .firmas, footer) o <section> por copia (pedidos). Contrato extra:
+ * una <tr class="sub"> dentro de table.items es sub-fila de DETALLE de la
+ * fila anterior (p.ej. lotes del stock) y se pagina JUNTO con ella.
  */
 const PAGINADOR_JS = String.raw`
 (() => {
@@ -79,6 +81,13 @@ const PAGINADOR_JS = String.raw`
   };
 
   for (const unidad of unidades) {
+    // Cada <section> puede llevar su propio sufijo de pie (data-pie): en los
+    // pedidos es el nombre de la copia (COPIA / ORIGINAL / ARCHIVO), para que
+    // la hoja se identifique también al pie, no sólo por el rótulo de arriba.
+    const sufijo = unidad.dataset ? unidad.dataset.pie : '';
+    const pieTexto = sufijo
+      ? (PIE_IZQUIERDO ? PIE_IZQUIERDO + ' · ' + sufijo : sufijo)
+      : PIE_IZQUIERDO;
     const bloques = Array.from(unidad.children);
     const paginas = [];
     let actual = [];
@@ -101,8 +110,18 @@ const PAGINADOR_JS = String.raw`
         // La tabla grande se parte por filas; cada trozo lleva su thead.
         // (table-layout:fixed en el CSS garantiza que las columnas midan igual
         // en la tabla original —donde medimos— y en estos clones.)
+        // Las tr.sub (sub-filas de detalle, p.ej. los lotes del stock) viajan
+        // JUNTAS con su fila padre: nunca abren hoja separadas de ella.
         const thead = b.querySelector('thead');
         const filas = Array.from(b.querySelectorAll('tbody > tr'));
+        const grupos = [];
+        for (const fila of filas) {
+          if (fila.classList.contains('sub') && grupos.length > 0) {
+            grupos[grupos.length - 1].push(fila);
+          } else {
+            grupos.push([fila]);
+          }
+        }
         const hThead = thead ? alturaDe(thead) : 0;
         let tabla = null;
         let tbody = null;
@@ -114,10 +133,10 @@ const PAGINADOR_JS = String.raw`
           tabla.appendChild(tbody);
           hTabla = hThead;
         };
-        abrirTabla();
-        for (const fila of filas) {
-          const hFila = ceil(fila.getBoundingClientRect().height);
-          if (usado + hTabla + hFila > ALTO_CONTENIDO && (tbody.children.length || actual.length)) {
+        // Si h no cabe en lo que queda de la hoja (y hay algo previo),
+        // cierra la tabla/hoja actual y abre la siguiente.
+        const asegurarEspacio = (h) => {
+          if (usado + hTabla + h > ALTO_CONTENIDO && (tbody.children.length || actual.length)) {
             if (tbody.children.length) {
               actual.push(tabla);
               usado += hTabla;
@@ -125,8 +144,21 @@ const PAGINADOR_JS = String.raw`
             cerrar();
             abrirTabla();
           }
-          tbody.appendChild(fila.cloneNode(true));
-          hTabla += hFila;
+        };
+        abrirTabla();
+        for (const grupo of grupos) {
+          const alturas = grupo.map((f) => ceil(f.getBoundingClientRect().height));
+          const hGrupo = alturas.reduce((s, h) => s + h, 0);
+          // El grupo se empaca completo sólo si cabe en UNA hoja limpia; si ni
+          // así cupiera (detalle gigante), degrada al corte fila por fila de
+          // siempre (overflow:hidden de .hoja sigue de red de seguridad).
+          const indivisible = grupo.length > 1 && hThead + hGrupo <= ALTO_CONTENIDO;
+          if (indivisible) asegurarEspacio(hGrupo);
+          grupo.forEach((f, j) => {
+            if (!indivisible) asegurarEspacio(alturas[j]);
+            tbody.appendChild(f.cloneNode(true));
+            hTabla += alturas[j];
+          });
         }
         if (tbody.children.length) {
           actual.push(tabla);
@@ -150,7 +182,7 @@ const PAGINADOR_JS = String.raw`
       const pie = document.createElement('div');
       pie.className = 'pie';
       const izq = document.createElement('span');
-      izq.textContent = PIE_IZQUIERDO;
+      izq.textContent = pieTexto;
       const der = document.createElement('span');
       der.className = 'num-pag';
       der.textContent = 'Página ' + (i + 1) + ' de ' + total;
@@ -226,8 +258,11 @@ async function printDoc(
   // soporta, el driver de Windows lo ignora e imprime normal. `forzarSimplex`
   // la desactiva para documentos cuyas hojas se reparten por separado (las 3
   // copias del pedido: dos copias en la misma hoja no se podrían entregar).
-  const duplex =
-    docPrinterDuplex && !opts.forzarSimplex ? { duplexMode: 'longEdge' as const } : {}
+  // SIEMPRE explícito ('longEdge' o 'simplex'), nunca omitido: si se omite
+  // manda el DEVMODE del driver, y una impresora con dúplex predeterminado de
+  // fábrica imprimiría a doble cara con el checkbox apagado (o mezclaría dos
+  // copias en una hoja pese a forzarSimplex).
+  const duplexMode = docPrinterDuplex && !opts.forzarSimplex ? ('longEdge' as const) : ('simplex' as const)
 
   // Los márgenes los define el @page CSS del documento (12mm por lado), que es
   // con lo que mide el paginador: sin la opción `margins`, Chromium usa
@@ -248,7 +283,7 @@ async function printDoc(
           // Carta explícito: si el driver está configurado en A4, la geometría
           // medida (8.5×11in) no coincidiría con el papel.
           pageSize: 'Letter',
-          ...duplex,
+          duplexMode,
           ...extra
         },
         (success, failureReason) => resolve({ success, reason: failureReason })
@@ -347,10 +382,15 @@ function buildStockHtml(input: StockBodegaPdfInput): string {
   ]
   if (input.filtroDescripcion) datos.push(['Filtro aplicado', input.filtroDescripcion])
 
+  // Con "Detalle de lotes en impresión": bajo cada producto va una sub-fila
+  // (tr.sub) con sus lotes "caducidad ×cantidad" — el paginador la empaca
+  // JUNTO con su fila padre para que nunca queden en hojas distintas.
+  const conLotes = Boolean(input.incluirLotes)
   const filas = input.items
     .map((it, i) => {
       const cadClase = it.vencido ? 'bad' : it.porVencer ? 'warn' : ''
-      return `<tr>
+      const lotes = conLotes ? (it.lotes ?? []) : []
+      const fila = `<tr${lotes.length > 0 ? ' class="con-sub"' : ''}>
         <td class="num">${i + 1}</td>
         <td class="mono">${esc(it.codigo)}</td>
         <td>${esc(it.nombre)}${it.bajoMinimo ? ' <span class="warn">▼ bajo mín</span>' : ''}</td>
@@ -359,6 +399,20 @@ function buildStockHtml(input: StockBodegaPdfInput): string {
         <td class="num">${it.stockMinimo ? entero(it.stockMinimo) : '—'}</td>
         <td class="num">$${money(it.valorCosto)}</td>
         <td class="mono center ${cadClase}">${esc(fechaDMA(it.proximaCaducidad) ?? '—')}</td>
+      </tr>`
+      if (lotes.length === 0) return fila
+      // Cada lote entre corchetes: [fecha ×cantidad] — separa visualmente
+      // cada fecha con su cantidad al leer/anotar sobre la hoja impresa.
+      const detalle = lotes
+        .map((l) => {
+          const cls = l.vencido ? ' bad' : l.porVencer ? ' warn' : ''
+          return `<span class="lote${cls}">[${esc(fechaDMA(l.caducidad) ?? '—')} ×${entero(l.saldo)}]</span>`
+        })
+        .join(' ')
+      return `${fila}
+      <tr class="sub">
+        <td></td>
+        <td colspan="7" class="lotes-det">Lotes (FEFO): ${detalle}</td>
       </tr>`
     })
     .join('\n')
@@ -539,7 +593,7 @@ interface CopiaPedido {
  */
 const COPIAS_PEDIDO: Record<PedidoPrintData['tipo'], CopiaPedido[]> = {
   SUCURSAL: [
-    { etiqueta: 'COPIA: SUCURSAL DESTINO' },
+    { etiqueta: 'COPIA: SUCURSAL DESTINO', titulo: 'COPIA' },
     { etiqueta: 'COPIA: PROPIETARIO', titulo: 'ORIGINAL' },
     { etiqueta: 'COPIA: ARCHIVO', titulo: 'ARCHIVO' }
   ],
@@ -593,7 +647,9 @@ function buildPedidoHtml(p: PedidoPrintData, copiaIdx?: number): string {
   // paginador detecta las copias con `todos los hijos son <section>`).
   const copias = listaCopias.map(
     (copia, idx) => `
-  <section ${idx < listaCopias.length - 1 ? 'style="page-break-after: always;"' : ''}>
+  <section ${idx < listaCopias.length - 1 ? 'style="page-break-after: always;"' : ''}${
+    copia.titulo ? ` data-pie="${esc(copia.titulo)}"` : ''
+  }>
     ${copia.titulo ? `<div class="hoja-titulo">${esc(copia.titulo)}</div>` : ''}
     <header>
       <div>
@@ -954,6 +1010,12 @@ function estilosStockCompacto(): string {
   .datos td { padding: 0.5px 6px; }
   .totales { margin-top: 6px; padding: 4px 8px; }
   footer { margin-top: 8px; }
+  /* Sub-fila de lotes: pegada visualmente a su fila padre. Con
+     border-collapse hay que apagar los DOS lados del borde compartido. */
+  tr.con-sub td { border-bottom: none; }
+  tr.sub td { border-top: none; padding: 0 4px 2px 4px; line-height: 1.12; }
+  tr.sub .lotes-det { color: #555; font-size: ${fs(8)}; padding-left: 10px; }
+  tr.sub .lote { font-family: Consolas, 'Courier New', monospace; white-space: nowrap; }
 `
 }
 

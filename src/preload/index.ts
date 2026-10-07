@@ -22,6 +22,8 @@ import type {
   CreateSalidaResult,
   CargaInicialInput,
   CargaInicialResult,
+  RedistribuirLotesInput,
+  RedistribuirLotesResult,
   StockBodegaResult,
   StockBodegaPdfInput,
   CrearTraspasoInput,
@@ -340,6 +342,8 @@ const api = {
       fechaYmd: string
     ): Promise<{ ok: true; caducidad: string }> =>
       ipcRenderer.invoke('inventario:update-lote-caducidad', viewerUserId, loteId, fechaYmd),
+    redistribuirLotes: (input: RedistribuirLotesInput): Promise<RedistribuirLotesResult> =>
+      ipcRenderer.invoke('inventario:redistribuir-lotes', input),
     stockPdf: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
       ipcRenderer.invoke('inventario:stock-pdf', input),
     stockImprimir: (input: StockBodegaPdfInput): Promise<PdfMovimientoResult> =>
@@ -423,6 +427,13 @@ const api = {
       notas?: string | null
     ): Promise<PedidoTraspasoDto> =>
       ipcRenderer.invoke('pedidos:guardar-lista', viewerUserId, pedidoId, items, notas ?? null),
+    cerrarLista: (viewerUserId: string, pedidoId: string): Promise<PedidoTraspasoDto> =>
+      ipcRenderer.invoke('pedidos:cerrar-lista', viewerUserId, pedidoId),
+    existenciasActuales: (
+      viewerUserId: string,
+      codigos: string[]
+    ): Promise<Record<string, number>> =>
+      ipcRenderer.invoke('pedidos:existencias-actuales', viewerUserId, codigos),
     existenciaBodega: (
       viewerUserId: string,
       codigo: string,
@@ -483,8 +494,10 @@ const api = {
         mostrarFolio?: boolean
       }
     ): Promise<PrintResultLike> => ipcRenderer.invoke('printer:print-test', printer, opts),
-    openDrawer: (printer: string): Promise<PrintResultLike> =>
-      ipcRenderer.invoke('printer:open-drawer', printer),
+    openDrawer: (
+      printer: string,
+      override?: { pulseMs?: number; pulseCount?: number }
+    ): Promise<PrintResultLike> => ipcRenderer.invoke('printer:open-drawer', printer, override),
     printReceipt: (printer: string, data: ReceiptData): Promise<PrintResultLike> =>
       ipcRenderer.invoke('printer:print-receipt', printer, data),
     printCancel: (printer: string, data: CancelReceiptData): Promise<PrintResultLike> =>

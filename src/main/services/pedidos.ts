@@ -283,6 +283,71 @@ export function existenciaEnBodega(
   return Number(r.n) || 0
 }
 
+/**
+ * Existencia GLOBAL (todas las bodegas) por código: la misma "foto" que toma
+ * la cajera al agregar un producto a la lista de faltantes. Los códigos que
+ * no existen en el catálogo no aparecen en el resultado.
+ */
+function existenciasGlobales(codigos: string[]): Map<string, number> {
+  const out = new Map<string, number>()
+  if (codigos.length === 0) return out
+  const stmt = getSqlite().prepare(
+    `SELECT COALESCE((SELECT SUM(cl.saldo) FROM caducidad_lote cl WHERE cl.producto_id = p.id), 0) AS n
+       FROM producto p
+      WHERE p.codigo = ?`
+  )
+  for (const c of new Set(codigos)) {
+    const r = stmt.get(c) as { n: number } | undefined
+    if (r) out.set(c, Number(r.n) || 0)
+  }
+  return out
+}
+
+/**
+ * Existencias actuales de varios códigos (cualquier rol logueado). La UI lo
+ * usa para avisar qué renglones de una lista a proveedor quedaron con la
+ * existencia desactualizada (ventas/traspasos después de capturarlos) y
+ * ponerlos al día con el botón "Actualizar existencias".
+ */
+export function existenciasActuales(
+  viewerUserId: string,
+  codigos: string[]
+): Record<string, number> {
+  requireUsuario(viewerUserId)
+  requireMatriz()
+  const out: Record<string, number> = {}
+  for (const [c, n] of existenciasGlobales(codigos)) out[c] = n
+  return out
+}
+
+/**
+ * Pone al día la "foto" de existencias de una lista a proveedor PENDIENTE con
+ * el stock real de ahora (traspasos y ventas posteriores a la captura ya
+ * descontados). Se llama al CERRAR (cajera) y al APROBAR (admin) — justo antes
+ * de imprimir — para que la hoja del proveedor refleje la realidad y no la
+ * existencia del día en que se capturó cada renglón. Devuelve cuántos
+ * renglones cambiaron.
+ */
+function refrescarExistenciasProveedor(pedidoId: string): number {
+  const r = getPedidoRow(pedidoId)
+  if ((r.tipo || 'SUCURSAL') !== 'PROVEEDOR' || r.estado !== 'PENDIENTE') return 0
+  const items = rowToDto(r).items
+  const actuales = existenciasGlobales(items.map((l) => l.codigo))
+  let cambios = 0
+  const nuevos = items.map((l) => {
+    const n = actuales.get(l.codigo)
+    if (n === undefined || n === l.cantidad) return l
+    cambios++
+    return { ...l, cantidad: n }
+  })
+  if (cambios > 0) {
+    getSqlite()
+      .prepare('UPDATE pedido_traspaso SET items_json = ? WHERE id = ?')
+      .run(JSON.stringify(nuevos), pedidoId)
+  }
+  return cambios
+}
+
 /** Pedidos pendientes + los últimos resueltos (sólo admin, para revisión). */
 export function listPedidos(viewerUserId: string): PedidoTraspasoDto[] {
   requireAdmin(viewerUserId)
@@ -328,7 +393,8 @@ export function listListasProveedor(viewerUserId: string): PedidoTraspasoDto[] {
 /**
  * Guarda/sobrescribe una lista de faltantes abierta (cualquier rol; sólo
  * pedidos a PROVEEDOR en estado PENDIENTE). Las cajeras pueden agregarle o
- * quitarle productos cuantas veces quieran antes de la autorización.
+ * quitarle productos cuantas veces quieran hasta que la CIERREN (ellas
+ * mismas, con cerrarListaProveedor) o un admin la autorice.
  */
 export function guardarListaProveedor(
   viewerUserId: string,
@@ -354,6 +420,36 @@ export function guardarListaProveedor(
       (notas ?? r.notas ?? '').toString().trim() || null,
       pedidoId
     )
+  return rowToDto(getPedidoRow(pedidoId))
+}
+
+/**
+ * CIERRA una lista de faltantes a proveedor (cualquier rol logueado — la
+ * cajera la cierra cuando está lista, sin esperar al admin). Queda APROBADO
+ * con quién la cerró y cuándo; después ya no se puede editar y el renderer
+ * manda a imprimir la hoja (imprimirPedido la permite una vez cerrada). La
+ * mercancía entra después con una Entrada normal, igual que al aprobar.
+ */
+export function cerrarListaProveedor(viewerUserId: string, pedidoId: string): PedidoTraspasoDto {
+  requireUsuario(viewerUserId)
+  requireMatriz()
+  const r = getPedidoRow(pedidoId)
+  if ((r.tipo || 'SUCURSAL') !== 'PROVEEDOR') {
+    throw new Error('Sólo las listas de faltantes a proveedor se cierran desde aquí')
+  }
+  if (r.estado !== 'PENDIENTE') throw new Error('Esta lista ya está cerrada')
+  // La hoja se imprime enseguida: existencias al stock real de este momento.
+  refrescarExistenciasProveedor(pedidoId)
+  const usuario = getSqlite()
+    .prepare('SELECT nombre FROM usuario WHERE id = ?')
+    .get(viewerUserId) as { nombre: string } | undefined
+  getSqlite()
+    .prepare(
+      `UPDATE pedido_traspaso
+          SET estado = 'APROBADO', revisado_por = ?, revisado_nombre = ?, fecha_revision = ?
+        WHERE id = ?`
+    )
+    .run(viewerUserId, usuario?.nombre ?? null, Date.now(), pedidoId)
   return rowToDto(getPedidoRow(pedidoId))
 }
 
@@ -415,6 +511,9 @@ export async function aprobarPedido(
   // Pedido a PROVEEDOR: no hay traspaso ni descuento — sólo se marca aprobado
   // (la mercancía entrará después con una Entrada de mercancía normal).
   if (dto.tipo === 'PROVEEDOR') {
+    // La hoja se imprime enseguida: existencias al stock real de este momento
+    // (los traspasos/ventas hechos después de capturar la lista ya descontados).
+    refrescarExistenciasProveedor(pedidoId)
     const usuarioProv = getSqlite()
       .prepare('SELECT nombre FROM usuario WHERE id = ?')
       .get(viewerUserId) as { nombre: string } | undefined

@@ -52,9 +52,11 @@ import { applyDedupCodigos, previewDedupCodigos } from './services/dedupCodigos'
 import { aplicarActualizacion, pickActualizacion } from './services/actualizacion'
 import {
   aprobarPedido,
+  cerrarListaProveedor,
   countPedidosPendientes,
   createPedido,
   existenciaEnBodega,
+  existenciasActuales,
   guardarListaProveedor,
   imprimirPedido,
   listListasProveedor,
@@ -78,7 +80,7 @@ import { createEntrada } from './services/entradas'
 import { createAjustes } from './services/ajustes'
 import { createSalida } from './services/salidas'
 import { cargaInicialInventario } from './services/cargaInicial'
-import { getStockPorBodega, updateLoteCaducidad } from './services/stock'
+import { getStockPorBodega, redistribuirLotes, updateLoteCaducidad } from './services/stock'
 import {
   aplicarTraspaso,
   crearTraspaso,
@@ -151,6 +153,7 @@ import type {
   UpdateSucursalInput,
   UpdateUsuarioInput,
   UpdateConfigInput,
+  RedistribuirLotesInput,
   StockBodegaPdfInput
 } from '@shared/dto'
 import type { CancelReceiptData, CorteReceiptData, ReceiptData } from '@shared/receipt'
@@ -307,6 +310,9 @@ export function registerIpcHandlers(): void {
     async (_e, viewerUserId: string, loteId: string, fechaYmd: string) =>
       updateLoteCaducidad(viewerUserId, loteId, fechaYmd)
   )
+  ipcMain.handle('inventario:redistribuir-lotes', async (_e, input: RedistribuirLotesInput) =>
+    redistribuirLotes(input)
+  )
   ipcMain.handle('inventario:stock-bodega', async (_e, bodegaId: string, incluirCero?: boolean) =>
     getStockPorBodega(bodegaId, Boolean(incluirCero))
   )
@@ -410,6 +416,14 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle('pedidos:listas-proveedor', async (_e, viewerUserId: string) =>
     listListasProveedor(viewerUserId)
+  )
+  ipcMain.handle('pedidos:cerrar-lista', async (_e, viewerUserId: string, pedidoId: string) =>
+    cerrarListaProveedor(viewerUserId, pedidoId)
+  )
+  ipcMain.handle(
+    'pedidos:existencias-actuales',
+    async (_e, viewerUserId: string, codigos: string[]) =>
+      existenciasActuales(viewerUserId, codigos)
   )
   ipcMain.handle(
     'pedidos:existencia-bodega',
@@ -559,7 +573,11 @@ export function registerIpcHandlers(): void {
       }
     ) => printTest(printer, opts)
   )
-  ipcMain.handle('printer:open-drawer', async (_e, printer: string) => openCashDrawer(printer))
+  ipcMain.handle(
+    'printer:open-drawer',
+    async (_e, printer: string, override?: { pulseMs?: number; pulseCount?: number }) =>
+      openCashDrawer(printer, override)
+  )
   ipcMain.handle('printer:print-receipt', async (_e, printer: string, data: ReceiptData) =>
     printReceipt(printer, data)
   )

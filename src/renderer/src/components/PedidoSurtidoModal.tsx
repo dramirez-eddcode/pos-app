@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { toast } from 'sonner'
-import { Minus, Search, Trash2 } from 'lucide-react'
+import { Minus, Printer, RefreshCw, Search, Trash2 } from 'lucide-react'
 import Modal from './Modal'
 import SearchModal from './SearchModal'
 import Spinner from './Spinner'
@@ -334,6 +334,44 @@ export default function PedidoSurtidoModal({
     [draft, onChange]
   )
 
+  // Lista a proveedor: la existencia de cada renglón es una "foto" del momento
+  // en que se agregó; si hubo ventas o traspasos después (la lista puede
+  // llevar días abierta), aquí se pone al stock real. Al CERRAR la lista el
+  // backend la refresca de nuevo justo antes de imprimir.
+  const [actualizando, setActualizando] = useState(false)
+  const actualizarExistencias = useCallback(async () => {
+    if (!draft || !user || draft.lineas.length === 0 || actualizando) return
+    setActualizando(true)
+    try {
+      const actuales = await window.api.pedidos.existenciasActuales(
+        user.id,
+        draft.lineas.map((l) => l.codigo)
+      )
+      let cambios = 0
+      const lineas = draft.lineas.map((l) => {
+        const n = actuales[l.codigo]
+        if (n === undefined || n === l.cantidad) return l
+        cambios++
+        return { ...l, cantidad: n }
+      })
+      if (cambios === 0) {
+        toast.info('Las existencias ya estaban al día')
+        return
+      }
+      onChange({ ...draft, lineas })
+      toast.success(
+        `${cambios} existencia${cambios === 1 ? '' : 's'} actualizada${cambios === 1 ? '' : 's'} al stock real`,
+        { description: 'Guarda o cierra la lista para que quede registrado.' }
+      )
+    } catch (e) {
+      toast.error('No se pudieron actualizar las existencias', {
+        description: e instanceof Error ? e.message : String(e)
+      })
+    } finally {
+      setActualizando(false)
+    }
+  }, [draft, user, onChange, actualizando])
+
   const terminar = useCallback(async () => {
     if (!draft || !user || guardando) return
 
@@ -353,7 +391,7 @@ export default function PedidoSurtidoModal({
         )
         toast.success(`Lista P-${p.numero} guardada`, {
           description:
-            'Sigue abierta: pueden agregarle más faltantes hasta que el administrador la autorice.'
+            'Sigue abierta: pueden agregarle más faltantes hasta cerrarla (aquí) o que el administrador la autorice.'
         })
         onTerminado(draft.id)
       } catch (e) {
@@ -394,7 +432,7 @@ export default function PedidoSurtidoModal({
       {
       id: 'pedido-confirm',
       description: esProveedor
-        ? `${lineas.length} producto(s). Quedará ABIERTA: pueden seguir agregándole desde F11 hasta que el administrador la autorice (ahí se imprime).`
+        ? `${lineas.length} producto(s). Quedará ABIERTA: pueden seguir agregándole desde F11. Se imprime hasta que la cierren aquí o la autorice el administrador.`
         : `${lineas.length} producto(s). Se imprimen 2 hojas (la de la sucursal y el ORIGINAL del propietario) y queda pendiente de aprobación en la matriz — el stock NO se descuenta todavía; la hoja de ARCHIVO se imprime al aprobarse.`,
       duration: 10000,
       action: {
@@ -470,6 +508,83 @@ export default function PedidoSurtidoModal({
       }
     })
   }, [draft, user, guardando, onTerminado, bodegas.length, bodegaSel])
+
+  // ── Cerrar la lista de faltantes e imprimirla (la cajera, sin admin) ──────
+  // Guarda lo capturado (o crea la lista si es nueva), la CIERRA (ya no se
+  // puede editar) y manda a imprimir la hoja del proveedor en ese momento.
+  const cerrarYImprimir = useCallback(async () => {
+    if (!draft || !user || guardando) return
+    const esProvExt = draft.sucursalId === PROVEEDOR_EXT_ID
+    if (draft.lineas.length === 0) {
+      toast.error('La lista no tiene productos')
+      return
+    }
+    if (!draft.pedidoId && esProvExt && !draft.sucursalNombre.trim()) {
+      toast.error('Escribe el nombre del proveedor')
+      return
+    }
+    toast.warning(`¿Cerrar la lista para "${draft.sucursalNombre}" y mandarla a imprimir?`, {
+      id: 'lista-cerrar-confirm',
+      description: `${draft.lineas.length} producto(s). Las existencias se ponen al stock real de este momento y la hoja del pedido a proveedor se imprime ahora. Después de cerrarla YA NO se puede editar.`,
+      duration: 10000,
+      action: {
+        label: 'Sí, cerrar e imprimir',
+        onClick: async () => {
+          setGuardando(true)
+          try {
+            // 1) Guardar lo capturado (lista existente) o crearla (nueva).
+            const p = draft.pedidoId
+              ? await window.api.pedidos.guardarLista(
+                  user.id,
+                  draft.pedidoId,
+                  draft.lineas,
+                  draft.notas.trim() || null
+                )
+              : await window.api.pedidos.create(user.id, {
+                  ...(esProvExt
+                    ? { proveedorNombre: draft.sucursalNombre.trim() }
+                    : { proveedorId: draft.sucursalId.slice(PROV_PREFIX.length) }),
+                  items: draft.lineas,
+                  notas: draft.notas.trim() || null
+                })
+
+            // 2) Cerrarla (queda con quién la cerró y cuándo).
+            await window.api.pedidos.cerrarLista(user.id, p.id)
+
+            // 3) Imprimir la hoja del proveedor.
+            const idToast = `imp-${p.id}`
+            toast.loading('Imprimiendo la hoja del pedido a proveedor…', { id: idToast })
+            const pr = await window.api.pedidos.imprimir(user.id, p.id)
+            if (!pr.ok) {
+              toast.dismiss(idToast)
+              if (pr.cancelled) {
+                toast.info(`Lista P-${p.numero} cerrada — impresión cancelada`, {
+                  description: 'Puedes reimprimir la hoja desde la revisión en matriz.'
+                })
+              } else {
+                toast.warning(`Lista P-${p.numero} cerrada — falló la impresión`, {
+                  description: `${pr.error ?? ''} · Puedes reimprimir desde la revisión en matriz.`
+                })
+              }
+            } else {
+              toast.success(`Lista P-${p.numero} cerrada e impresa`, {
+                id: idToast,
+                description:
+                  'Existencias actualizadas al stock real al cerrar. Ya no se puede editar; registra la Entrada de mercancía cuando el proveedor surta.'
+              })
+            }
+            onTerminado(draft.id)
+          } catch (e) {
+            toast.error('No se pudo cerrar la lista', {
+              description: e instanceof Error ? e.message : String(e)
+            })
+          } finally {
+            setGuardando(false)
+          }
+        }
+      }
+    })
+  }, [draft, user, guardando, onTerminado])
 
   if (!draft) return null
   const totalUnidades = draft.lineas.reduce((s, l) => s + l.cantidad, 0)
@@ -736,11 +851,25 @@ export default function PedidoSurtidoModal({
 
           {/* Líneas del pedido (orden de captura, sombreado ↑/↓) */}
           <section className="border border-border rounded">
-            <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between">
+            <header className="px-3 py-2 border-b border-border bg-muted/30 text-xs font-semibold uppercase tracking-wide flex justify-between items-center gap-2">
               <span>Productos del pedido</span>
-              <span className="text-[10px] normal-case text-muted-foreground">
-                {draft.lineas.length} línea{draft.lineas.length === 1 ? '' : 's'} ·{' '}
-                {totalUnidades.toLocaleString('es-MX')} unidades
+              <span className="flex items-center gap-2 text-[10px] normal-case text-muted-foreground">
+                {esProveedor && draft.lineas.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={actualizarExistencias}
+                    disabled={actualizando || guardando}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 border border-border rounded bg-background hover:bg-muted disabled:opacity-50 cursor-pointer font-semibold text-foreground"
+                    title="Pone la existencia de cada renglón al stock real de este momento (descuenta ventas y traspasos hechos después de capturarlo)"
+                  >
+                    <RefreshCw className={`size-3 ${actualizando ? 'animate-spin' : ''}`} />
+                    Actualizar existencias
+                  </button>
+                )}
+                <span>
+                  {draft.lineas.length} línea{draft.lineas.length === 1 ? '' : 's'} ·{' '}
+                  {totalUnidades.toLocaleString('es-MX')} unidades
+                </span>
               </span>
             </header>
             <div
@@ -818,8 +947,9 @@ export default function PedidoSurtidoModal({
           <div className="text-xs text-muted-foreground">
             {esProveedor ? (
               <>
-                La lista queda <strong>abierta</strong> (se puede seguir editando desde F11); la
-                hoja (<strong>1 copia</strong>) se imprime <strong>al aprobarse</strong>.
+                <strong>Guardar</strong> deja la lista abierta (editable desde F11);{' '}
+                <strong>Cerrar</strong> la imprime (<strong>1 copia</strong>) y ya no se puede
+                editar.
               </>
             ) : (
               <>
@@ -850,7 +980,16 @@ export default function PedidoSurtidoModal({
                 ((draft.sucursalId === EXTERNO_ID || draft.sucursalId === PROVEEDOR_EXT_ID) &&
                   !draft.sucursalNombre.trim())
               }
-              className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+              className={`inline-flex items-center gap-1.5 px-5 py-1.5 rounded disabled:opacity-50 text-sm font-semibold ${
+                esProveedor
+                  ? 'border border-border hover:bg-muted'
+                  : 'bg-primary text-primary-foreground hover:opacity-90'
+              }`}
+              title={
+                esProveedor
+                  ? 'Guarda la lista y la deja ABIERTA para seguir agregándole después'
+                  : undefined
+              }
             >
               {guardando ? (
                 <>
@@ -859,11 +998,29 @@ export default function PedidoSurtidoModal({
               ) : draft.pedidoId ? (
                 'Guardar lista'
               ) : esProveedor ? (
-                'Guardar lista de faltantes'
+                'Guardar lista (abierta)'
               ) : (
                 'Terminar pedido'
               )}
             </button>
+            {esProveedor && (
+              <button
+                type="button"
+                onClick={cerrarYImprimir}
+                disabled={
+                  guardando ||
+                  draft.lineas.length === 0 ||
+                  !draft.sucursalId ||
+                  (draft.sucursalId === PROVEEDOR_EXT_ID &&
+                    !draft.pedidoId &&
+                    !draft.sucursalNombre.trim())
+                }
+                className="inline-flex items-center gap-1.5 px-5 py-1.5 bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50 text-sm font-semibold"
+                title="Cierra la lista (ya no se podrá editar) y manda a imprimir la hoja del proveedor"
+              >
+                <Printer className="size-3.5" /> Cerrar lista e imprimir
+              </button>
+            )}
           </div>
         </footer>
       </Modal>
