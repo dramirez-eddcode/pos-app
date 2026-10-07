@@ -1,5 +1,4 @@
-import { BrowserWindow, app, dialog } from 'electron'
-import { spawn } from 'node:child_process'
+import { BrowserWindow, app, dialog, shell } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { getSqlite } from '../db/connection'
@@ -112,10 +111,23 @@ export async function aplicarActualizacion(
       }
     }
 
-    // Lanzar el instalador desprendido de este proceso y cerrar la app para
-    // que pueda reemplazar los archivos. La DB queda intacta en userData.
-    const child = spawn(filePath, [], { detached: true, stdio: 'ignore' })
-    child.unref()
+    // Lanzar el instalador por el SHELL de Windows (igual que un doble clic en
+    // el Explorador), NO con child_process.spawn: el instalador NSIS pide
+    // permisos de administrador (UAC) y CreateProcess no puede mostrar ese
+    // aviso — Windows rechaza el arranque ("elevación requerida") y Node lo
+    // reporta como "spawn UNKNOWN". ShellExecute sí muestra el UAC; si el
+    // usuario lo cancela, la app NO se cierra. La DB queda intacta en userData.
+    const fallo = await shell.openPath(filePath)
+    if (fallo) {
+      return {
+        ok: false,
+        error:
+          'Windows no permitió iniciar el instalador (¿se canceló el aviso de permisos de ' +
+          'administrador?). También puedes abrirlo con doble clic desde la USB: tus datos se ' +
+          `conservan. Detalle: ${fallo}`
+      }
+    }
+    // Cerrar la app para que el instalador pueda reemplazar los archivos.
     setTimeout(() => app.quit(), 800)
 
     return { ok: true, backupPath }
